@@ -863,6 +863,10 @@ textarea {
 .ml-sheet.is-broken {
   background: #2a1414;
 }
+/* pagina fora da janela de retencao no modo tira: sem src, memoria liberada */
+.ml-sheet.is-unloaded img {
+  visibility: hidden;
+}
 
 /* camada de composicao: o texto traduzido e' desenhado no espaco da propria pagina */
 .ml-ocr {
