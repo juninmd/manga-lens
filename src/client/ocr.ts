@@ -63,17 +63,49 @@ export function langFor(chapterLang: string | undefined, origin: string | undefi
 }
 
 /**
- * Um worker por nucleo (teto de 4). Cada balao e' um reconhecimento independente,
- * entao a pagina inteira paralela bem; o teto existe porque cada worker carrega
- * sua propria copia do modelo do idioma.
+ * Um worker por nucleo (teto de 4, chao de 1). Cada balao e' um reconhecimento
+ * independente, entao a pagina inteira paralela bem; o teto existe porque cada
+ * worker carrega sua propria copia do modelo do idioma. O chao era 2 antes, o
+ * que forcava 2 workers ate' em maquina de 1-2 nucleos reportados — cada um
+ * competindo com a thread principal pela mesma CPU.
  */
-const POOL_SIZE = Math.max(2, Math.min(4, (navigator.hardwareConcurrency || 4) - 1));
+const CORES = navigator.hardwareConcurrency || 4;
+const POOL_SIZE = Math.max(1, Math.min(4, CORES - 1));
+// idioma trocado no meio da leitura (ex. um scan em ingles depois de um em
+// japones) nao pode ir empilhando pool: o teto vale para todos os idiomas
+// juntos, nao por idioma — senao 3 idiomas abertos viram 9-12 workers.
+const GLOBAL_CAP = Math.max(POOL_SIZE, CORES);
 
 const pools = new Map<string, Promise<Worker>[]>();
+const lastUsed = new Map<string, number>();
+let clock = 0;
+
+function totalWorkers(): number {
+  let n = 0;
+  for (const p of pools.values()) n += p.length;
+  return n;
+}
+
+/** Derruba os idiomas ha mais tempo sem uso ate' sobrar espaco pro pool novo. */
+async function evictLru(except: string, need: number): Promise<void> {
+  const order = [...lastUsed.entries()]
+    .filter(([lang]) => lang !== except && pools.has(lang))
+    .sort((a, b) => a[1] - b[1]);
+  for (const [lang] of order) {
+    if (totalWorkers() + need <= GLOBAL_CAP) return;
+    const pool = pools.get(lang);
+    if (!pool) continue;
+    pools.delete(lang);
+    lastUsed.delete(lang);
+    for (const w of pool) await (await w).terminate().catch(() => undefined);
+  }
+}
 
 function getPool(lang: string, onProgress?: (p: OcrProgress) => void): Promise<Worker>[] {
+  lastUsed.set(lang, ++clock);
   let pool = pools.get(lang);
   if (!pool) {
+    void evictLru(lang, POOL_SIZE);
     pool = Array.from({ length: POOL_SIZE }, (_, i) =>
       createWorker(lang, 1, {
         workerPath: '/vendor/tesseract/worker.min.js',
@@ -99,6 +131,7 @@ export async function disposeOcr(): Promise<void> {
     for (const w of pool) await (await w).terminate().catch(() => undefined);
   }
   pools.clear();
+  lastUsed.clear();
 }
 
 const UPSCALE = 2; // OCR de balao melhora muito com a pagina ampliada antes de reconhecer

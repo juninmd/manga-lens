@@ -16,6 +16,11 @@ interface Sheet {
 const GAP = 16; // espaco entre paginas, em pixels de imagem
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 12;
+// modo tira pode empilhar centenas de paginas na mesma tela; sem isso o navegador
+// mantem todas decodificadas na memoria o capitulo inteiro. So' o que esta' perto
+// da leitura fica carregado — o resto libera o `src` e recarrega ao reaproximar.
+const RETAIN_BEHIND = 8;
+const RETAIN_AHEAD = 20;
 const clamp = (v: number, lo: number, hi: number): number => Math.min(Math.max(v, lo), hi);
 
 export interface ViewerEvents {
@@ -241,6 +246,28 @@ export class Viewer {
       if (page !== this.lastEmittedPage) {
         this.lastEmittedPage = page;
         this.events.onPageChange?.(page);
+        this.trimOffscreen(page);
+      }
+    }
+  }
+
+  /**
+   * Libera a memoria decodificada das paginas que ficaram para tras ou muito
+   * a frente na tira: tira o `src` (o navegador solta a imagem decodificada)
+   * e recarrega quando a pagina volta a entrar na janela de retencao.
+   */
+  private trimOffscreen(centerPage: number): void {
+    const lo = centerPage - RETAIN_BEHIND;
+    const hi = centerPage + RETAIN_AHEAD;
+    for (const s of this.sheets) {
+      const inWindow = s.page >= lo && s.page <= hi;
+      const unloaded = s.el.classList.contains('is-unloaded');
+      if (inWindow && unloaded) {
+        s.el.classList.remove('is-unloaded');
+        s.img.src = this.pages[s.page]!.url;
+      } else if (!inWindow && !unloaded && s.loaded) {
+        s.el.classList.add('is-unloaded');
+        s.img.removeAttribute('src');
       }
     }
   }
