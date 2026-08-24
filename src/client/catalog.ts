@@ -589,7 +589,11 @@ export class Catalog {
     }
 
     this.loading = true;
-    this.statusBar.textContent = 'buscando...';
+    // resultado anterior fica visivel (so' esmaece) — sem o susto do grid vazio
+    // toda vez que um filtro e' clicado
+    this.grid.classList.add('is-loading');
+    this.statusBar.innerHTML = '';
+    this.statusBar.append(el('div', { class: 'ml-spinner ml-spinner-sm' }), el('span', {}, 'buscando...'));
     try {
       const res = await search(this.toParams());
       this.lastResponse = res;
@@ -598,6 +602,7 @@ export class Catalog {
       this.statusBar.textContent = `erro na busca: ${(err as Error).message}`;
     } finally {
       this.loading = false;
+      this.grid.classList.remove('is-loading');
       if (this.pending) {
         this.pending = false;
         void this.run();
@@ -809,6 +814,32 @@ export class Catalog {
 
     const open = (): void => this.handlers.onOpenSeries(current().provider, current().id);
 
+    const cover = el('div', { class: `ml-cover ${item.cover ? 'is-loading' : ''}` });
+    if (item.cover) {
+      const img = el('img', {
+        src: item.cover,
+        loading: 'lazy',
+        alt: item.title,
+        // onda no lugar da capa ate' a imagem chegar; some com um fade suave
+        onload: (e: Event) => {
+          (e.currentTarget as HTMLElement).classList.add('is-loaded');
+          cover.classList.remove('is-loading');
+        },
+        onerror: () => cover.classList.remove('is-loading'),
+      });
+      cover.append(img);
+    } else {
+      cover.append(el('div', { class: 'ml-nocover' }, '?'));
+    }
+    cover.append(
+      fav,
+      badge,
+      ...(item.rating ? [el('span', { class: 'ml-rating' }, `★ ${item.rating}`)] : []),
+      readFlag,
+      // titulo tambem sobre a capa: nao some quando a grade fica apertada
+      el('div', { class: 'ml-cover-title' }, item.title),
+    );
+
     return el(
       'article',
       {
@@ -820,19 +851,7 @@ export class Catalog {
           if (e.key === 'Enter') open();
         },
       },
-      el(
-        'div',
-        { class: 'ml-cover' },
-        item.cover
-          ? el('img', { src: item.cover, loading: 'lazy', alt: item.title })
-          : el('div', { class: 'ml-nocover' }, '?'),
-        fav,
-        badge,
-        item.rating ? el('span', { class: 'ml-rating' }, `★ ${item.rating}`) : null,
-        readFlag,
-        // titulo tambem sobre a capa: nao some quando a grade fica apertada
-        el('div', { class: 'ml-cover-title' }, item.title),
-      ),
+      cover,
       el('h3', {}, item.title),
       alt.length ? el('p', { class: 'ml-alt' }, alt[0]!) : null,
       el(

@@ -291,10 +291,20 @@ textarea {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transition: transform 0.35s ease;
+  transition: transform 0.35s ease, opacity 0.25s ease;
+  opacity: 0;
+}
+.ml-cover img.is-loaded {
+  opacity: 1;
 }
 .ml-card:hover .ml-cover img {
   transform: scale(1.05);
+}
+/* capa ainda buscando a imagem: onda clara em vez de espaco vazio parado */
+.ml-cover.is-loading {
+  background: linear-gradient(100deg, var(--bg-3) 40%, var(--line) 50%, var(--bg-3) 60%);
+  background-size: 200% 100%;
+  animation: ml-shimmer 1.4s ease-in-out infinite;
 }
 .ml-nocover {
   display: grid;
@@ -768,8 +778,54 @@ textarea {
   color: #6f7987;
 }
 .ml-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   padding: 24px;
   color: var(--fg-dim);
+}
+
+/* ---------- loading compartilhado (spinner, shimmer) ---------- */
+
+.ml-spinner {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-top-color: var(--accent);
+  animation: ml-spin 0.7s linear infinite;
+  flex: none;
+}
+.ml-spinner-sm {
+  width: 11px;
+  height: 11px;
+  border-width: 2px;
+}
+@keyframes ml-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes ml-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+/* barra de status enquanto a busca esta' em voo — nao apaga os resultados anteriores */
+.ml-grid.is-loading {
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ml-spinner {
+    animation: none;
+    border-top-color: color-mix(in srgb, var(--accent) 25%, transparent);
+    opacity: 0.7;
+  }
+  .ml-cover.is-loading {
+    animation: none;
+    background: var(--bg-3);
+  }
 }
 
 /* ---------- leitor ---------- */
@@ -839,6 +895,31 @@ textarea {
 }
 .ml-stage.is-dragging {
   cursor: grabbing;
+}
+/* capitulo ainda buscando as paginas: cobre o palco em vez de deixa-lo vazio */
+.ml-stage-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--fg-dim);
+  font-size: 13px;
+  background: var(--stage);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+.ml-stage-loading.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.ml-stage-loading .ml-spinner {
+  width: 20px;
+  height: 20px;
+  border-width: 3px;
 }
 .ml-canvas {
   position: absolute;
