@@ -42,6 +42,12 @@ const FITS: [FitMode, string][] = [
 export class Reader {
   private host = el('section', { class: 'ml-reader' });
   private stage = el('div', { class: 'ml-stage' });
+  private stageLoading = el(
+    'div',
+    { class: 'ml-stage-loading' },
+    el('div', { class: 'ml-spinner' }),
+    el('span', {}, 'carregando capitulo...'),
+  );
   private viewer: Viewer;
   private hud = el('div', { class: 'ml-hud' });
   private film = el('div', { class: 'ml-film' });
@@ -106,6 +112,8 @@ export class Reader {
   private build(): void {
     this.host.append(this.buildTopBar(), this.stage, this.buildStatusBar(), this.buildBottomBar(), this.chat);
     this.viewer.mount(this.stage);
+    // mount() reescreve o innerHTML do palco — o overlay so' pode entrar depois
+    this.stage.append(this.stageLoading);
     this.viewer.mode = store.settings.mode;
     this.viewer.fit = store.settings.fit;
     this.viewer.rtl = store.settings.rtl;
@@ -463,6 +471,7 @@ export class Reader {
     this.aiTimer = window.setInterval(() => void this.checkAi(), 60_000);
     this.film.innerHTML = '';
     this.pageLabel.textContent = 'carregando...';
+    this.stageLoading.classList.add('is-visible');
 
     try {
       const { pages } = await getPages(chapter.provider, chapter.id);
@@ -480,6 +489,8 @@ export class Reader {
     } catch (err) {
       this.pageLabel.textContent = 'falhou';
       toast(`capitulo nao abriu: ${(err as Error).message}`, 'error');
+    } finally {
+      this.stageLoading.classList.remove('is-visible');
     }
   }
 

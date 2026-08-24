@@ -29,7 +29,9 @@ export class SeriesPanel {
   async open(provider: string, id: string): Promise<SeriesDetail | undefined> {
     this.host.classList.add('is-open');
     this.host.innerHTML = '';
-    this.host.append(el('div', { class: 'ml-loading' }, 'carregando serie...'));
+    this.host.append(
+      el('div', { class: 'ml-loading' }, el('div', { class: 'ml-spinner' }), el('span', {}, 'carregando serie...')),
+    );
     try {
       this.detail = await getSeries(provider, id);
       const langs = this.detail.availableLangs ?? [];
