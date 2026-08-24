@@ -196,6 +196,7 @@ export const archive: Provider = {
   id: 'archive',
   name: 'Internet Archive (HQ dominio publico)',
   kind: 'online',
+  contentType: 'hq',
   supports: ['q', 'page', 'limit', 'sort', 'order'],
   languages: ['en'],
   search,
