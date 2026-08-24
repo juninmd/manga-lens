@@ -1,4 +1,4 @@
-import { explain, getPages, visionTranslate, type ChapterRef, type PageRef, type SeriesDetail } from './api.ts';
+import { aiHealth, explain, getPages, visionTranslate, type ChapterRef, type PageRef, type SeriesDetail } from './api.ts';
 import { el, langLabel, toast } from './ui.ts';
 import {
   hasBookmark,
@@ -51,6 +51,11 @@ export class Reader {
   private chat = el('aside', { class: 'ml-chat' });
   private chatLog = el('div', { class: 'ml-chat-log' });
   private ocrStatus = el('span', { class: 'ml-ocr-status' }, '');
+  private aiDot = el('span', { class: 'ml-dot' });
+  private aiLabel = el('span', {}, 'IA: verificando...');
+  private queueInfo = el('span', { class: 'ml-status-queue' }, '');
+  private autoBtn = el('button', { class: 'ml-btn ml-btn-sm' }, 'auto');
+  private aiTimer?: number;
 
   private detail?: SeriesDetail;
   private chapter?: ChapterRef;
@@ -99,7 +104,7 @@ export class Reader {
   // ---------- montagem ----------
 
   private build(): void {
-    this.host.append(this.buildTopBar(), this.stage, this.buildBottomBar(), this.chat);
+    this.host.append(this.buildTopBar(), this.stage, this.buildStatusBar(), this.buildBottomBar(), this.chat);
     this.viewer.mount(this.stage);
     this.viewer.mode = store.settings.mode;
     this.viewer.fit = store.settings.fit;
@@ -189,7 +194,6 @@ export class Reader {
           this.paintOverlays();
         }, 'mostra o texto reconhecido em vez da traducao'),
         el('button', { class: 'ml-btn ml-btn-sm', onclick: () => void this.visionRead() }, 'IA le a pagina'),
-        this.ocrStatus,
       ),
       this.bookmarkButton(),
       el('button', { class: 'ml-btn ml-btn-sm', onclick: () => this.chat.classList.toggle('is-open') }, 'explicar'),
@@ -308,6 +312,66 @@ export class Reader {
     return this.chapter?.number ? `Cap. ${this.chapter.number}` : (this.chapter?.title ?? '');
   }
 
+  /**
+   * Barra fixa de status. Sem ela o `traduzir` fica ligado no armazenamento e o
+   * leitor segue reconhecendo e traduzindo capitulos que o usuario nunca abriu,
+   * sem nenhum sinal na tela nem como interromper.
+   */
+  private buildStatusBar(): HTMLElement {
+    this.autoBtn.addEventListener('click', () => {
+      const s = store.settings;
+      s.autoTranslate = !s.autoTranslate;
+      persist();
+      if (s.autoTranslate) {
+        void this.runOcr(false);
+        void this.pumpQueue();
+      } else {
+        this.stopQueue();
+        this.ocrStatus.textContent = '';
+      }
+      this.refreshBars();
+      this.syncStatus();
+    });
+
+    return el(
+      'div',
+      { class: 'ml-statusbar' },
+      el('span', { class: 'ml-status-item' }, this.aiDot, this.aiLabel),
+      el('span', { class: 'ml-status-item ml-status-grow' }, this.ocrStatus),
+      el('span', { class: 'ml-status-item' }, this.queueInfo),
+      this.autoBtn,
+    );
+  }
+
+  /** Reflete na barra o que a fila esta' fazendo agora. */
+  private syncStatus(): void {
+    const on = store.settings.autoTranslate;
+    this.autoBtn.textContent = on ? 'parar auto' : 'auto desligado';
+    this.autoBtn.classList.toggle('is-on', on);
+
+    if (!on) {
+      this.queueInfo.textContent = '';
+      return;
+    }
+    const chapters = [...new Set(this.queue.map((i) => i.chapter.number ?? i.chapter.id))];
+    this.queueInfo.textContent = this.queue.length
+      ? `fila: ${this.queue.length} pag. · cap. ${chapters.slice(0, 3).join(', ')}${chapters.length > 3 ? '...' : ''}`
+      : 'fila vazia';
+  }
+
+  /** Estado do endpoint de IA — so' importa quando o motor cai nela. */
+  private async checkAi(): Promise<void> {
+    try {
+      const h = await aiHealth();
+      this.aiDot.classList.toggle('is-on', Boolean(h.ok));
+      this.aiLabel.textContent = h.ok ? `IA: ${h.model}` : 'IA: offline';
+      this.aiLabel.title = h.ok ? `${h.baseUrl} — ${h.models?.length ?? 0} modelos` : (h.error ?? '');
+    } catch {
+      this.aiDot.classList.remove('is-on');
+      this.aiLabel.textContent = 'IA: offline';
+    }
+  }
+
   private buildBottomBar(): HTMLElement {
     return el(
       'footer',
@@ -392,6 +456,11 @@ export class Reader {
     this.host.classList.add('is-open');
     document.body.classList.add('is-reading');
     this.refreshBars();
+    this.syncStatus();
+    // o endpoint pode cair no meio da leitura: reconsulta enquanto o leitor vive
+    void this.checkAi();
+    clearInterval(this.aiTimer);
+    this.aiTimer = window.setInterval(() => void this.checkAi(), 60_000);
     this.film.innerHTML = '';
     this.pageLabel.textContent = 'carregando...';
 
@@ -416,6 +485,7 @@ export class Reader {
 
   close(): void {
     this.stopQueue();
+    clearInterval(this.aiTimer);
     this.host.classList.remove('is-open');
     document.body.classList.remove('is-reading');
     this.onExit();
@@ -536,6 +606,9 @@ export class Reader {
   /** Enfileira o que falta do capitulo atual e segue pelos proximos, em ordem. */
   private async fillQueue(): Promise<void> {
     if (!this.detail || !this.chapter) return;
+    // `stopQueue` zera a fila, mas um fillQueue em voo terminava depois e a
+    // repopulava — parar precisa valer tambem para o enfileiramento em curso
+    const mine = this.generation;
     const list = this.siblingChapters();
     let index = Math.max(
       list.findIndex((c) => c.id === this.chapter!.id),
@@ -544,6 +617,7 @@ export class Reader {
     let fromPage = this.viewer.currentPage;
 
     while (this.queue.length < Reader.LOOKAHEAD && index < list.length) {
+      if (this.generation !== mine) return;
       const chapter = list[index]!;
       let pages = this.pagesByChapter.get(chapter.id);
       if (!pages) {
@@ -551,6 +625,8 @@ export class Reader {
         else pages = (await getPages(chapter.provider, chapter.id).catch(() => ({ pages: [] }))).pages;
         this.pagesByChapter.set(chapter.id, pages);
       }
+      // a busca de paginas acima e' assincrona: o usuario pode ter parado no meio
+      if (this.generation !== mine) return;
       for (let p = fromPage; p < pages.length && this.queue.length < Reader.LOOKAHEAD; p++) {
         const key = this.pageKey(p, chapter.id);
         if (this.ocrCache.has(key) || this.enqueued.has(key)) continue;
@@ -588,6 +664,7 @@ export class Reader {
           console.error(`[fila] ${label}: ${(err as Error).message}`);
         }
         this.ocrStatus.textContent = `adiantando (${this.queue.length} na fila)`;
+        this.syncStatus();
         // devolve o quadro para a UI nao travar entre paginas
         await new Promise((r) => setTimeout(r, 0));
       }
@@ -600,6 +677,7 @@ export class Reader {
     this.generation++;
     this.queue = [];
     this.enqueued.clear();
+    this.syncStatus();
   }
 
   private trimCache(): void {

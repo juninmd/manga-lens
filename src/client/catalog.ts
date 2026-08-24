@@ -1,6 +1,6 @@
 import { getProviders, getTags, search, type ProviderInfo, type SearchResponse, type SeriesCard, type TagInfo } from './api.ts';
 import { debounce, el, langLabel, STATUS_LABEL, toast } from './ui.ts';
-import { bookmarks, isFavorite, readCount, recentReads, toggleFavorite } from './state.ts';
+import { bookmarks, favorites, isFavorite, readCount, recentReads, toggleFavorite } from './state.ts';
 
 export interface Filters {
   q: string;
@@ -86,6 +86,9 @@ export class Catalog {
   private drawer!: HTMLElement;
   private providerModal!: HTMLElement;
   private providerBtn?: HTMLElement;
+  private favBtn?: HTMLElement;
+  /** favoritos vivem no localStorage, nao na busca: viram uma listagem propria */
+  private showFavorites = false;
   private providers: ProviderInfo[] = [];
   private tags: TagInfo[] = [];
   filters: Filters = emptyFilters();
@@ -163,6 +166,19 @@ export class Catalog {
         'button',
         { class: 'ml-btn', onclick: () => this.openProviders(true) },
         'Fontes',
+      )),
+      (this.favBtn = el(
+        'button',
+        {
+          class: 'ml-btn',
+          title: 'mostrar so os favoritos',
+          onclick: () => {
+            this.showFavorites = !this.showFavorites;
+            this.favBtn?.classList.toggle('is-on', this.showFavorites);
+            void this.run();
+          },
+        },
+        '★ Favoritos',
       )),
     );
   }
@@ -477,6 +493,13 @@ export class Catalog {
       this.pending = true;
       return;
     }
+    // favorito nao vem da busca: ele vive no localStorage e pode nem estar no
+    // resultado atual, entao filtrar a resposta deixaria a lista incompleta
+    if (this.showFavorites) {
+      this.renderFavorites();
+      return;
+    }
+
     this.loading = true;
     this.statusBar.textContent = 'buscando...';
     try {
@@ -492,6 +515,29 @@ export class Catalog {
         void this.run();
       }
     }
+  }
+
+  /** Listagem dos favoritos, montada do proprio armazenamento local. */
+  private renderFavorites(): void {
+    const list = favorites();
+    this.statusBar.innerHTML = '';
+    this.statusBar.append(
+      el('span', {}, list.length ? `${list.length} favorito(s)` : 'nenhum favorito ainda'),
+    );
+
+    this.grid.innerHTML = '';
+    if (!list.length) {
+      this.grid.append(
+        el('p', { class: 'ml-empty' }, 'Marque a estrela em qualquer titulo para ele aparecer aqui.'),
+      );
+      return;
+    }
+
+    const cards = el('div', { class: 'ml-cards' });
+    for (const f of list) {
+      cards.append(this.card({ provider: f.provider, id: f.id, title: f.title, cover: f.cover } as SeriesCard));
+    }
+    this.grid.append(cards);
   }
 
   private render(res: SearchResponse): void {
@@ -549,7 +595,31 @@ export class Catalog {
         this.grid.append(row);
       }
 
-      if (recent.length || marks.length) this.grid.append(el('h2', { class: 'ml-section' }, 'Catalogo'));
+      const favs = favorites();
+      if (favs.length) {
+        this.grid.append(el('h2', { class: 'ml-section' }, 'Favoritos'));
+        const row = el('div', { class: 'ml-row' });
+        for (const f of favs.slice(0, 16)) {
+          row.append(
+            el(
+              'button',
+              {
+                class: 'ml-resume',
+                title: f.title,
+                onclick: () => this.handlers.onOpenSeries(f.provider, f.id),
+              },
+              f.cover ? el('img', { src: f.cover, loading: 'lazy', alt: '' }) : el('div', { class: 'ml-nocover' }),
+              el('span', {}, f.title),
+              el('small', {}, `★ ${f.provider}`),
+            ),
+          );
+        }
+        this.grid.append(row);
+      }
+
+      if (recent.length || marks.length || favs.length) {
+        this.grid.append(el('h2', { class: 'ml-section' }, 'Catalogo'));
+      }
     }
 
     const cards = el('div', { class: 'ml-cards' });
@@ -592,14 +662,23 @@ export class Catalog {
   }
 
   private card(item: SeriesCard): HTMLElement {
+    // a busca agregada junta a mesma obra de varios sites; sem `sources` (favoritos,
+    // continuar lendo) o proprio card e' a unica origem
+    const sources = item.sources?.length
+      ? item.sources
+      : [{ provider: item.provider, id: item.id, title: item.title }];
+    let active = 0;
+    const current = (): { provider: string; id: string; title: string } => sources[active]!;
+
     const fav = el(
       'button',
       {
-        class: `ml-fav ${isFavorite(item.provider, item.id) ? 'is-on' : ''}`,
+        class: `ml-fav ${isFavorite(current().provider, current().id) ? 'is-on' : ''}`,
         title: 'favoritar',
         onclick: (e: Event) => {
           e.stopPropagation();
-          const on = toggleFavorite({ provider: item.provider, id: item.id, title: item.title, cover: item.cover });
+          const src = current();
+          const on = toggleFavorite({ provider: src.provider, id: src.id, title: item.title, cover: item.cover });
           (e.currentTarget as HTMLElement).classList.toggle('is-on', on);
         },
       },
@@ -607,7 +686,38 @@ export class Catalog {
     );
 
     const alt = (item.altTitles ?? []).filter((t) => t && t !== item.title).slice(0, 3);
-    const read = readCount(item.provider, item.id);
+    const badge = el('span', { class: 'ml-badge' }, current().provider);
+    const readFlag = el('span', { class: 'ml-read-flag' });
+
+    const tabs = sources.map((src, i) =>
+      el(
+        'button',
+        {
+          class: `ml-tab ${i === active ? 'is-on' : ''}`,
+          // o titulo exato daquele site: e' o que explica por que os dois casaram
+          title: src.title,
+          onclick: (e: Event) => {
+            e.stopPropagation(); // trocar de fonte nao pode abrir a serie
+            active = i;
+            sync();
+          },
+        },
+        src.provider,
+      ),
+    );
+
+    const sync = (): void => {
+      const src = current();
+      badge.textContent = src.provider;
+      fav.classList.toggle('is-on', isFavorite(src.provider, src.id));
+      const read = readCount(src.provider, src.id);
+      readFlag.textContent = read ? `${read} lidos` : '';
+      readFlag.hidden = !read;
+      tabs.forEach((t, i) => t.classList.toggle('is-on', i === active));
+    };
+    sync();
+
+    const open = (): void => this.handlers.onOpenSeries(current().provider, current().id);
 
     return el(
       'article',
@@ -615,9 +725,9 @@ export class Catalog {
         class: 'ml-card',
         tabindex: '0',
         title: [item.title, ...alt].join('\n'),
-        onclick: () => this.handlers.onOpenSeries(item.provider, item.id),
+        onclick: open,
         onkeydown: (e: KeyboardEvent) => {
-          if (e.key === 'Enter') this.handlers.onOpenSeries(item.provider, item.id);
+          if (e.key === 'Enter') open();
         },
       },
       el(
@@ -627,9 +737,9 @@ export class Catalog {
           ? el('img', { src: item.cover, loading: 'lazy', alt: item.title })
           : el('div', { class: 'ml-nocover' }, '?'),
         fav,
-        el('span', { class: 'ml-badge' }, item.provider),
+        badge,
         item.rating ? el('span', { class: 'ml-rating' }, `★ ${item.rating}`) : null,
-        read ? el('span', { class: 'ml-read-flag' }, `${read} lidos`) : null,
+        readFlag,
         // titulo tambem sobre a capa: nao some quando a grade fica apertada
         el('div', { class: 'ml-cover-title' }, item.title),
       ),
@@ -642,6 +752,8 @@ export class Catalog {
         item.status ? el('span', {}, STATUS_LABEL[item.status] ?? item.status) : null,
         item.type ? el('span', {}, item.type) : null,
       ),
+      // uma unica origem nao vira aba: seria ruido em quase todo card
+      sources.length > 1 ? el('div', { class: 'ml-tabs' }, ...tabs) : null,
       el('div', { class: 'ml-tags' }, ...(item.tags ?? []).slice(0, 4).map((t) => el('span', {}, t))),
     );
   }

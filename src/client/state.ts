@@ -118,6 +118,10 @@ export function toggleFavorite(s: { provider: string; id: string; title: string;
 
 export const isFavorite = (provider: string, id: string): boolean => Boolean(store.favorites[seriesKey(provider, id)]);
 
+/** Favoritos do mais recente para o mais antigo. */
+export const favorites = (): { provider: string; id: string; title: string; cover?: string; at: number }[] =>
+  Object.values(store.favorites).sort((a, b) => b.at - a.at);
+
 export function saveProgress(p: Progress): void {
   store.progress[seriesKey(p.provider, p.seriesId)] = {
     seriesId: p.seriesId,

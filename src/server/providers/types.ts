@@ -37,6 +37,8 @@ export interface SeriesCard {
   tags?: string[];
   description?: string;
   url?: string;
+  /** todas as origens da mesma obra quando a busca agregada juntou duplicatas */
+  sources?: { provider: string; id: string; title: string }[];
 }
 
 export interface ChapterRef {

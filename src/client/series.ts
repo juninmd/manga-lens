@@ -59,6 +59,12 @@ export class SeriesPanel {
     this.host.innerHTML = '';
     appendAll(
       this.host,
+      // Escape sozinho nao basta: quem abre com o mouse nao tem como fechar
+      el(
+        'button',
+        { class: 'ml-series-close', title: 'fechar (Esc)', onclick: () => this.close() },
+        '✕',
+      ),
       el(
         'div',
         { class: 'ml-series-head' },
@@ -159,7 +165,44 @@ export class SeriesPanel {
     const d = this.detail!;
     const list = el('div', { class: 'ml-chapters' });
     const chapters = this.chaptersForLang();
-    if (!chapters.length) list.append(el('div', { class: 'ml-loading' }, 'nenhum capitulo neste idioma'));
+    const total = d.chapters?.length ?? 0;
+
+    // Culpar o idioma quando a obra nao tem capitulo nenhum manda o leitor
+    // procurar no lugar errado — sao duas causas diferentes, com saidas diferentes.
+    if (!total) {
+      list.append(
+        el(
+          'div',
+          { class: 'ml-empty-note' },
+          el('strong', {}, 'Esta fonte nao tem capitulo legivel desta obra.'),
+          el(
+            'span',
+            {},
+            'O site so lista edicoes licenciadas, que apontam para fora e abrem sem paginas. ' +
+              'Troque a fonte pelas abas do card no catalogo.',
+          ),
+        ),
+      );
+    } else if (!chapters.length) {
+      list.append(
+        el(
+          'div',
+          { class: 'ml-empty-note' },
+          el('strong', {}, `Nenhum capitulo em ${langLabel(this.lang)}.`),
+          el(
+            'button',
+            {
+              class: 'ml-btn ml-btn-sm',
+              onclick: () => {
+                this.lang = '';
+                this.render();
+              },
+            },
+            `ver os ${total} capitulos de todos os idiomas`,
+          ),
+        ),
+      );
+    }
 
     for (const [i, c] of chapters.entries()) {
       const read = isChapterRead(d.provider, d.id, c.id);

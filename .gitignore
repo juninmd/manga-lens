@@ -24,3 +24,9 @@ scripts/.desktop.png
 
 .testlib/
 .tauri-build.log
+.rel.log
+.rel.err
+.sc.log
+.sc.err
+.tauri-run.log
+.tauri-run.err

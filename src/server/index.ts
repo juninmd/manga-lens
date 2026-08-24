@@ -316,7 +316,13 @@ if (parentPid > 0) {
   }, 5000).unref?.();
 }
 
-export default { port: config.port, fetch: app.fetch, idleTimeout: 60 };
+/**
+ * `hostname` explicito: sem ele o Bun sobe so' em `::` (IPv6) e o app desktop,
+ * que monta a URL como `http://127.0.0.1:<porta>`, nao acha ninguem — o catalogo
+ * morria com "Failed to fetch" apenas no Tauri. Loopback tambem e' o alcance
+ * certo: este processo faz proxy de imagem e nao deve atender a rede.
+ */
+export default { hostname: '127.0.0.1', port: config.port, fetch: app.fetch, idleTimeout: 60 };
 
 console.log(`manga-lens em http://localhost:${config.port}`);
 console.log(`LLM: ${config.ai.baseUrl} (${config.ai.model})`);

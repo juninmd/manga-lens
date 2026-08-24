@@ -10,6 +10,8 @@ import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+// Tem de ser o release: o binario de debug nao embute o front, depende do
+// servidor estatico que o `tauri dev` sobe na 1430 e nao roda sozinho.
 const EXE = 'src-tauri/target/release/manga-lens.exe';
 const results = [];
 const record = (name, ok, detail) => {

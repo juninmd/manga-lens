@@ -403,6 +403,113 @@ textarea {
   gap: 18px;
 }
 
+.ml-empty {
+  padding: 28px 4px;
+  color: var(--fg-dim);
+  font-size: 13.5px;
+}
+
+/* ---------- barra de status do leitor ---------- */
+
+.ml-statusbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 5px 12px;
+  background: var(--bg-2);
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.ml-status-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+/* a atividade e' o unico campo que cresce: e' o texto que muda o tempo todo */
+.ml-status-grow {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ml-status-grow .ml-ocr-status {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ml-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #7a3b3b;
+  box-shadow: 0 0 0 2px rgb(255 255 255 / 4%);
+}
+.ml-dot.is-on {
+  background: #3ea76a;
+}
+.ml-status-queue {
+  color: var(--fg-dim);
+  opacity: 0.85;
+}
+
+/* o painel e' o proprio container de rolagem: `absolute` sumiria ao descer a
+   lista de capitulos, entao o botao gruda no topo */
+.ml-series-close {
+  position: sticky;
+  top: 0;
+  justify-self: end;
+  z-index: 2;
+  width: 30px;
+  height: 30px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--fg-dim);
+  cursor: pointer;
+  line-height: 1;
+}
+.ml-series-close:hover {
+  border-color: var(--accent-2);
+  color: #d6ecff;
+}
+.ml-empty-note {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  padding: 16px;
+  margin: 8px 0;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 13px;
+  color: var(--fg-dim);
+}
+
+/* ---------- abas de origem no card ---------- */
+
+.ml-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+.ml-tab {
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 10.5px;
+  line-height: 1.6;
+  cursor: pointer;
+  color: var(--fg-dim);
+}
+.ml-tab.is-on {
+  background: color-mix(in srgb, var(--accent-2) 22%, var(--bg-3));
+  border-color: var(--accent-2);
+  color: #d6ecff;
+}
+
 /* ---------- modal de fontes ---------- */
 
 .ml-modal {

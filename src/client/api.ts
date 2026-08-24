@@ -25,6 +25,8 @@ export interface SeriesCard {
   tags?: string[];
   description?: string;
   url?: string;
+  /** origens da mesma obra quando a busca agregada juntou duplicatas */
+  sources?: { provider: string; id: string; title: string }[];
 }
 
 export interface ChapterRef {
@@ -101,6 +103,7 @@ export const aiHealth = (): Promise<{
   configuredModel?: string;
   visionModel: string;
   baseUrl: string;
+  models?: string[];
   error?: string;
 }> => json('/api/ai/health');
 
