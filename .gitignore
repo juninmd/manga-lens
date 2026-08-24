@@ -1,0 +1,26 @@
+node_modules/
+public/
+.cache/
+.cache-sidecar/
+.server.log
+.server.err
+.sidecar.log
+.sidecar.err
+.env
+src-tauri/target/
+src-tauri/binaries/
+src-tauri/gen/
+src-tauri/icon-source.png
+scripts/.smoke-reader.png
+scripts/.probe.png
+scripts/.desktop.png
+
+# artefatos intermediarios do bun: ~115 MB cada, nao entram no historico
+*.bun-build
+
+# modelo do tesseract: 5 MB baixados sob demanda por /api/tessdata e cacheados
+# em .cache/tessdata — nao precisa versionar
+*.traineddata
+
+.testlib/
+.tauri-build.log
