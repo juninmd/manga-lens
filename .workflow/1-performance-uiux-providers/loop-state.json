@@ -4,7 +4,9 @@
   "artifacts": [
     ".workflow/1-performance-uiux-providers/research.md",
     ".workflow/1-performance-uiux-providers/prototype.md",
-    ".workflow/1-performance-uiux-providers/plan.md"
+    ".workflow/1-performance-uiux-providers/plan.md",
+    ".workflow/1-performance-uiux-providers/progress.md",
+    "https://github.com/juninmd/manga-lens/pull/2"
   ],
-  "awaiting": null
+  "awaiting": "iterate"
 }
