@@ -135,6 +135,7 @@ export const mangadex: Provider = {
   id: 'mangadex',
   name: 'MangaDex',
   kind: 'online',
+  contentType: 'manga',
   supports: [
     'q',
     'langs',

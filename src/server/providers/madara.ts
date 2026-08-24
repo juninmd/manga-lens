@@ -2,7 +2,7 @@ import { fetchText, httpFetch } from '../http.ts';
 import { registerImageHost } from '../config.ts';
 import { cached, defaultTtl } from '../cache.ts';
 import { all, chunks, first, stripTags } from '../scrape.ts';
-import type { ChapterRef, PageRef, Provider, SeriesCard, SeriesDetail, TagInfo } from './types.ts';
+import type { ChapterRef, ContentType, PageRef, Provider, SeriesCard, SeriesDetail, TagInfo } from './types.ts';
 
 export interface MadaraSite {
   id: string;
@@ -10,6 +10,8 @@ export interface MadaraSite {
   base: string;
   /** idioma dos scans publicados no site */
   lang: string;
+  /** tipo de conteudo do site (mangá por padrão; alguns Madara servem HQ) */
+  contentType: ContentType;
 }
 
 const STATUS_OUT: Record<string, string> = {
@@ -84,6 +86,7 @@ export function createMadaraProvider(site: MadaraSite): Provider {
     id: site.id,
     name: site.name,
     kind: 'online',
+    contentType: site.contentType,
     supports: ['q', 'includeTags', 'status', 'sort', 'page'],
     languages: [site.lang],
 
@@ -211,17 +214,18 @@ export function createMadaraProvider(site: MadaraSite): Provider {
 /** Sites embutidos + os que o usuario declarar em MADARA_SITES. */
 export function madaraSites(): MadaraSite[] {
   const builtin: MadaraSite[] = [
-    { id: 'mangaread', name: 'MangaRead', base: 'https://www.mangaread.org', lang: 'en' },
+    { id: 'mangaread', name: 'MangaRead', base: 'https://www.mangaread.org', lang: 'en', contentType: 'manga' },
   ];
   const extra = (process.env['MADARA_SITES'] ?? '')
     .split(';')
     .map((entry) => entry.trim())
     .filter(Boolean)
     .map((entry): MadaraSite | null => {
-      // formato: id|Nome|https://site|lang
-      const [id, name, base, lang] = entry.split('|').map((s) => s.trim());
+      // formato: id|Nome|https://site|lang|tipo (tipo e' opcional, default 'manga')
+      const [id, name, base, lang, type] = entry.split('|').map((s) => s.trim());
       if (!id || !base) return null;
-      return { id, name: name || id, base: base.replace(/\/+$/, ''), lang: lang || 'en' };
+      const contentType: ContentType = type === 'hq' || type === 'livro' ? type : 'manga';
+      return { id, name: name || id, base: base.replace(/\/+$/, ''), lang: lang || 'en', contentType };
     })
     .filter((s): s is MadaraSite => s !== null);
 

@@ -117,6 +117,9 @@ export const local: Provider = {
   id: 'local',
   name: 'Biblioteca local',
   kind: 'local',
+  // padrao: pastas/CBZ locais sao mangá/HQ por convenção do app; itens
+  // .epub/.pdf sobrescrevem para 'livro' no SeriesCard (ver passo 5 do plano)
+  contentType: 'manga',
   supports: ['q', 'page'],
 
   async search(f) {

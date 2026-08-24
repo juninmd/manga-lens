@@ -62,17 +62,19 @@ app.onError((err, c) => {
   return c.json({ error: err.message }, 500);
 });
 
-app.get('/api/providers', (c) =>
-  c.json(
-    enabledProviders().map((p) => ({
+app.get('/api/providers', (c) => {
+  const contentType = c.req.query('contentType') as SearchFilters['contentType'];
+  return c.json(
+    enabledProviders(contentType).map((p) => ({
       id: p.id,
       name: p.name,
       kind: p.kind,
+      contentType: p.contentType,
       supports: p.supports,
       languages: p.languages ?? [],
     })),
-  ),
-);
+  );
+});
 
 app.get('/api/tags', async (c) => {
   const id = c.req.query('provider') ?? 'mangadex';
@@ -85,6 +87,7 @@ app.get('/api/search', async (c) => {
   const q = c.req.query();
   const filters: SearchFilters = {
     q: q['q'],
+    contentType: (q['contentType'] as SearchFilters['contentType']) || undefined,
     langs: list(q['langs']),
     origin: list(q['origin']),
     includeTags: list(q['includeTags']),

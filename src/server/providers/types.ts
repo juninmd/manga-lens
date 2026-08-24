@@ -1,5 +1,9 @@
+/** categoria de conteúdo do catálogo — separa mangá, HQ e livro em abas próprias */
+export type ContentType = 'manga' | 'hq' | 'livro';
+
 export interface SearchFilters {
   q?: string;
+  contentType?: ContentType;
   /** idioma da traducao publicada (pt-br, en, ja...) */
   langs?: string[];
   /** idioma original da obra (ja, ko, zh, en) — define o pipeline de OCR */
@@ -34,6 +38,7 @@ export interface SeriesCard {
   contentRating?: string;
   rating?: number;
   follows?: number;
+  contentType?: ContentType;
   tags?: string[];
   description?: string;
   url?: string;
@@ -78,6 +83,8 @@ export interface Provider {
   id: string;
   name: string;
   kind: 'online' | 'local';
+  /** categoria de conteúdo servida por este provider — define em que aba do catálogo ele aparece */
+  contentType: ContentType;
   /** filtros que este provider realmente aplica no upstream */
   supports: Array<keyof SearchFilters>;
   languages?: string[];

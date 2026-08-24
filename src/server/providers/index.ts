@@ -5,7 +5,7 @@ import { weebcentral } from './weebcentral.ts';
 import { local } from './local.ts';
 import { archive } from './archive.ts';
 import { createMadaraProvider, madaraSites } from './madara.ts';
-import type { Provider, SearchFilters, SeriesCard } from './types.ts';
+import type { ContentType, Provider, SearchFilters, SeriesCard } from './types.ts';
 
 export const providers: Provider[] = [
   mangadex,
@@ -16,8 +16,10 @@ export const providers: Provider[] = [
   local,
 ];
 
-export const enabledProviders = (): Provider[] =>
-  providers.filter((p) => p.kind === 'online' || config.localRoots.length > 0);
+export const enabledProviders = (contentType?: ContentType): Provider[] =>
+  providers
+    .filter((p) => p.kind === 'online' || config.localRoots.length > 0)
+    .filter((p) => !contentType || p.contentType === contentType);
 
 export function getProvider(id: string): Provider {
   const p = providers.find((x) => x.id === id);
@@ -89,7 +91,7 @@ function mergeDuplicates(items: SeriesCard[]): SeriesCard[] {
 
 /** Busca em N providers em paralelo; provider que cai vira aviso, nao erro fatal. */
 export async function searchAll(ids: string[], filters: SearchFilters): Promise<AggregatedSearch> {
-  const chosen = ids.length ? ids.map(getProvider) : enabledProviders();
+  const chosen = ids.length ? ids.map(getProvider) : enabledProviders(filters.contentType);
   const settled = await Promise.allSettled(chosen.map((p) => p.search(filters)));
 
   const items: SeriesCard[] = [];
@@ -99,8 +101,13 @@ export async function searchAll(ids: string[], filters: SearchFilters): Promise<
   settled.forEach((r, i) => {
     const provider = chosen[i]!;
     if (r.status === 'fulfilled') {
-      perProvider[provider.id] = r.value.items.length;
-      items.push(...r.value.items);
+      // safety net: provider misto (ex. biblioteca local com mangá + livro)
+      // pode devolver card de outro tipo — o card decide, provider e' so' o default
+      const filtered = filters.contentType
+        ? r.value.items.filter((it) => (it.contentType ?? provider.contentType) === filters.contentType)
+        : r.value.items;
+      perProvider[provider.id] = filtered.length;
+      items.push(...filtered);
     } else {
       perProvider[provider.id] = 0;
       errors.push({ provider: provider.id, message: String(r.reason?.message ?? r.reason) });
@@ -123,4 +130,4 @@ export async function searchAll(ids: string[], filters: SearchFilters): Promise<
   return { items: interleaved, errors, perProvider };
 }
 
-export type { Provider, SearchFilters, SeriesCard };
+export type { ContentType, Provider, SearchFilters, SeriesCard };

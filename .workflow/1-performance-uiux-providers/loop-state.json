@@ -1,0 +1,10 @@
+{
+  "issue": "https://github.com/juninmd/manga-lens/issues/1",
+  "stage": "implement",
+  "artifacts": [
+    ".workflow/1-performance-uiux-providers/research.md",
+    ".workflow/1-performance-uiux-providers/prototype.md",
+    ".workflow/1-performance-uiux-providers/plan.md"
+  ],
+  "awaiting": null
+}

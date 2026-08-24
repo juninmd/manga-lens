@@ -51,6 +51,7 @@ export const mangapill: Provider = {
   id: 'mangapill',
   name: 'MangaPill',
   kind: 'online',
+  contentType: 'manga',
   supports: ['q', 'includeTags', 'status', 'type', 'page'],
   languages: ['en'],
 

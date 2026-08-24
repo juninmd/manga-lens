@@ -1,9 +1,13 @@
 import { api } from './base.ts';
 
+/** categoria de conteudo do catalogo — separa mangá, HQ e livro em abas proprias */
+export type ContentType = 'manga' | 'hq' | 'livro';
+
 export interface ProviderInfo {
   id: string;
   name: string;
   kind: 'online' | 'local';
+  contentType: ContentType;
   supports: string[];
   languages: string[];
 }
@@ -18,6 +22,7 @@ export interface SeriesCard {
   status?: string;
   origin?: string;
   type?: string;
+  contentType?: ContentType;
   demographic?: string;
   contentRating?: string;
   rating?: number;

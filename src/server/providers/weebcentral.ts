@@ -70,6 +70,7 @@ export const weebcentral: Provider = {
   id: 'weebcentral',
   name: 'Weeb Central',
   kind: 'online',
+  contentType: 'manga',
   supports: ['q', 'includeTags', 'excludeTags', 'status', 'type', 'sort', 'order', 'page'],
   languages: ['en'],
 

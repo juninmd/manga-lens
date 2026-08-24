@@ -1,4 +1,13 @@
-import { getProviders, getTags, search, type ProviderInfo, type SearchResponse, type SeriesCard, type TagInfo } from './api.ts';
+import {
+  getProviders,
+  getTags,
+  search,
+  type ContentType,
+  type ProviderInfo,
+  type SearchResponse,
+  type SeriesCard,
+  type TagInfo,
+} from './api.ts';
 import { debounce, el, langLabel, STATUS_LABEL, toast } from './ui.ts';
 import { bookmarks, favorites, isFavorite, readCount, recentReads, toggleFavorite } from './state.ts';
 
@@ -64,6 +73,11 @@ const RATINGS = [
   ['erotica', 'Erotico'],
   ['pornographic', 'Adulto'],
 ];
+const TYPE_TABS: [ContentType, string][] = [
+  ['manga', 'Mangá'],
+  ['hq', 'HQ'],
+  ['livro', 'Livro'],
+];
 const SORTS = [
   ['', 'Relevancia'],
   ['follows', 'Mais seguidos'],
@@ -91,7 +105,20 @@ export class Catalog {
   private showFavorites = false;
   private providers: ProviderInfo[] = [];
   private tags: TagInfo[] = [];
-  filters: Filters = emptyFilters();
+  private typeTabs!: HTMLElement;
+  /** cada aba (mangá/HQ/livro) mantém seu próprio filtro e paginação, sem misturar */
+  private activeType: ContentType = 'manga';
+  private filtersByType: Record<ContentType, Filters> = {
+    manga: emptyFilters(),
+    hq: emptyFilters(),
+    livro: emptyFilters(),
+  };
+  get filters(): Filters {
+    return this.filtersByType[this.activeType];
+  }
+  set filters(v: Filters) {
+    this.filtersByType[this.activeType] = v;
+  }
   private loading = false;
   private pending = false;
   private lastResponse?: SearchResponse;
@@ -103,6 +130,7 @@ export class Catalog {
     root.innerHTML = '';
     root.append(
       this.buildToolbar(),
+      (this.typeTabs = this.buildTypeTabs()),
       this.buildDrawer(),
       this.buildProviderModal(),
       (this.statusBar = el('div', { class: 'ml-status' })),
@@ -113,6 +141,7 @@ export class Catalog {
       toast(`falha ao listar providers: ${e.message}`, 'error');
       return [];
     });
+    this.renderTypeTabs();
     this.renderProviders();
     void this.loadTags();
     await this.run();
@@ -125,7 +154,9 @@ export class Catalog {
   }
 
   private async loadTags(): Promise<void> {
-    const online = this.providers.filter((p) => p.kind === 'online').map((p) => p.id);
+    const online = this.providersOfType(this.activeType)
+      .filter((p) => p.kind === 'online')
+      .map((p) => p.id);
     const lists = await Promise.all(online.map((p) => getTags(p).catch(() => [] as TagInfo[])));
     const byName = new Map<string, TagInfo>();
     for (const list of lists) for (const t of list) byName.set(t.name.toLowerCase(), t);
@@ -189,9 +220,58 @@ export class Catalog {
     );
   }
 
-  /** Quantas fontes estao valendo agora — lista vazia significa "todas". */
+  private providersOfType(type: ContentType): ProviderInfo[] {
+    return this.providers.filter((p) => p.contentType === type);
+  }
+
+  /** Provider desconhecido (ex. antes dos providers carregarem) entra por padrão — nunca some da tela. */
+  private isActiveType(providerId: string): boolean {
+    const p = this.providers.find((x) => x.id === providerId);
+    return !p || p.contentType === this.activeType;
+  }
+
+  /** Barra de abas Mangá/HQ/Livro — cada uma e' um catalogo independente. */
+  private buildTypeTabs(): HTMLElement {
+    return el(
+      'div',
+      { class: 'ml-typetabs' },
+      ...TYPE_TABS.map(([type, label]) =>
+        el(
+          'button',
+          {
+            class: `ml-typetab ml-typetab-${type}`,
+            'data-type': type,
+            onclick: () => this.switchType(type),
+          },
+          label,
+        ),
+      ),
+    );
+  }
+
+  private renderTypeTabs(): void {
+    for (const btn of this.typeTabs.children) {
+      (btn as HTMLElement).classList.toggle('is-on', (btn as HTMLElement).dataset['type'] === this.activeType);
+    }
+  }
+
+  private switchType(type: ContentType): void {
+    if (this.activeType === type) return;
+    this.activeType = type;
+    this.renderTypeTabs();
+    this.renderProviders();
+    this.rebuildDrawer();
+    void this.loadTags();
+    void this.run();
+  }
+
+  /** Quantas fontes estao valendo agora — lista vazia significa "todas [do tipo ativo]". */
   private activeProviders(): string[] {
-    return this.filters.providers.length ? this.filters.providers : this.providers.map((p) => p.id);
+    const pool = this.providersOfType(this.activeType).map((p) => p.id);
+    const chosen = this.filters.providers.length
+      ? this.filters.providers.filter((id) => pool.includes(id))
+      : pool;
+    return chosen.length ? chosen : pool;
   }
 
   private openProviders(open: boolean): void {
@@ -242,10 +322,11 @@ export class Catalog {
   }
 
   private renderProviders(): void {
+    const pool = this.providersOfType(this.activeType);
     const active = new Set(this.activeProviders());
     if (this.providerBtn) {
-      const todas = active.size === this.providers.length;
-      this.providerBtn.textContent = todas ? 'Fontes' : `Fontes (${active.size}/${this.providers.length})`;
+      const todas = active.size === pool.length;
+      this.providerBtn.textContent = todas ? 'Fontes' : `Fontes (${active.size}/${pool.length})`;
       this.providerBtn.classList.toggle('is-on', !todas);
     }
 
@@ -253,7 +334,7 @@ export class Catalog {
     if (!host) return;
     host.innerHTML = '';
 
-    for (const p of this.providers) {
+    for (const p of pool) {
       const on = active.has(p.id);
       host.append(
         el(
@@ -266,7 +347,7 @@ export class Catalog {
               else set.add(p.id);
               // nenhuma marcada nao pode virar busca vazia: volta a valer todas
               if (!set.size) this.filters.providers = [];
-              else this.filters.providers = set.size === this.providers.length ? [] : [...set];
+              else this.filters.providers = set.size === pool.length ? [] : [...set];
               this.filters.page = 1;
               this.renderProviders();
               void this.run();
@@ -476,6 +557,7 @@ export class Catalog {
       if (s) p.set(k, s);
     };
     put('q', f.q);
+    put('contentType', this.activeType);
     put('providers', f.providers);
     put('langs', f.langs);
     put('origin', f.origin);
@@ -525,7 +607,7 @@ export class Catalog {
 
   /** Listagem dos favoritos, montada do proprio armazenamento local. */
   private renderFavorites(): void {
-    const list = favorites();
+    const list = favorites().filter((f) => this.isActiveType(f.provider));
     this.statusBar.innerHTML = '';
     this.statusBar.append(
       el('span', {}, list.length ? `${list.length} favorito(s)` : 'nenhum favorito ainda'),
@@ -557,7 +639,9 @@ export class Catalog {
     );
 
     this.grid.innerHTML = '';
-    const recent = !this.filters.q && this.filters.page === 1 ? recentReads() : [];
+    const recent = !this.filters.q && this.filters.page === 1
+      ? recentReads().filter((r) => this.isActiveType(r.provider))
+      : [];
     if (!this.filters.q && this.filters.page === 1) {
       if (recent.length) {
         this.grid.append(el('h2', { class: 'ml-section' }, 'Continuar lendo'));
@@ -579,7 +663,7 @@ export class Catalog {
         this.grid.append(row);
       }
 
-      const marks = bookmarks();
+      const marks = bookmarks().filter((m) => this.isActiveType(m.provider));
       if (marks.length) {
         this.grid.append(el('h2', { class: 'ml-section' }, 'Marcadores'));
         const row = el('div', { class: 'ml-row' });
@@ -601,7 +685,7 @@ export class Catalog {
         this.grid.append(row);
       }
 
-      const favs = favorites();
+      const favs = favorites().filter((f) => this.isActiveType(f.provider));
       if (favs.length) {
         this.grid.append(el('h2', { class: 'ml-section' }, 'Favoritos'));
         const row = el('div', { class: 'ml-row' });
