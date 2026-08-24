@@ -116,6 +116,12 @@ export class Catalog {
     this.renderProviders();
     void this.loadTags();
     await this.run();
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      if (this.providerModal.classList.contains('is-open')) this.openProviders(false);
+      else if (this.drawer.classList.contains('is-open')) this.drawer.classList.remove('is-open');
+    });
   }
 
   private async loadTags(): Promise<void> {

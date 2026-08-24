@@ -996,6 +996,11 @@ textarea {
 .ml-ai-badge:hover {
   opacity: 1;
 }
+/* o leitor tem seu proprio indicador de IA na barra de status (ml-statusbar):
+   o badge global fixo so' atrapalha, sobrepondo miniaturas e o botao "auto" */
+.ml-reader.is-open ~ .ml-ai-badge {
+  display: none;
+}
 
 #toasts {
   position: fixed;
