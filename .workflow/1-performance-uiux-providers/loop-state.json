@@ -6,7 +6,8 @@
     ".workflow/1-performance-uiux-providers/prototype.md",
     ".workflow/1-performance-uiux-providers/plan.md",
     ".workflow/1-performance-uiux-providers/progress.md",
-    "https://github.com/juninmd/manga-lens/pull/2"
+    "https://github.com/juninmd/manga-lens/pull/2 (merged into main, 8c5167b)",
+    "tag v0.3.0"
   ],
   "awaiting": "iterate"
 }
