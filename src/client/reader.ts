@@ -28,6 +28,29 @@ function loadImage(url: string): Promise<HTMLImageElement> {
   });
 }
 
+/**
+ * Espera a imagem do sheet ficar utilizavel. Ouvir so' `load` era uma armadilha:
+ * pagina que responde 404 (ou host bloqueado no proxy) nunca emite `load`, a
+ * promessa nunca resolvia e o leitor ficava com `busy = true` para sempre — OCR,
+ * traducao e fila morriam no capitulo inteiro ate' recarregar o app.
+ */
+function imageReady(img: HTMLImageElement, timeoutMs = 20_000): Promise<boolean> {
+  if (img.complete) return Promise.resolve(img.naturalWidth > 0);
+  return new Promise((resolve) => {
+    const done = (ok: boolean): void => {
+      clearTimeout(timer);
+      img.removeEventListener('load', onLoad);
+      img.removeEventListener('error', onError);
+      resolve(ok);
+    };
+    const onLoad = (): void => done(img.naturalWidth > 0);
+    const onError = (): void => done(false);
+    const timer = window.setTimeout(() => done(false), timeoutMs);
+    img.addEventListener('load', onLoad);
+    img.addEventListener('error', onError);
+  });
+}
+
 const MODES: [ReadingMode, string][] = [
   ['single', 'pagina'],
   ['double', 'dupla'],
@@ -49,7 +72,6 @@ export class Reader {
     el('span', {}, 'carregando capitulo...'),
   );
   private viewer: Viewer;
-  private hud = el('div', { class: 'ml-hud' });
   private film = el('div', { class: 'ml-film' });
   private zoomLabel = el('span', { class: 'ml-zoom-label' }, '100%');
   private zoomRange = el('input', { class: 'ml-range', type: 'range', min: '5', max: '600', value: '100' });
@@ -69,7 +91,17 @@ export class Reader {
   private rtl = true;
   private pages: PageRef[] = [];
   private ocrCache = new Map<string, OcrBlock[]>();
+  /**
+   * Com que motor+idioma cada pagina do cache foi traduzida. Antes, trocar o
+   * idioma de destino limpava o cache inteiro e refazia o Tesseract da pagina —
+   * a parte cara — sendo que o texto reconhecido continua valendo: so' a traducao
+   * envelhece. Com o carimbo, trocar de idioma so' retraduz.
+   */
+  private translatedAs = new Map<string, string>();
   private busy = false;
+  /** pedido explicito de OCR feito enquanto outro estava em curso */
+  private ocrRequested = false;
+  private paintHandle = 0;
   private history: { role: 'user' | 'assistant'; content: string }[] = [];
 
   /** fila de adiantamento: paginas do capitulo atual e dos proximos, em ordem */
@@ -219,12 +251,7 @@ export class Reader {
         onchange: (e: Event) => {
           store.settings.targetLang = (e.target as HTMLSelectElement).value;
           persist();
-          // o cache guarda o texto ja' traduzido: outro idioma exige refazer
-          this.ocrCache.clear();
-          this.enqueued.clear();
-          this.queue.length = 0;
-          this.paintOverlays();
-          if (store.settings.autoTranslate) void this.runOcr(true);
+          this.invalidateTranslations();
         },
       },
       ...this.targets.map((t) =>
@@ -243,9 +270,7 @@ export class Reader {
         onchange: (e: Event) => {
           store.settings.engine = (e.target as HTMLSelectElement).value as TranslateEngine;
           persist();
-          this.ocrCache.clear();
-          this.paintOverlays();
-          if (store.settings.autoTranslate) void this.runOcr(true);
+          this.invalidateTranslations();
         },
       },
       ...this.engines.map((eng) =>
@@ -425,7 +450,17 @@ export class Reader {
 
   private refreshBars(): void {
     const top = this.host.querySelector('.ml-reader-top');
-    top?.replaceWith(this.buildTopBar());
+    // a barra e' reconstruida inteira a cada troca de modo/ajuste/marcador, e o
+    // controle que o usuario acabou de acionar deixa de existir: sem devolver o
+    // foco, navegar so' pelo teclado volta para o inicio do documento a cada clique
+    const before = top ? [...top.querySelectorAll('button, select')] : [];
+    const focused = before.indexOf(document.activeElement as Element);
+    const next = this.buildTopBar();
+    top?.replaceWith(next);
+    if (focused >= 0) {
+      const after = next.querySelectorAll<HTMLElement>('button, select');
+      after[focused]?.focus();
+    }
     this.host.querySelector('#reader-title')!.textContent = this.titleText();
   }
 
@@ -435,6 +470,10 @@ export class Reader {
     if (!this.detail || !this.chapter) return '';
     const num = this.chapter.number ? `Cap. ${this.chapter.number}` : (this.chapter.title ?? '');
     return `${this.detail.title} — ${num}${this.chapter.lang ? ` (${langLabel(this.chapter.lang)})` : ''}`;
+  }
+
+  get isOpen(): boolean {
+    return this.host.classList.contains('is-open');
   }
 
   /** O roteador de hash reabriria o mesmo capitulo por cima da leitura em curso. */
@@ -454,6 +493,7 @@ export class Reader {
     // seguir para o proximo capitulo da mesma obra aproveita o que a fila ja' traduziu
     if (!sameSeries) {
       this.ocrCache.clear();
+      this.translatedAs.clear();
       this.pagesByChapter.clear();
     }
     this.rtl = this.rtlFor(detail);
@@ -487,6 +527,11 @@ export class Reader {
         void this.pumpQueue();
       }
     } catch (err) {
+      // `this.chapter` ja' aponta para o capitulo novo: deixar as paginas do
+      // anterior no palco faria o OCR gravar pagina velha sob a chave do novo
+      this.pages = [];
+      this.viewer.setPages([], 0);
+      this.film.innerHTML = '';
       this.pageLabel.textContent = 'falhou';
       toast(`capitulo nao abriu: ${(err as Error).message}`, 'error');
     } finally {
@@ -517,6 +562,9 @@ export class Reader {
   }
 
   private onPageChange(page: number): void {
+    // capitulo que nao abriu nao tem pagina: sem esta guarda o `page >= length-1`
+    // abaixo daria verdadeiro em 0 >= -1 e marcaria como lido o que nunca abriu
+    if (!this.pages.length) return;
     this.pageLabel.textContent = `${page + 1} / ${this.pages.length}`;
     for (const t of this.film.children) t.classList.toggle('is-current', t.getAttribute('data-page') === String(page));
     this.film.querySelector('.is-current')?.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
@@ -540,7 +588,20 @@ export class Reader {
     if (store.settings.autoTranslate) void this.runOcr(false);
   }
 
+  /**
+   * Virar a pagina disparava duas repinturas completas (`onSheetsChange` e depois
+   * `onPageChange`), e cada uma refaz a busca binaria de corpo de letra balao a
+   * balao. Juntar no proximo quadro faz o trabalho uma vez so'.
+   */
   private paintOverlays(): void {
+    if (this.paintHandle) return;
+    this.paintHandle = requestAnimationFrame(() => {
+      this.paintHandle = 0;
+      this.repaintNow();
+    });
+  }
+
+  private repaintNow(): void {
     for (const sheet of this.viewer.visibleSheets()) {
       const blocks = this.ocrCache.get(this.pageKey(sheet.page));
       const width = sheet.img.naturalWidth || 1;
@@ -561,28 +622,72 @@ export class Reader {
 
   // ---------- OCR + traducao ----------
 
-  private async runOcr(force: boolean): Promise<void> {
-    if (this.busy) return;
-    const targets = this.viewer.visibleSheets().filter((s) => force || !this.ocrCache.has(this.pageKey(s.page)));
+  /** Motor + idioma com que uma traducao foi feita; muda um, a traducao vence. */
+  private stamp(): string {
+    return `${store.settings.engine}|${store.settings.targetLang}`;
+  }
+
+  /** Pagina ja' reconhecida E traduzida com o motor/idioma atuais. */
+  private isFresh(key: string): boolean {
+    return this.ocrCache.has(key) && this.translatedAs.get(key) === this.stamp();
+  }
+
+  /**
+   * Trocar motor ou idioma de destino invalida a traducao, nao o reconhecimento:
+   * o cache continua servindo de entrada e so' a chamada ao tradutor se repete.
+   */
+  private invalidateTranslations(): void {
+    this.translatedAs.clear();
+    this.enqueued.clear();
+    this.queue.length = 0;
+    this.paintOverlays();
+    if (store.settings.autoTranslate) {
+      void this.runOcr(true, true);
+      void this.pumpQueue();
+    }
+  }
+
+  private async runOcr(force: boolean, reuseOcr = false): Promise<void> {
+    if (this.busy) {
+      // Pedido explicito (botao OCR, tecla `o`, troca de idioma) era descartado em
+      // silencio quando a pagina anterior ainda estava sendo reconhecida: o usuario
+      // clicava e nada acontecia, sem nenhuma mensagem. Fica agendado.
+      if (force) {
+        this.ocrRequested = true;
+        this.ocrStatus.textContent = 'OCR pedido: entra assim que a pagina atual terminar';
+      }
+      return;
+    }
+    const targets = this.viewer.visibleSheets().filter((s) => force || !this.isFresh(this.pageKey(s.page)));
     if (!targets.length) return;
     this.busy = true;
 
     try {
       for (const sheet of targets) {
-        if (!sheet.img.complete || !sheet.img.naturalWidth) {
-          await new Promise((r) => sheet.img.addEventListener('load', r, { once: true }));
+        // uma pagina quebrada nao pode levar junto as outras do mesmo spread
+        try {
+          if (!(await imageReady(sheet.img))) {
+            this.ocrStatus.textContent = `pag. ${sheet.page + 1} nao carregou`;
+            continue;
+          }
+          const key = this.pageKey(sheet.page);
+          const blocks = await this.processImage(sheet.img, this.chapter, `pag. ${sheet.page + 1}`, key, reuseOcr);
+          this.ocrCache.set(key, blocks);
+          this.paintOverlays();
+          this.ocrStatus.textContent = blocks.length ? `${blocks.length} baloes` : 'sem texto nesta pagina';
+        } catch (err) {
+          this.ocrStatus.textContent = '';
+          toast(`OCR/traducao falhou: ${(err as Error).message}`, 'error');
         }
-        const blocks = await this.processImage(sheet.img, this.chapter, `pag. ${sheet.page + 1}`);
-        this.ocrCache.set(this.pageKey(sheet.page), blocks);
-        this.paintOverlays();
-        this.ocrStatus.textContent = blocks.length ? `${blocks.length} baloes` : 'sem texto nesta pagina';
       }
-    } catch (err) {
-      this.ocrStatus.textContent = '';
-      toast(`OCR/traducao falhou: ${(err as Error).message}`, 'error');
     } finally {
       this.busy = false;
-      void this.pumpQueue();
+      if (this.ocrRequested) {
+        this.ocrRequested = false;
+        void this.runOcr(true, reuseOcr);
+      } else {
+        void this.pumpQueue();
+      }
     }
   }
 
@@ -591,22 +696,43 @@ export class Reader {
     img: HTMLImageElement,
     chapter: ChapterRef | undefined,
     label: string,
+    key: string,
+    reuseOcr: boolean,
   ): Promise<OcrBlock[]> {
-    const lang = langFor(chapter?.lang, this.detail?.origin, store.settings.ocrLang);
-    this.ocrStatus.textContent = `OCR ${label} (${lang})...`;
-    const blocks = await recognizePage(img, lang, (p) => {
-      this.ocrStatus.textContent = `${label}: ${p.stage} ${Math.round(p.ratio * 100)}%`;
-    });
-    if (!blocks.length || !store.settings.autoTranslate) return blocks;
+    // reconhecer e' a parte cara; quando so' a traducao venceu, reaproveita
+    let blocks = reuseOcr ? this.ocrCache.get(key) : undefined;
+    if (!blocks) {
+      const lang = langFor(chapter?.lang, this.detail?.origin, store.settings.ocrLang);
+      this.ocrStatus.textContent = `OCR ${label} (${lang})...`;
+      blocks = await recognizePage(img, lang, (p) => {
+        this.ocrStatus.textContent = `${label}: ${p.stage} ${Math.round(p.ratio * 100)}%`;
+      });
+    }
+    // pagina sem balao ja' esta' pronta para qualquer idioma
+    if (!blocks.length) {
+      this.translatedAs.set(key, this.stamp());
+      return blocks;
+    }
+    // sem traducao ligada nao ha' o que carimbar: ligar o `traduzir` depois
+    // precisa encontrar a pagina como pendente, nao como pronta
+    if (!store.settings.autoTranslate) return blocks;
 
     this.ocrStatus.textContent = `${label}: traduzindo ${blocks.length} baloes...`;
-    return translateBlocks(blocks, {
+    // carimbo lido AGORA, nao no fim: se o usuario trocar de idioma enquanto esta
+    // pagina traduz, ela guarda o idioma com que foi realmente traduzida e a troca
+    // volta a alcanca-la
+    const stamp = this.stamp();
+    const translated = await translateBlocks(blocks, {
       sourceLang: chapter?.lang ?? this.detail?.origin,
       series: this.detail?.title,
       chapter: chapter?.number,
       engine: store.settings.engine,
       target: store.settings.targetLang,
     });
+    // so' depois de traduzir de fato: tradutor que falha nao pode deixar a pagina
+    // marcada como pronta e nunca mais ser tentada
+    this.translatedAs.set(key, stamp);
+    return translated;
   }
 
   // ---------- fila: traduz os proximos capitulos em sequencia ----------
@@ -640,7 +766,7 @@ export class Reader {
       if (this.generation !== mine) return;
       for (let p = fromPage; p < pages.length && this.queue.length < Reader.LOOKAHEAD; p++) {
         const key = this.pageKey(p, chapter.id);
-        if (this.ocrCache.has(key) || this.enqueued.has(key)) continue;
+        if (this.isFresh(key) || this.enqueued.has(key)) continue;
         this.enqueued.add(key);
         this.queue.push({ chapter, page: p, url: pages[p]!.url });
       }
@@ -666,9 +792,10 @@ export class Reader {
         const label = `${item.chapter.number ? `cap. ${item.chapter.number}` : 'cap.'} pag. ${item.page + 1}`;
         try {
           const img = await loadImage(item.url);
-          const blocks = await this.processImage(img, item.chapter, label);
+          const key = this.pageKey(item.page, item.chapter.id);
+          const blocks = await this.processImage(img, item.chapter, label, key, true);
           if (this.generation !== mine) break;
-          this.ocrCache.set(this.pageKey(item.page, item.chapter.id), blocks);
+          this.ocrCache.set(key, blocks);
           this.trimCache();
           if (item.chapter.id === this.chapter?.id) this.paintOverlays();
         } catch (err) {
@@ -696,6 +823,7 @@ export class Reader {
       const oldest = this.ocrCache.keys().next().value;
       if (oldest === undefined) break;
       this.ocrCache.delete(oldest);
+      this.translatedAs.delete(oldest);
     }
   }
 
@@ -797,10 +925,12 @@ export class Reader {
     const rtl = this.rtl;
     switch (e.key) {
       case 'ArrowRight':
-        rtl ? this.viewer.prev() : this.viewer.next();
+        if (rtl) this.viewer.prev();
+        else this.viewer.next();
         break;
       case 'ArrowLeft':
-        rtl ? this.viewer.next() : this.viewer.prev();
+        if (rtl) this.viewer.next();
+        else this.viewer.prev();
         break;
       case 'ArrowDown':
       case ' ':

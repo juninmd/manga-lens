@@ -14,6 +14,9 @@ export class SeriesPanel {
   private host = el('aside', { class: 'ml-series' });
   private detail?: SeriesDetail;
   private lang = '';
+  private readSummary = el('span', {});
+  /** um atualizador por linha: marcar capitulo mexe na linha, nao na lista toda */
+  private rowSyncs: (() => void)[] = [];
 
   constructor(private onRead: (detail: SeriesDetail, chapter: ChapterRef) => void) {
     document.body.append(this.host);
@@ -122,7 +125,7 @@ export class SeriesPanel {
       el(
         'div',
         { class: 'ml-read-summary' },
-        el('span', {}, `${readCount(d.provider, d.id)} de ${this.chaptersForLang().length} capitulos lidos`),
+        this.readSummary,
         el(
           'button',
           {
@@ -134,7 +137,7 @@ export class SeriesPanel {
                 this.chaptersForLang().map((c) => c.id),
                 false,
               );
-              this.render();
+              this.syncRead();
             },
           },
           'limpar leitura',
@@ -163,9 +166,22 @@ export class SeriesPanel {
     );
   }
 
+  /**
+   * Marcar capitulo chamava `render()`: em obra longa (Naruto tem 701 capitulos)
+   * isso reconstroi a lista inteira a cada clique — e, pior, joga a rolagem de
+   * volta ao topo, entao quem marca o capitulo 300 perde o lugar.
+   */
+  private syncRead(): void {
+    const d = this.detail;
+    if (!d) return;
+    for (const sync of this.rowSyncs) sync();
+    this.readSummary.textContent = `${readCount(d.provider, d.id)} de ${this.chaptersForLang().length} capitulos lidos`;
+  }
+
   private chapterList(currentId?: string): HTMLElement {
     const d = this.detail!;
     const list = el('div', { class: 'ml-chapters' });
+    this.rowSyncs = [];
     const chapters = this.chaptersForLang();
     const total = d.chapters?.length ?? 0;
 
@@ -207,23 +223,22 @@ export class SeriesPanel {
     }
 
     for (const [i, c] of chapters.entries()) {
-      const read = isChapterRead(d.provider, d.id, c.id);
+      const check = el(
+        'button',
+        {
+          class: 'ml-chapter-check',
+          onclick: (e: Event) => {
+            e.stopPropagation();
+            markChapterRead(d.provider, d.id, c.id, !isChapterRead(d.provider, d.id, c.id));
+            this.syncRead();
+          },
+        },
+        '○',
+      );
       const row = el(
         'div',
-        { class: `ml-chapter ${c.id === currentId ? 'is-current' : ''} ${read ? 'is-read' : ''}` },
-        el(
-          'button',
-          {
-            class: 'ml-chapter-check',
-            title: read ? 'marcar como nao lido' : 'marcar como lido',
-            onclick: (e: Event) => {
-              e.stopPropagation();
-              markChapterRead(d.provider, d.id, c.id, !read);
-              this.render();
-            },
-          },
-          read ? '✓' : '○',
-        ),
+        { class: `ml-chapter ${c.id === currentId ? 'is-current' : ''}` },
+        check,
         el(
           'button',
           { class: 'ml-chapter-open', onclick: () => this.onRead(d, c) },
@@ -243,14 +258,21 @@ export class SeriesPanel {
                 d.id,
                 chapters.slice(0, i + 1).map((x) => x.id),
               );
-              this.render();
+              this.syncRead();
             },
           },
           '⤓',
         ),
       );
+      this.rowSyncs.push(() => {
+        const on = isChapterRead(d.provider, d.id, c.id);
+        row.classList.toggle('is-read', on);
+        check.textContent = on ? '✓' : '○';
+        check.title = on ? 'marcar como nao lido' : 'marcar como lido';
+      });
       list.append(row);
     }
+    this.syncRead();
     return list;
   }
 }

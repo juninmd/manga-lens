@@ -71,7 +71,16 @@ const POOL_SIZE = Math.max(2, Math.min(4, (navigator.hardwareConcurrency || 4) -
 
 const pools = new Map<string, Promise<Worker>[]>();
 
-function getPool(lang: string, onProgress?: (p: OcrProgress) => void): Promise<Worker>[] {
+/**
+ * O logger e' fixado na criacao do worker, que acontece uma vez so'. Passar o
+ * callback do primeiro chamador direto para la' prendia a barra de status na
+ * primeira pagina para sempre: a fila adiantava a pagina 30 e a barra anunciava
+ * "pag. 1: recognizing text". O ponteiro movel faz o progresso pertencer a quem
+ * esta' reconhecendo agora.
+ */
+let activeProgress: ((p: OcrProgress) => void) | undefined;
+
+function getPool(lang: string): Promise<Worker>[] {
   let pool = pools.get(lang);
   if (!pool) {
     pool = Array.from({ length: POOL_SIZE }, (_, i) =>
@@ -85,7 +94,7 @@ function getPool(lang: string, onProgress?: (p: OcrProgress) => void): Promise<W
         logger:
           i === 0
             ? (m: { status: string; progress: number }) =>
-                onProgress?.({ stage: m.status, ratio: m.progress ?? 0 })
+                activeProgress?.({ stage: m.status, ratio: m.progress ?? 0 })
             : () => undefined,
       }),
     );
@@ -282,10 +291,14 @@ function detectBalloons(img: HTMLImageElement): { regions: Region[]; scale: numb
       if (x > x1) x1 = x;
       if (y < y0) y0 = y;
       if (y > y1) y1 = y;
+      // sequencia com virgula no lugar de bloco: este laco roda por pixel da
+      // pagina inteira e o corpo em uma linha e' o que mantem o custo baixo
+      /* oxlint-disable no-unused-expressions */
       if (x > 0 && !visited[p - 1] && gray[p - 1]! >= BRIGHT) (visited[p - 1] = 1), (stack[top++] = p - 1);
       if (x < w - 1 && !visited[p + 1] && gray[p + 1]! >= BRIGHT) (visited[p + 1] = 1), (stack[top++] = p + 1);
       if (y > 0 && !visited[p - w] && gray[p - w]! >= BRIGHT) (visited[p - w] = 1), (stack[top++] = p - w);
       if (y < h - 1 && !visited[p + w] && gray[p + w]! >= BRIGHT) (visited[p + w] = 1), (stack[top++] = p + w);
+      /* oxlint-enable no-unused-expressions */
     }
 
     const bw = x1 - x0 + 1;
@@ -448,7 +461,21 @@ export async function recognizePage(
   lang: string,
   onProgress?: (p: OcrProgress) => void,
 ): Promise<OcrBlock[]> {
-  const pool = await Promise.all(getPool(lang, onProgress));
+  const previous = activeProgress;
+  activeProgress = onProgress;
+  try {
+    return await recognize(img, lang, onProgress);
+  } finally {
+    activeProgress = previous;
+  }
+}
+
+async function recognize(
+  img: HTMLImageElement,
+  lang: string,
+  onProgress?: (p: OcrProgress) => void,
+): Promise<OcrBlock[]> {
+  const pool = await Promise.all(getPool(lang));
   const page = preprocess(img);
   const { regions, scale } = detectBalloons(img);
 

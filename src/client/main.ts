@@ -56,6 +56,10 @@ function openReader(detail: SeriesDetail, chapter: ChapterRef): void {
 
 async function route(): Promise<void> {
   const parts = location.hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent);
+  // Sair pelo botao da barra funcionava (ele chama history.back()), mas o caminho
+  // inverso nao: o Back do navegador trocava a hash, a rota abria o painel de
+  // serie e o leitor continuava por cima, em tela cheia, tapando tudo.
+  if (parts[0] !== 'r' && reader.isOpen) reader.close();
   if (parts[0] === 's' && parts[1] && parts[2]) {
     await seriesPanel.open(parts[1], parts.slice(2).join('/'));
     return;

@@ -39,6 +39,21 @@ textarea {
   color: inherit;
 }
 
+/*
+ * So' o card do catalogo marcava o foco. O leitor e' quase todo botao (barra
+ * superior, filme, lista de capitulos) e varios controles zeram o `outline` no
+ * proprio estilo — quem navega pelo teclado nao tinha pista nenhuma de onde
+ * estava. `:focus-visible` nao aparece no clique de mouse, entao nao muda o visual
+ * de quem usa ponteiro.
+ */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 2px;
+}
+
 /* ---------- controles ---------- */
 
 .ml-btn {
