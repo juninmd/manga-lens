@@ -2,7 +2,7 @@ import { readdir, stat } from 'node:fs/promises';
 import { join, resolve, basename, extname, sep } from 'node:path';
 import { config } from '../config.ts';
 import { readZipIndex } from '../zip.ts';
-import type { ChapterRef, PageRef, Provider, SeriesCard, SeriesDetail } from './types.ts';
+import type { ChapterRef, PageRef, Provider, SeriesCard } from './types.ts';
 
 const IMAGE_RE = /\.(jpe?g|png|webp|gif|bmp|avif)$/i;
 const ARCHIVE_RE = /\.(cbz|zip)$/i;

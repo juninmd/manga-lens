@@ -113,7 +113,7 @@ const cardOf = (doc: SearchDoc): SeriesCard => ({
 });
 
 /** O Archive indexa por palavra solta; aspas viram busca de frase e derrubam o recall. */
-const escapeQuery = (q: string): string => q.replace(/[:"()\[\]{}~^\\]/g, ' ').trim();
+const escapeQuery = (q: string): string => q.replace(/[:"()[\]{}~^\\]/g, ' ').trim();
 
 async function search(f: SearchFilters): Promise<{ items: SeriesCard[]; total?: number }> {
   const scope = `collection:(${SCOPE.join(' OR ')}) AND mediatype:texts`;
@@ -169,8 +169,8 @@ async function pageCount(id: string): Promise<number> {
   const meta = await getJson<Metadata>(`${BASE}/metadata/${encodeURIComponent(id)}`);
   // scandata e' o mais barato; nem toda edicao tem, e ai o djvu.xml serve de reserva
   const sources: { name: string; marker: RegExp }[] = [];
-  const scandata = meta.files?.find((f) => /_scandata\.xml$/.test(f.name));
-  const djvu = meta.files?.find((f) => /_djvu\.xml$/.test(f.name));
+  const scandata = meta.files?.find((f) => f.name.endsWith('_scandata.xml'));
+  const djvu = meta.files?.find((f) => f.name.endsWith('_djvu.xml'));
   if (scandata) sources.push({ name: scandata.name, marker: /<page\b/g });
   if (djvu) sources.push({ name: djvu.name, marker: /<OBJECT\b/g });
 

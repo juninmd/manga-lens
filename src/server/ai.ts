@@ -185,8 +185,13 @@ export async function translateBlocks(input: TranslateInput): Promise<{ id: numb
   const src = LANG_NAME[input.sourceLang ?? 'unknown'] ?? input.sourceLang;
   const dst = TARGET_NAME[(input.target ?? 'pt-br').toLowerCase()] ?? 'portugues do Brasil';
 
+  let batches = 0;
+  let failed = 0;
+  let lastError = '';
+
   for (let i = 0; i < input.blocks.length; i += BATCH) {
     const batch = input.blocks.slice(i, i + BATCH);
+    batches++;
     let raw = '';
     try {
       raw = await chat([
@@ -212,11 +217,19 @@ export async function translateBlocks(input: TranslateInput): Promise<{ id: numb
       out.push(...parseJsonArray<{ id: number; pt: string }>(raw));
     } catch (err) {
       // Traducao vazia sem log vira "o modelo nao traduziu"; o motivo real fica aqui.
-      console.error(`[traducao] lote ${i / BATCH} falhou: ${(err as Error).message}`);
+      failed++;
+      lastError = (err as Error).message;
+      console.error(`[traducao] lote ${i / BATCH} falhou: ${lastError}`);
       if (raw) console.error(`[traducao] resposta crua: ${raw.slice(0, 300)}`);
       out.push(...batch.map((b) => ({ id: b.id, pt: '' })));
     }
   }
+
+  // Mesma regra do caminho sem IA: um lote perdido e' aceitavel, o modelo inteiro
+  // fora do ar precisa virar erro. Engolindo isso, o modo automatico achava que a
+  // IA tinha respondido, a resposta saia 200 com tudo vazio e o leitor mostrava
+  // "N baloes" sem traduzir nada nem avisar por que.
+  if (batches > 0 && failed === batches) throw new Error(`IA indisponivel: ${lastError}`);
   return out;
 }
 

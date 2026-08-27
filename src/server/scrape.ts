@@ -9,12 +9,15 @@ const ENTITIES: Record<string, string> = {
 };
 
 export function decodeEntities(s: string): string {
-  return s.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (m, ent: string) => {
+  return s.replace(/&(#[xX]?[0-9a-fA-F]+|[a-zA-Z]+);/g, (m, ent: string) => {
     if (ENTITIES[ent]) return ENTITIES[ent]!;
-    if (ent.startsWith('#x') || ent.startsWith('#X'))
-      return String.fromCodePoint(Number.parseInt(ent.slice(2), 16));
-    if (ent.startsWith('#')) return String.fromCodePoint(Number.parseInt(ent.slice(1), 10));
-    return m;
+    if (!ent.startsWith('#')) return m;
+    const hex = ent[1] === 'x' || ent[1] === 'X';
+    const code = Number.parseInt(ent.slice(hex ? 2 : 1), hex ? 16 : 10);
+    // HTML de provider vem quebrado: codepoint fora do intervalo Unicode lanca
+    // RangeError e derrubaria a busca inteira. Entidade impossivel fica literal.
+    if (!Number.isInteger(code) || code < 0 || code > 0x10ffff) return m;
+    return String.fromCodePoint(code);
   });
 }
 

@@ -46,6 +46,9 @@ export async function httpFetch(url: string, opts: FetchOpts = {}): Promise<Resp
       }
       return res;
     } catch (err) {
+      // desistencia deliberada (429/5xx apos os retries) ja' carrega o status do
+      // upstream; sem isto o proprio catch a converteria num generico 502
+      if (err instanceof HttpError) throw err;
       lastErr = err;
       if (attempt >= retries) break;
       await Bun.sleep(400 * 2 ** attempt);

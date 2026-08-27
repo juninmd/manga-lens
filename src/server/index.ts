@@ -6,7 +6,7 @@ import { signUrl, verifyUrl } from './sign.ts';
 import { httpFetch } from './http.ts';
 import { enabledProviders, getProvider, searchAll } from './providers/index.ts';
 import type { SearchFilters, SeriesCard } from './providers/types.ts';
-import { assertInsideLibrary, decodePath, localPagePaths } from './providers/local.ts';
+import { assertInsideLibrary, localPagePaths } from './providers/local.ts';
 import { readZipEntry, readZipIndex } from './zip.ts';
 import { aiHealth, explainStream, translateBlocks, visionTranslate } from './ai.ts';
 import { engines, targets, translateWithEngine, type Engine } from './translators.ts';
@@ -188,7 +188,9 @@ app.get('/api/local/page', async (c) => {
     const file = Bun.file(assertInsideLibrary(join(base, name)));
     return new Response(file, { headers: imageHeaders });
   }
-  const entries = await readZipIndex(decodePath(chapterToken));
+  // `base` ja' passou por assertInsideLibrary; decodificar o token de novo aqui
+  // seria reabrir o caminho cru vindo da query
+  const entries = await readZipIndex(base);
   const entry = entries.find((e) => e.name === name);
   if (!entry) return c.text('pagina inexistente no CBZ', 404);
   const buf = await readZipEntry(base, entry);
@@ -233,7 +235,17 @@ app.post('/api/ai/translate', async (c) => {
   const body = (await c.req.json()) as TranslateBody;
   if (!Array.isArray(body?.blocks) || !body.blocks.length) return c.json({ error: 'blocks vazio' }, 400);
   const chosen: Engine = body.engine ?? 'auto';
-  if (chosen !== 'auto') return c.json({ translations: await runEngine(chosen, body), engine: chosen });
+  if (chosen !== 'auto') {
+    try {
+      return c.json({ translations: await runEngine(chosen, body), engine: chosen });
+    } catch (err) {
+      // Motor fixado que cai quase sempre e' limite do provider (429 do Google),
+      // nao defeito daqui. Sem este corte a excecao subia para o onError e virava
+      // 500: o cliente nao tinha como separar "o tradutor esta' me limitando" de
+      // "o servidor quebrou", e o caminho `auto` ja' devolve 502 no mesmo caso.
+      return c.json({ error: (err as Error).message }, 502);
+    }
+  }
 
   // sem IA sempre que der: so' desce a lista quando o motor de cima cai inteiro
   const problems: string[] = [];
