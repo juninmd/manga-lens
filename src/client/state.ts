@@ -91,15 +91,36 @@ function load(): Store {
 export const store: Store = load();
 
 let saveTimer: number | undefined;
+
+function writeNow(): void {
+  clearTimeout(saveTimer);
+  saveTimer = undefined;
+  try {
+    localStorage.setItem(KEY, JSON.stringify(store));
+  } catch {
+    /* quota cheia: preferencia nao vale travar a leitura */
+  }
+}
+
 export function persist(): void {
   clearTimeout(saveTimer);
-  saveTimer = window.setTimeout(() => {
-    try {
-      localStorage.setItem(KEY, JSON.stringify(store));
-    } catch {
-      /* quota cheia: preferencia nao vale travar a leitura */
-    }
-  }, 200);
+  saveTimer = window.setTimeout(writeNow, 200);
+}
+
+/**
+ * O debounce economiza escrita durante a leitura, mas a janela pode morrer antes
+ * de ele disparar — fechar o app logo depois de virar a pagina perdia a posicao.
+ * `pagehide` cobre fechar/navegar; `visibilitychange` cobre o app mandado para o
+ * fundo no desktop, que nem sempre chega a emitir `pagehide`.
+ */
+if (typeof window !== 'undefined') {
+  const flush = (): void => {
+    if (saveTimer !== undefined) writeNow();
+  };
+  window.addEventListener('pagehide', flush);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flush();
+  });
 }
 
 export const seriesKey = (provider: string, id: string): string => `${provider}:${id}`;
@@ -139,10 +160,43 @@ export function saveProgress(p: Progress): void {
 export const getProgress = (provider: string, seriesId: string): Progress | undefined =>
   store.progress[seriesKey(provider, seriesId)];
 
+/**
+ * Troca a capa guardada de uma obra em todos os lugares que a repetem. Capa e'
+ * salva ja' assinada; assinatura feita por um servidor antigo responde 403 para
+ * sempre, e sem regravar a entrada o favorito ficaria sem imagem ate' o usuario
+ * desfavoritar e favoritar de novo.
+ */
+export function updateStoredCover(provider: string, id: string, cover: string): void {
+  const key = seriesKey(provider, id);
+  const fav = store.favorites[key];
+  if (fav) fav.cover = cover;
+  const progress = store.progress[key];
+  if (progress) progress.cover = cover;
+  for (const mark of store.bookmarks) {
+    if (mark.provider === provider && mark.seriesId === id) mark.cover = cover;
+  }
+  persist();
+}
+
 // ---------- capitulos lidos ----------
 
-const readSet = (provider: string, seriesId: string): Set<string> =>
-  new Set(store.read[seriesKey(provider, seriesId)] ?? []);
+/**
+ * O Set fica guardado por serie. Montar um novo a cada consulta parecia barato,
+ * mas `isChapterRead` e' chamado uma vez por linha da lista: em obra longa (Naruto
+ * tem 701 capitulos) sao 701 Sets construidos, ~490 mil insercoes, a cada
+ * renderizacao do painel — e o painel re-renderiza a cada capitulo marcado.
+ */
+const readCache = new Map<string, Set<string>>();
+
+const readSet = (provider: string, seriesId: string): Set<string> => {
+  const key = seriesKey(provider, seriesId);
+  let set = readCache.get(key);
+  if (!set) {
+    set = new Set(store.read[key] ?? []);
+    readCache.set(key, set);
+  }
+  return set;
+};
 
 export const isChapterRead = (provider: string, seriesId: string, chapterId: string): boolean =>
   readSet(provider, seriesId).has(chapterId);
@@ -151,18 +205,16 @@ export const readCount = (provider: string, seriesId: string): number =>
   (store.read[seriesKey(provider, seriesId)] ?? []).length;
 
 export function markChapterRead(provider: string, seriesId: string, chapterId: string, read = true): void {
-  const set = readSet(provider, seriesId);
-  if (read) set.add(chapterId);
-  else set.delete(chapterId);
-  store.read[seriesKey(provider, seriesId)] = [...set];
-  persist();
+  markUpTo(provider, seriesId, [chapterId], read);
 }
 
 /** Marca o capitulo e todos os anteriores — como se pega uma serie no meio. */
 export function markUpTo(provider: string, seriesId: string, chapterIds: string[], read = true): void {
   const set = readSet(provider, seriesId);
-  for (const id of chapterIds) if (read) set.add(id);
-  else set.delete(id);
+  for (const id of chapterIds) {
+    if (read) set.add(id);
+    else set.delete(id);
+  }
   store.read[seriesKey(provider, seriesId)] = [...set];
   persist();
 }

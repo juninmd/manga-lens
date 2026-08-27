@@ -1,5 +1,6 @@
 import {
   getProviders,
+  getSeries,
   getTags,
   search,
   type ContentType,
@@ -9,7 +10,15 @@ import {
   type TagInfo,
 } from './api.ts';
 import { debounce, el, langLabel, STATUS_LABEL, toast } from './ui.ts';
-import { bookmarks, favorites, isFavorite, readCount, recentReads, toggleFavorite } from './state.ts';
+import {
+  bookmarks,
+  favorites,
+  isFavorite,
+  readCount,
+  recentReads,
+  toggleFavorite,
+  updateStoredCover,
+} from './state.ts';
 
 export interface Filters {
   q: string;
@@ -94,7 +103,6 @@ export interface CatalogHandlers {
 }
 
 export class Catalog {
-  private root!: HTMLElement;
   private grid!: HTMLElement;
   private statusBar!: HTMLElement;
   private drawer!: HTMLElement;
@@ -126,7 +134,6 @@ export class Catalog {
   constructor(private handlers: CatalogHandlers) {}
 
   async mount(root: HTMLElement): Promise<void> {
-    this.root = root;
     root.innerHTML = '';
     root.append(
       this.buildToolbar(),
@@ -659,7 +666,7 @@ export class Catalog {
                 class: 'ml-resume',
                 onclick: () => this.handlers.onResume(r.provider, r.seriesId),
               },
-              r.cover ? el('img', { src: r.cover, loading: 'lazy', alt: '' }) : el('div', { class: 'ml-nocover' }),
+              this.storedCover(r.provider, r.seriesId, r.cover),
               el('span', {}, `${r.title}`),
               el('small', {}, `${r.chapterLabel} · pag. ${r.page + 1}`),
             ),
@@ -681,7 +688,7 @@ export class Catalog {
                 title: `${m.title} — ${m.chapterLabel}, pagina ${m.page + 1}`,
                 onclick: () => this.handlers.onOpenBookmark(m.provider, m.seriesId, m.chapterId, m.page),
               },
-              m.cover ? el('img', { src: m.cover, loading: 'lazy', alt: '' }) : el('div', { class: 'ml-nocover' }),
+              this.storedCover(m.provider, m.seriesId, m.cover),
               el('span', {}, m.title),
               el('small', {}, `🔖 ${m.chapterLabel} · pag. ${m.page + 1}`),
             ),
@@ -703,7 +710,7 @@ export class Catalog {
                 title: f.title,
                 onclick: () => this.handlers.onOpenSeries(f.provider, f.id),
               },
-              f.cover ? el('img', { src: f.cover, loading: 'lazy', alt: '' }) : el('div', { class: 'ml-nocover' }),
+              this.storedCover(f.provider, f.id, f.cover),
               el('span', {}, f.title),
               el('small', {}, `★ ${f.provider}`),
             ),
@@ -754,6 +761,33 @@ export class Catalog {
         ),
       ),
     );
+  }
+
+  /**
+   * Capa vinda do armazenamento local. Ela foi salva JA assinada, e assinatura de
+   * um servidor antigo responde 403 para sempre: sem reparo o favorito ficaria
+   * sem imagem ate' o usuario desfavoritar e favoritar de novo. No erro, busca a
+   * serie de novo, troca a imagem e regrava — uma vez so' por obra.
+   */
+  private storedCover(provider: string, id: string, cover: string | undefined): HTMLElement {
+    if (!cover) return el('div', { class: 'ml-nocover' });
+    const img = el('img', { src: cover, loading: 'lazy', alt: '' });
+    img.addEventListener('error', () => void this.healCover(provider, id, img), { once: true });
+    return img;
+  }
+
+  private async healCover(provider: string, id: string, img: HTMLImageElement): Promise<void> {
+    const fresh = await getSeries(provider, id)
+      .then((d) => d.cover)
+      .catch(() => undefined);
+    // mesma URL de volta significa que a capa em si morreu, nao a assinatura:
+    // reatribuir dispararia o erro outra vez, em laco
+    if (!fresh || fresh === img.getAttribute('src')) {
+      img.replaceWith(el('div', { class: 'ml-nocover' }));
+      return;
+    }
+    img.src = fresh;
+    updateStoredCover(provider, id, fresh);
   }
 
   private card(item: SeriesCard): HTMLElement {
@@ -826,6 +860,11 @@ export class Catalog {
           cover.classList.remove('is-loading');
         },
         onerror: () => cover.classList.remove('is-loading'),
+      });
+      // a aba de favoritos monta o card com a capa guardada, que pode ter sido
+      // assinada por um servidor antigo — repara uma vez e regrava
+      img.addEventListener('error', () => void this.healCover(current().provider, current().id, img), {
+        once: true,
       });
       cover.append(img);
     } else {
