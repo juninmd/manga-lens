@@ -30,3 +30,4 @@ scripts/.desktop.png
 .sc.err
 .tauri-run.log
 .tauri-run.err
+.local-run.log

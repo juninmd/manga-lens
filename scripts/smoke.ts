@@ -47,11 +47,9 @@ await check('GET /api/tags (mangadex)', async () => {
   return `${tags.length} tags`;
 });
 
-let first: { provider: string; id: string } | undefined;
 await check('GET /api/search agregada', async () => {
   const res = await get('/api/search?q=naruto&limit=6');
   if (!res.items?.length) throw new Error(`sem itens; erros: ${JSON.stringify(res.errors)}`);
-  first = res.items[0];
   const cover = res.items.find((i: { cover?: string }) => i.cover)?.cover;
   if (cover && !cover.startsWith('/api/img?')) throw new Error('capa nao saiu proxiada/assinada');
   return `${res.items.length} itens — ${JSON.stringify(res.perProvider)}`;
@@ -85,7 +83,9 @@ for (const engine of ['google', 'mymemory']) {
         ],
       }),
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    // o corpo carrega o "upstream 429" que `throttled` procura: sem ele um limite
+    // do Google viraria falha vermelha em vez de aviso
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
     const data = (await res.json()) as { translations: { id: number; pt: string }[] };
     const first = data.translations.find((t) => t.id === 0)?.pt ?? '';
     if (!first) throw new Error('bloco util voltou vazio');

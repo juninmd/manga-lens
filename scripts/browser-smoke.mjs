@@ -18,11 +18,15 @@ page.on('console', (m) => {
   if (m.type() === 'error') console.log('  [console]', m.text().slice(0, 200));
 });
 
-// traducao ligada e motor sem IA: a homologacao nao pode depender do LLM local
+// Traducao ligada, em modo automatico. Fixar 'google' amarrava a homologacao da
+// UI inteira a um provider so': quando o Google devolve 429 (acontece em rajada)
+// nenhum balao traduz e o teste acusa defeito nosso. O 'auto' tenta Google,
+// MyMemory e so' entao a IA — e o que cada motor faz sozinho ja' e' coberto
+// pelo `bun run smoke`.
 await page.addInitScript(() => {
   localStorage.setItem(
     'manga-lens:v1',
-    JSON.stringify({ settings: { autoTranslate: true, engine: 'google', font: 'comic' } }),
+    JSON.stringify({ settings: { autoTranslate: true, engine: 'auto', font: 'comic' } }),
   );
 });
 
@@ -108,20 +112,19 @@ try {
 
   // OCR de verdade (baixa o modelo e reconhece a pagina)
   await page.locator('button:has-text("OCR")').click();
-  // "traduzindo N baloes..." ainda e' meio do caminho: esperar so' por /baloes/
-  // media o canvas antes de existir pintura. O status final e' "N baloes".
+  // Esperar pelo TEXTO da barra de status era corrida: com a fila adiantando
+  // paginas em paralelo, o "N baloes" que aparece pode ser de outra pagina, e a
+  // medicao saia da capa em vez da pagina aberta. O cache e' o sinal exato — a
+  // chave termina no indice da pagina (`:10` = pagina 11).
   await page.waitForFunction(
-    () => {
-      const s = document.querySelector('.ml-ocr-status');
-      return s && /^\d+ baloes$|sem texto|nao achou/.test((s.textContent ?? '').trim());
-    },
+    () => (window.__mangaLens?.translatedKeys?.() ?? []).some((k) => k.endsWith(':10')),
+    null,
     { timeout: 300_000 },
   );
   const ocrStatus = await page.locator('.ml-ocr-status').innerText();
   // a traducao e' composta no canvas, nao em DOM: os baloes so' existem no cache
   const blocks = await page.evaluate(() => {
-    const keys = window.__mangaLens?.translatedKeys?.() ?? [];
-    const key = keys.find((k) => k.endsWith(':10')) ?? keys.at(-1);
+    const key = (window.__mangaLens?.translatedKeys?.() ?? []).find((k) => k.endsWith(':10'));
     return (window.__mangaLens?.blocksFor?.(key) ?? []).map((b) => ({ text: b.text, pt: b.pt ?? '' }));
   });
   record('OCR na pagina', blocks.length >= 3, `${ocrStatus} / ${blocks.length} baloes`);
@@ -211,7 +214,7 @@ try {
   // espera fixa aqui virava corrida: com o OCR paralelo ocupando a CPU, a lista
   // as vezes ainda nao repintou em 600ms. O estado ja' foi conferido acima.
   await page
-    .waitForFunction(() => document.querySelectorAll('.ml-chapter.is-read').length > 0, { timeout: 15_000 })
+    .waitForFunction(() => document.querySelectorAll('.ml-chapter.is-read').length > 0, null, { timeout: 15_000 })
     .catch(() => undefined);
   const readRows = await page.locator('.ml-chapter.is-read').count();
   record('lista marca capitulo lido', readRows > 0, `${readRows} capitulo(s) marcados`);
@@ -229,6 +232,16 @@ try {
   record('modo tira (webtoon)', sheets > 1, `${sheets} paginas empilhadas`);
 
   await page.screenshot({ path: 'scripts/.smoke-reader.png' });
+
+  // O Back do navegador tem de sair da leitura. Sair pelo botao da barra sempre
+  // funcionou (ele chama history.back()); o caminho inverso deixava o leitor
+  // aberto por cima do painel de serie, em tela cheia, tapando tudo.
+  await page.goBack();
+  const leftReader = await page
+    .waitForFunction(() => !document.querySelector('.ml-reader.is-open'), null, { timeout: 10_000 })
+    .then(() => true)
+    .catch(() => false);
+  record('Back do navegador fecha o leitor', leftReader, leftReader ? 'voltou para a serie' : 'leitor continuou aberto');
 } catch (err) {
   record('execucao', false, String(err).slice(0, 300));
 } finally {

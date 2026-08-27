@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# PR novo cancela a execucao anterior do mesmo branch: nada de fila de builds mortos
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.13'
+
+      - name: Instalar dependencias
+        run: bun install --frozen-lockfile
+
+      # lint + typecheck + testes unitarios: tudo deterministico e sem rede.
+      # A homologacao com provider real (`bun run smoke`) fica de fora de proposito:
+      # depende de site de terceiro no ar e tornaria o vermelho do CI ambiguo.
+      - name: Lint
+        run: bun run lint
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Testes unitarios
+        run: bun run test
+
+      - name: Build do cliente
+        run: bun run build:client

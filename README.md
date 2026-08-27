@@ -168,6 +168,19 @@ uma tradução.
 
 ## Verificação
 
+Duas camadas, de propósito. `bun run check` é determinístico e roda offline — é o
+que o CI executa e o que precisa estar verde antes de qualquer commit. Os `smoke`
+batem em provider de verdade: provam a integração, mas dependem de site de
+terceiro no ar, então nunca entram no CI.
+
+```powershell
+bun run check           # lint + typecheck + testes unitários (sem rede, ~7s)
+bun run lint            # oxlint, categoria correctness, aviso é erro
+bun run typecheck       # tsc --noEmit sobre src, scripts e tests
+bun run test            # bun test: assinatura HMAC, allowlist de host, travessia
+                        # de caminho, CBZ, retry/backoff, tradutores, agregação
+```
+
 ```powershell
 bun run smoke           # API: providers, filtros, ciclo busca→série→páginas→imagem,
                         # recusa de URL não assinada, tessdata, health da IA
@@ -175,7 +188,6 @@ bun run smoke:browser   # UI real no chromium: zoom no scroll, arrasto, duplo cl
                         # navegador em miniatura, OCR de verdade, modo tira
 bun run smoke:desktop   # app Tauri compilado, inspecionado por CDP: porta do sidecar,
                         # CORS, canvas não-tainted, assets do OCR, sidecar sem órfão
-bunx tsc --noEmit
 
 # diagnóstico quando algo dá errado
 node scripts/ocr-probe.mjs 10     # qualidade crua do OCR numa página real
