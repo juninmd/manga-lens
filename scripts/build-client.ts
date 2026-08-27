@@ -7,7 +7,7 @@ const result = await Bun.build({
   outdir: 'public',
   naming: '[dir]/app.[ext]',
   target: 'browser',
-  minify: false,
+  minify: true,
   sourcemap: 'linked',
   define: { 'process.env.NODE_ENV': '"production"' },
 });
