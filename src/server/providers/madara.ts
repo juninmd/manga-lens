@@ -33,6 +33,20 @@ const ORDER: Record<string, string> = {
 
 const slugOf = (url: string): string => /\/manga\/([^/]+)/.exec(url)?.[1] ?? '';
 
+/**
+ * O Madara publica a nota no card (`<span class="... total_votes">3.3</span>`),
+ * mas numa escala de 0 a 5 — o MangaDex usa 0 a 10. Mostrar os dois crus na
+ * mesma estrela faria uma obra bem avaliada aqui (4.1) parecer pior que uma
+ * mediana de la'; por isso sobe para a mesma escala. Nota 0 e' "ninguem votou",
+ * nao "pessima": vira ausencia de nota.
+ */
+export function ratingOf(block: string): number | undefined {
+  const raw = first(block, /class="[^"]*total_votes[^"]*">\s*([\d.]+)\s*</);
+  const score = Number(raw);
+  if (!Number.isFinite(score) || score <= 0) return undefined;
+  return Math.round(Math.min(score, 5) * 2 * 10) / 10;
+}
+
 const field = (block: string, label: string): string | undefined => {
   const re = new RegExp(
     `<div class="summary-heading">\\s*<h5>\\s*${label}[^<]*</h5>\\s*</div>\\s*<div class="summary-content">([\\s\\S]*?)</div>`,
@@ -70,6 +84,7 @@ export function createMadaraProvider(site: MadaraSite): Provider {
           cover: first(block, /<img[^>]+src="([^"]+)"/),
           coverReferer: referer,
           year: year && /^\d{4}$/.test(year) ? Number(year) : undefined,
+          rating: ratingOf(block),
           status: STATUS_OUT[status],
           type: 'manga',
           origin: 'ja',
@@ -181,6 +196,7 @@ export function createMadaraProvider(site: MadaraSite): Provider {
           ),
           status: STATUS_OUT[status],
           year: year && /^\d{4}$/.test(year) ? Number(year) : undefined,
+          rating: ratingOf(page),
           origin: 'ja',
           type: 'manga',
           tags: (field(page, 'Genre') ?? '')
