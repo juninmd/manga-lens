@@ -490,6 +490,127 @@ function crop(source: HTMLCanvasElement, r: Box, pad: number): HTMLCanvasElement
   return out;
 }
 
+/** Quanto de `box` esta' dentro de `b` — texto que ja' saiu no balao nao repete. */
+function covered(b: OcrBlock, box: Box): boolean {
+  const ix = Math.min(b.x + b.w, box.x + box.w) - Math.max(b.x, box.x);
+  const iy = Math.min(b.y + b.h, box.y + box.h) - Math.max(b.y, box.y);
+  if (ix <= 0 || iy <= 0) return false;
+  return (ix * iy) / (box.w * box.h) > 0.5;
+}
+
+/**
+ * Amostra o retangulo na pagina original. Devolve as cores so' quando o fundo e'
+ * liso: sem mascara de balao, apagar significa `fillRect`, e fazer isso em cima
+ * de arte apagaria o desenho. Texto sobre desenho (onomatopeia, letreiro na
+ * ilustracao) fica de fora de proposito — melhor nao traduzir do que destruir.
+ */
+function flatBackground(img: HTMLImageElement, box: Box): { bg: string; fg: string } | null {
+  const w = Math.max(1, Math.min(Math.round(box.w), 220));
+  const h = Math.max(1, Math.round((box.h * w) / Math.max(box.w, 1)));
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+  ctx.drawImage(img, box.x, box.y, box.w, box.h, 0, 0, w, h);
+  const px = ctx.getImageData(0, 0, w, h).data;
+
+  const hist = new Uint32Array(256);
+  const gray = new Uint8Array(w * h);
+  for (let i = 0, p = 0; i < px.length; i += 4, p++) {
+    const g = (0.299 * px[i]! + 0.587 * px[i + 1]! + 0.114 * px[i + 2]!) | 0;
+    gray[p] = g;
+    hist[g] = (hist[g] ?? 0) + 1;
+  }
+  let peak = 0;
+  for (let v = 1; v < 256; v++) if ((hist[v] ?? 0) > (hist[peak] ?? 0)) peak = v;
+
+  let bgN = 0;
+  let bgR = 0;
+  let bgG = 0;
+  let bgB = 0;
+  let fgN = 0;
+  let fgR = 0;
+  let fgG = 0;
+  let fgB = 0;
+  for (let p = 0; p < gray.length; p++) {
+    const i = p * 4;
+    if (Math.abs(gray[p]! - peak) <= 22) {
+      bgN++;
+      bgR += px[i]!;
+      bgG += px[i + 1]!;
+      bgB += px[i + 2]!;
+    } else if (Math.abs(gray[p]! - peak) > 60) {
+      fgN++;
+      fgR += px[i]!;
+      fgG += px[i + 1]!;
+      fgB += px[i + 2]!;
+    }
+  }
+  // fundo liso = a cor dominante ocupa a maior parte do retangulo
+  if (bgN / gray.length < 0.55) return null;
+  return {
+    bg: rgb(bgR / bgN, bgG / bgN, bgB / bgN),
+    fg: fgN ? rgb(fgR / fgN, fgG / fgN, fgB / fgN) : '#111111',
+  };
+}
+
+/**
+ * Segunda passada, na pagina inteira: le o que nao mora em balao — epigrafe,
+ * caixa de narracao, legenda de tempo/lugar, titulo. O detector de baloes procura
+ * mancha clara FECHADA, entao texto solto sobre o fundo da pagina era invisivel
+ * para ele: em Bleach vol.1 a epigrafe "We fear that which we cannot see" e o
+ * indice do volume nunca apareciam, e a pagina do indice devolvia "sem texto".
+ *
+ * Vem em paragrafos, cada um com sua caixa — nao a pagina inteira num bloco so',
+ * que era o que a antiga saida de emergencia fazia (e que, ao traduzir, pintava
+ * a folha inteira de branco por causa do `fillRect` sem mascara).
+ */
+async function looseText(
+  worker: Worker,
+  page: HTMLCanvasElement,
+  img: HTMLImageElement,
+  balloons: OcrBlock[],
+  onProgress?: (p: OcrProgress) => void,
+): Promise<OcrBlock[]> {
+  onProgress?.({ stage: 'texto fora de balao', ratio: 0.95 });
+  await worker.setParameters({ tessedit_pageseg_mode: '3' as never });
+  const { data } = await worker.recognize(page, {}, { blocks: true, text: true });
+
+  const out: OcrBlock[] = [];
+  for (const block of data.blocks ?? []) {
+    for (const par of block.paragraphs ?? []) {
+      const text = (par.text ?? '').replace(/\s*\n\s*/g, '\n').trim();
+      if (text.replace(/[^\p{L}\p{N}]/gu, '').length < 3) continue;
+      if ((par.confidence ?? 0) < 40) continue;
+
+      const box: Box = {
+        x: par.bbox.x0 / UPSCALE,
+        y: par.bbox.y0 / UPSCALE,
+        w: (par.bbox.x1 - par.bbox.x0) / UPSCALE,
+        h: (par.bbox.y1 - par.bbox.y0) / UPSCALE,
+      };
+      if (box.w < 24 || box.h < 12) continue;
+      if (balloons.some((b) => covered(b, box))) continue;
+
+      const flat = flatBackground(img, box);
+      if (!flat) continue;
+
+      const letters = text.replace(/[^\p{L}]/gu, '');
+      const uppers = text.replace(/[^\p{Lu}]/gu, '');
+      out.push({
+        id: 0,
+        text,
+        confidence: par.confidence ?? 0,
+        ...box,
+        bg: flat.bg,
+        fg: flat.fg,
+        upper: letters.length > 0 && uppers.length / letters.length > 0.7,
+      });
+    }
+  }
+  return out;
+}
+
 export async function recognizePage(
   img: HTMLImageElement,
   lang: string,
@@ -512,17 +633,6 @@ async function recognize(
   const pool = await Promise.all(getPool(lang));
   const page = preprocess(img);
   const { regions, scale } = detectBalloons(img);
-
-  // Sem balao detectado (pagina colorida, HQ ocidental), cai para a pagina inteira.
-  if (!regions.length) {
-    const worker = pool[0]!;
-    await worker.setParameters({ tessedit_pageseg_mode: '3' as never });
-    const { data } = await worker.recognize(page, {}, { text: true });
-    const text = (data.text ?? '').trim();
-    return text.length > 3
-      ? [{ id: 0, text, confidence: data.confidence ?? 0, x: 0, y: 0, w: img.naturalWidth, h: img.naturalHeight }]
-      : [];
-  }
 
   // vertical (japones) le melhor em coluna unica; o resto, bloco uniforme
   const vertical = lang.includes('vert');
@@ -570,8 +680,12 @@ async function recognize(
     }),
   );
 
+  const balloons = found.filter((b): b is OcrBlock => b !== null);
+  const loose = await looseText(pool[0]!, page, img, balloons, onProgress);
   // id contiguo: a traducao volta casada por id, entao nao pode ter buraco
-  return found.filter((b): b is OcrBlock => b !== null).map((b, id) => ({ ...b, id }));
+  return [...balloons, ...loose]
+    .sort((a, b) => a.y - b.y || a.x - b.x)
+    .map((b, id) => ({ ...b, id }));
 }
 
 export async function translateBlocks(
