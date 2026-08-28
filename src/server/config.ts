@@ -62,11 +62,23 @@ export interface ProviderConfig {
   visionModel?: string;
 }
 
+export function normalizeBaseUrl(url: string | undefined, provider: AiProvider): string {
+  let u = (url ?? '').trim().replace(/\/+$/, '');
+  if (!u) {
+    if (provider === 'openrouter') return 'https://openrouter.ai/api/v1';
+    return 'http://127.0.0.1:11434/v1';
+  }
+  if ((provider === 'ollama' || provider === 'openaicompatible') && !u.endsWith('/v1') && !u.includes('/v1/')) {
+    u = `${u}/v1`;
+  }
+  return u;
+}
+
 export function getProviderConfig(provider: AiProvider = config.ai.provider): ProviderConfig {
   if (provider === 'openrouter') {
     return {
       name: 'openrouter',
-      baseUrl: config.ai.openrouter.baseUrl,
+      baseUrl: normalizeBaseUrl(config.ai.openrouter.baseUrl, 'openrouter'),
       apiKey: config.ai.openrouter.apiKey,
       model: config.ai.openrouter.model,
       visionModel: config.ai.openrouter.visionModel,
@@ -75,7 +87,7 @@ export function getProviderConfig(provider: AiProvider = config.ai.provider): Pr
   if (provider === 'openaicompatible') {
     return {
       name: 'openaicompatible',
-      baseUrl: config.ai.openaiCompatible.baseUrl,
+      baseUrl: normalizeBaseUrl(config.ai.openaiCompatible.baseUrl, 'openaicompatible'),
       apiKey: config.ai.openaiCompatible.apiKey,
       model: config.ai.openaiCompatible.model,
       visionModel: config.ai.openaiCompatible.visionModel,
@@ -83,7 +95,7 @@ export function getProviderConfig(provider: AiProvider = config.ai.provider): Pr
   }
   return {
     name: 'ollama',
-    baseUrl: config.ai.ollama.baseUrl,
+    baseUrl: normalizeBaseUrl(config.ai.ollama.baseUrl, 'ollama'),
     apiKey: config.ai.ollama.apiKey,
     model: config.ai.ollama.model,
     visionModel: config.ai.ollama.visionModel,

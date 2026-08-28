@@ -148,13 +148,10 @@ export const saveAiConfig = (data: {
   active: AiProviderName;
   providers: AiProviderInfo[];
 }> =>
-  fetch('/api/ai/config', {
+  json('/api/ai/config', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
-  }).then((r) => {
-    if (!r.ok) throw new Error(`Falha ao salvar: ${r.status}`);
-    return r.json();
   });
 
 export interface TranslateEngineInfo {

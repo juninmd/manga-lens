@@ -43,13 +43,43 @@ export async function listModels(providerName: AiProvider = config.ai.provider):
   try {
     const headers: Record<string, string> = {};
     if (pConfig.apiKey) headers['Authorization'] = `Bearer ${pConfig.apiKey}`;
-    const res = await fetch(`${pConfig.baseUrl}/models`, {
+
+    const base = pConfig.baseUrl.replace(/\/+$/, '');
+    // 1. Tenta endpoint OpenAI /models
+    let res = await fetch(`${base}/models`, {
       signal: ctrl.signal,
       headers,
-    });
-    if (!res.ok) return [];
-    const data = (await res.json()) as { data?: { id: string }[] };
-    return (data.data ?? []).map((m) => m.id);
+    }).catch(() => null);
+
+    // 2. Se falhar ou der 404, e for Ollama/porta 11434, tenta /api/tags nativo
+    if (!res || !res.ok) {
+      const rootUrl = base.replace(/\/v1\/?$/, '');
+      res = await fetch(`${rootUrl}/api/tags`, {
+        signal: ctrl.signal,
+        headers,
+      }).catch(() => null);
+    }
+
+    if (!res || !res.ok) return [];
+
+    const text = await res.text().catch(() => '');
+    if (!text || text.trim().startsWith('<')) return [];
+
+    try {
+      const parsed = JSON.parse(text) as {
+        data?: { id?: string }[];
+        models?: { name?: string; model?: string }[];
+      };
+      if (Array.isArray(parsed.data)) {
+        return parsed.data.map((m) => m.id ?? '').filter(Boolean);
+      }
+      if (Array.isArray(parsed.models)) {
+        return parsed.models.map((m) => m.name || m.model || '').filter(Boolean);
+      }
+    } catch {
+      return [];
+    }
+    return [];
   } catch {
     return [];
   } finally {
