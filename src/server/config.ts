@@ -1,3 +1,6 @@
+import { join } from 'node:path';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+
 const env = (k: string, d = ''): string => (process.env[k] ?? d).trim();
 const num = (k: string, d: number): number => {
   const v = Number(env(k));
@@ -134,9 +137,6 @@ export function hostAllowed(host: string): boolean {
   const h = host.toLowerCase();
   return imageHostAllowlist.some((a) => (a.startsWith('.') ? h.endsWith(a) : h === a));
 }
-
-import { join } from 'node:path';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 
 function loadPersistedAiConfig(): void {
   try {

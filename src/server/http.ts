@@ -17,6 +17,15 @@ interface FetchOpts {
   headers?: Record<string, string>;
 }
 
+const originFrom = (ref: string | undefined): string | undefined => {
+  if (!ref) return undefined;
+  try {
+    return new URL(ref).origin;
+  } catch {
+    return undefined;
+  }
+};
+
 /** fetch com UA de browser, timeout e retry com backoff em 429/5xx. */
 export async function httpFetch(url: string, opts: FetchOpts = {}): Promise<Response> {
   const { referer, accept, timeoutMs = 20_000, retries = 2 } = opts;
@@ -26,6 +35,7 @@ export async function httpFetch(url: string, opts: FetchOpts = {}): Promise<Resp
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
+      const origin = originFrom(referer);
       const res = await fetch(url, {
         signal: ctrl.signal,
         redirect: 'follow',
@@ -33,7 +43,7 @@ export async function httpFetch(url: string, opts: FetchOpts = {}): Promise<Resp
           'User-Agent': config.userAgent,
           'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8,ja;q=0.7',
           ...(accept ? { Accept: accept } : {}),
-          ...(referer ? { Referer: referer, Origin: new URL(referer).origin } : {}),
+          ...(referer ? { Referer: referer, ...(origin ? { Origin: origin } : {}) } : {}),
           ...opts.headers,
         },
       });

@@ -355,35 +355,38 @@ export function getAvailableProviders(): {
     apiKey: string;
   }[];
 } {
+  const ollama = getProviderConfig('ollama');
+  const openrouter = getProviderConfig('openrouter');
+  const openai = getProviderConfig('openaicompatible');
   return {
     active: config.ai.provider,
     providers: [
       {
         id: 'ollama',
         name: 'Ollama',
-        baseUrl: config.ai.ollama.baseUrl,
-        model: config.ai.ollama.model,
-        visionModel: config.ai.ollama.visionModel ?? '',
-        hasKey: Boolean(config.ai.ollama.apiKey && config.ai.ollama.apiKey !== 'ollama'),
-        apiKey: config.ai.ollama.apiKey ?? '',
+        baseUrl: ollama.baseUrl,
+        model: ollama.model,
+        visionModel: ollama.visionModel ?? '',
+        hasKey: Boolean(ollama.apiKey && ollama.apiKey !== 'ollama'),
+        apiKey: ollama.apiKey ?? '',
       },
       {
         id: 'openrouter',
         name: 'OpenRouter',
-        baseUrl: config.ai.openrouter.baseUrl,
-        model: config.ai.openrouter.model,
-        visionModel: config.ai.openrouter.visionModel ?? '',
-        hasKey: Boolean(config.ai.openrouter.apiKey),
-        apiKey: config.ai.openrouter.apiKey ?? '',
+        baseUrl: openrouter.baseUrl,
+        model: openrouter.model,
+        visionModel: openrouter.visionModel ?? '',
+        hasKey: Boolean(openrouter.apiKey),
+        apiKey: openrouter.apiKey ?? '',
       },
       {
         id: 'openaicompatible',
         name: 'OpenAI Compatible',
-        baseUrl: config.ai.openaiCompatible.baseUrl,
-        model: config.ai.openaiCompatible.model,
-        visionModel: config.ai.openaiCompatible.visionModel ?? '',
-        hasKey: Boolean(config.ai.openaiCompatible.apiKey && config.ai.openaiCompatible.apiKey !== 'ollama'),
-        apiKey: config.ai.openaiCompatible.apiKey ?? '',
+        baseUrl: openai.baseUrl,
+        model: openai.model,
+        visionModel: openai.visionModel ?? '',
+        hasKey: Boolean(openai.apiKey && openai.apiKey !== 'ollama'),
+        apiKey: openai.apiKey ?? '',
       },
     ],
   };
