@@ -1,25 +1,51 @@
-import { config } from './config.ts';
+import { generateText, streamText, type LanguageModel, type ModelMessage } from 'ai';
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import { createOpenRouter } from '@openrouter/ai-sdk-provider';
+import { config, getProviderConfig, normalizeProvider, type AiProvider } from './config.ts';
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
   content: string | Array<{ type: string; text?: string; image_url?: { url: string } }>;
 }
 
-interface ChatOpts {
-  model?: string;
-  temperature?: number;
-  maxTokens?: number;
+const providers = new Map<AiProvider, any>();
+const effectiveModels = new Map<AiProvider, string>();
+
+function getProviderInstance(providerName: AiProvider) {
+  let inst = providers.get(providerName);
+  if (inst) return inst;
+  const pConfig = getProviderConfig(providerName);
+  if (providerName === 'openrouter') {
+    inst = createOpenRouter({
+      baseURL: pConfig.baseUrl,
+      apiKey: pConfig.apiKey,
+    });
+  } else {
+    inst = createOpenAICompatible({
+      name: providerName,
+      baseURL: pConfig.baseUrl,
+      apiKey: pConfig.apiKey || 'ollama',
+    });
+  }
+  providers.set(providerName, inst);
+  return inst;
 }
 
-let effectiveModel: string | null = null;
+export function getLanguageModel(providerName: AiProvider, modelId: string): LanguageModel {
+  const p = getProviderInstance(providerName);
+  return p(modelId);
+}
 
-async function listModels(): Promise<string[]> {
+export async function listModels(providerName: AiProvider = config.ai.provider): Promise<string[]> {
+  const pConfig = getProviderConfig(providerName);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 6000);
   try {
-    const res = await fetch(`${config.ai.baseUrl}/models`, {
+    const headers: Record<string, string> = {};
+    if (pConfig.apiKey) headers['Authorization'] = `Bearer ${pConfig.apiKey}`;
+    const res = await fetch(`${pConfig.baseUrl}/models`, {
       signal: ctrl.signal,
-      headers: { Authorization: `Bearer ${config.ai.apiKey}` },
+      headers,
     });
     if (!res.ok) return [];
     const data = (await res.json()) as { data?: { id: string }[] };
@@ -32,110 +58,25 @@ async function listModels(): Promise<string[]> {
 }
 
 /**
- * `AI_MODEL` apontando para modelo que o endpoint nao serve devolve 404 e o app
- * inteiro parece quebrado. Se o configurado nao estiver na lista, usa o primeiro
- * que o gateway oferece — e diz qual, para nao trocar de modelo em silencio.
+ * Modelo apontando para modelo que o endpoint nao serve devolve 404.
+ * Se o configurado nao estiver na lista, usa o primeiro disponivel.
  */
-export async function resolveModel(): Promise<string> {
-  if (effectiveModel) return effectiveModel;
-  const models = await listModels();
-  if (!models.length || models.includes(config.ai.model)) {
-    effectiveModel = config.ai.model;
-    return effectiveModel;
+export async function resolveModel(providerName: AiProvider = config.ai.provider): Promise<string> {
+  const cached = effectiveModels.get(providerName);
+  if (cached) return cached;
+  const pConfig = getProviderConfig(providerName);
+  const models = await listModels(providerName);
+  if (!models.length || models.includes(pConfig.model)) {
+    effectiveModels.set(providerName, pConfig.model);
+    return pConfig.model;
   }
-  effectiveModel = models[0]!;
+  const effective = models[0]!;
   console.error(
-    `[llm] AI_MODEL="${config.ai.model}" nao esta' em ${config.ai.baseUrl}/models; ` +
-      `usando "${effectiveModel}" (disponiveis: ${models.join(', ')})`,
+    `[llm/${providerName}] AI_MODEL="${pConfig.model}" nao esta' em ${pConfig.baseUrl}/models; ` +
+      `usando "${effective}" (disponiveis: ${models.join(', ')})`,
   );
-  return effectiveModel;
-}
-
-async function chat(messages: ChatMessage[], opts: ChatOpts = {}): Promise<string> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), config.ai.timeoutMs);
-  try {
-    const res = await fetch(`${config.ai.baseUrl}/chat/completions`, {
-      method: 'POST',
-      signal: ctrl.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${config.ai.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: opts.model ?? (await resolveModel()),
-        messages,
-        temperature: opts.temperature ?? 0.2,
-        // Modelo de raciocinio gasta orcamento pensando: apertar isso devolve content vazio.
-        max_tokens: opts.maxTokens ?? config.ai.maxTokens,
-        stream: false,
-      }),
-    });
-    if (!res.ok) throw new Error(`LLM ${res.status}: ${(await res.text()).slice(0, 300)}`);
-    const data = (await res.json()) as {
-      choices?: { message?: { content?: string; reasoning?: string }; finish_reason?: string }[];
-      usage?: { completion_tokens?: number };
-    };
-    const choice = data.choices?.[0];
-    // Modelo de raciocinio local (qwen128k e afins) as vezes entrega tudo em
-    // `reasoning` e deixa `content` vazio — o texto util esta' la'.
-    const content = choice?.message?.content?.trim() ? choice.message.content : (choice?.message?.reasoning ?? '');
-    if (!content.trim()) {
-      // Modelo de raciocinio gasta o orcamento pensando e devolve content vazio:
-      // sem esse log o sintoma vira "a IA nao traduziu" sem causa aparente.
-      console.error(
-        `[llm] content vazio — finish_reason=${choice?.finish_reason} ` +
-          `completion_tokens=${data.usage?.completion_tokens} max_tokens=${opts.maxTokens ?? config.ai.maxTokens}` +
-          (choice?.message?.reasoning ? ' (o modelo devolveu raciocinio em vez de resposta)' : ''),
-      );
-    }
-    return content;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/** Stream SSE cru do upstream repassado como texto puro para o cliente. */
-export async function chatStream(messages: ChatMessage[], opts: ChatOpts = {}): Promise<ReadableStream<Uint8Array>> {
-  const res = await fetch(`${config.ai.baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.ai.apiKey}` },
-    body: JSON.stringify({
-      model: opts.model ?? (await resolveModel()),
-      messages,
-      temperature: opts.temperature ?? 0.4,
-      max_tokens: opts.maxTokens ?? config.ai.maxTokens,
-      stream: true,
-    }),
-  });
-  if (!res.ok || !res.body) throw new Error(`LLM ${res.status}: ${(await res.text()).slice(0, 300)}`);
-
-  const decoder = new TextDecoder();
-  const encoder = new TextEncoder();
-  let buffer = '';
-
-  return res.body.pipeThrough(
-    new TransformStream<Uint8Array, Uint8Array>({
-      transform(chunk, controller) {
-        buffer += decoder.decode(chunk, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-        for (const line of lines) {
-          const t = line.trim();
-          if (!t.startsWith('data:')) continue;
-          const payload = t.slice(5).trim();
-          if (payload === '[DONE]') return;
-          try {
-            const j = JSON.parse(payload) as { choices?: { delta?: { content?: string } }[] };
-            const piece = j.choices?.[0]?.delta?.content;
-            if (piece) controller.enqueue(encoder.encode(piece));
-          } catch {
-            /* keep-alive ou fragmento: ignora */
-          }
-        }
-      },
-    }),
-  );
+  effectiveModels.set(providerName, effective);
+  return effective;
 }
 
 function parseJsonArray<T>(raw: string): T[] {
@@ -176,6 +117,7 @@ export interface TranslateInput {
   chapter?: string;
   /** idioma de chegada (pt-BR, en, es...); ausente = portugues do Brasil */
   target?: string;
+  provider?: AiProvider | string;
 }
 
 /** Traduz balões em lote preservando o id — sem id, nao da' pra ancorar de volta na pagina. */
@@ -184,6 +126,9 @@ export async function translateBlocks(input: TranslateInput): Promise<{ id: numb
   const BATCH = 12;
   const src = LANG_NAME[input.sourceLang ?? 'unknown'] ?? input.sourceLang;
   const dst = TARGET_NAME[(input.target ?? 'pt-br').toLowerCase()] ?? 'portugues do Brasil';
+  const providerName = normalizeProvider(input.provider, config.ai.provider);
+  const modelId = await resolveModel(providerName);
+  const model = getLanguageModel(providerName, modelId);
 
   let batches = 0;
   let failed = 0;
@@ -194,42 +139,35 @@ export async function translateBlocks(input: TranslateInput): Promise<{ id: numb
     batches++;
     let raw = '';
     try {
-      raw = await chat([
-      {
-        role: 'system',
-        content:
+      const result = await generateText({
+        model,
+        system:
           `Voce traduz baloes de manga/HQ para ${dst}. O texto vem de OCR e pode ter ruido, ` +
           'letras trocadas ou quebras estranhas: corrija o obvio antes de traduzir. Mantenha registro, ' +
           `girias e onomatopeias naturais em ${dst}. Se um bloco for so ruido, devolva string vazia. ` +
           'O texto vai ser letreirado dentro do balao original: prefira a formulacao mais curta que ' +
           'preserve o sentido, sem inventar conteudo. ' +
           'Responda SOMENTE um array JSON [{"id":number,"pt":string}], sem comentarios.',
-      },
-        {
-          role: 'user',
-          content:
-            `Obra: ${input.series ?? 'desconhecida'}${input.chapter ? ` — capitulo ${input.chapter}` : ''}\n` +
-            `Idioma de origem: ${src}\n\nBlocos:\n${JSON.stringify(batch, null, 0)}`,
-        },
-        // Orcamento cresce com o lote: modelo que raciocina consome tudo pensando
-        // e devolve content vazio quando o teto e' fixo e apertado.
-      ], { maxTokens: Math.max(config.ai.maxTokens, batch.length * 160 + 600) });
+        prompt:
+          `Obra: ${input.series ?? 'desconhecida'}${input.chapter ? ` — capitulo ${input.chapter}` : ''}\n` +
+          `Idioma de origem: ${src}\n\nBlocos:\n${JSON.stringify(batch, null, 0)}`,
+        temperature: 0.2,
+        maxOutputTokens: Math.max(config.ai.maxTokens, batch.length * 160 + 600),
+        maxRetries: 0,
+        abortSignal: AbortSignal.timeout(config.ai.timeoutMs),
+      });
+      raw = result.text;
       out.push(...parseJsonArray<{ id: number; pt: string }>(raw));
     } catch (err) {
-      // Traducao vazia sem log vira "o modelo nao traduziu"; o motivo real fica aqui.
       failed++;
       lastError = (err as Error).message;
-      console.error(`[traducao] lote ${i / BATCH} falhou: ${lastError}`);
-      if (raw) console.error(`[traducao] resposta crua: ${raw.slice(0, 300)}`);
+      console.error(`[traducao/${providerName}] lote ${i / BATCH} falhou: ${lastError}`);
+      if (raw) console.error(`[traducao/${providerName}] resposta crua: ${raw.slice(0, 300)}`);
       out.push(...batch.map((b) => ({ id: b.id, pt: '' })));
     }
   }
 
-  // Mesma regra do caminho sem IA: um lote perdido e' aceitavel, o modelo inteiro
-  // fora do ar precisa virar erro. Engolindo isso, o modo automatico achava que a
-  // IA tinha respondido, a resposta saia 200 com tudo vazio e o leitor mostrava
-  // "N baloes" sem traduzir nada nem avisar por que.
-  if (batches > 0 && failed === batches) throw new Error(`IA indisponivel: ${lastError}`);
+  if (batches > 0 && failed === batches) throw new Error(`IA indisponivel (${providerName}): ${lastError}`);
   return out;
 }
 
@@ -237,19 +175,23 @@ export interface VisionInput {
   imageDataUrl: string;
   series?: string;
   chapter?: string;
+  provider?: AiProvider | string;
 }
 
 /** Caminho alternativo ao OCR: modelo com visao le a pagina direto (texto vertical/estilizado). */
 export async function visionTranslate(input: VisionInput): Promise<{ original: string; pt: string }[]> {
-  if (!config.ai.visionModel) throw new Error('AI_VISION_MODEL nao configurado');
-  const raw = await chat(
-    [
-      {
-        role: 'system',
-        content:
-          'Voce le paginas de manga/HQ. Liste os baloes na ordem de leitura da obra e traduza para portugues do Brasil. ' +
-          'Responda SOMENTE um array JSON [{"original":string,"pt":string}].',
-      },
+  const providerName = normalizeProvider(input.provider, config.ai.provider);
+  const pConfig = getProviderConfig(providerName);
+  if (!pConfig.visionModel) throw new Error(`AI_VISION_MODEL nao configurado para ${providerName}`);
+  const model = getLanguageModel(providerName, pConfig.visionModel);
+
+  const mime = input.imageDataUrl.match(/^data:([^;]+);/)?.[1] ?? 'image/jpeg';
+  const result = await generateText({
+    model,
+    system:
+      'Voce le paginas de manga/HQ. Liste os baloes na ordem de leitura da obra e traduza para portugues do Brasil. ' +
+      'Responda SOMENTE um array JSON [{"original":string,"pt":string}].',
+    messages: [
       {
         role: 'user',
         content: [
@@ -257,13 +199,19 @@ export async function visionTranslate(input: VisionInput): Promise<{ original: s
             type: 'text',
             text: `Obra: ${input.series ?? 'desconhecida'}${input.chapter ? ` — capitulo ${input.chapter}` : ''}`,
           },
-          { type: 'image_url', image_url: { url: input.imageDataUrl } },
+          {
+            type: 'file',
+            data: input.imageDataUrl,
+            mediaType: mime,
+          },
         ],
       },
     ],
-    { model: config.ai.visionModel },
-  );
-  return parseJsonArray<{ original: string; pt: string }>(raw);
+    maxOutputTokens: config.ai.maxTokens,
+    maxRetries: 0,
+    abortSignal: AbortSignal.timeout(config.ai.timeoutMs),
+  });
+  return parseJsonArray<{ original: string; pt: string }>(result.text);
 }
 
 export interface ExplainInput {
@@ -273,9 +221,14 @@ export interface ExplainInput {
   pageText?: string[];
   question?: string;
   history?: { role: 'user' | 'assistant'; content: string }[];
+  provider?: AiProvider | string;
 }
 
-export function explainStream(input: ExplainInput): Promise<ReadableStream<Uint8Array>> {
+export async function explainStream(input: ExplainInput): Promise<ReadableStream<Uint8Array>> {
+  const providerName = normalizeProvider(input.provider, config.ai.provider);
+  const modelId = await resolveModel(providerName);
+  const model = getLanguageModel(providerName, modelId);
+
   const context = [
     input.series ? `Obra: ${input.series}` : '',
     input.chapter ? `Capitulo: ${input.chapter}` : '',
@@ -285,25 +238,49 @@ export function explainStream(input: ExplainInput): Promise<ReadableStream<Uint8
     .filter(Boolean)
     .join('\n');
 
-  return chatStream([
-    {
-      role: 'system',
-      content:
-        'Voce e um leitor experiente de manga/HQ ajudando em portugues do Brasil. Explique contexto, ' +
-        'personagens, referencias culturais e o que acontece na cena. Seja direto. ' +
-        'NUNCA entregue spoiler alem do ponto informado: se precisar, avise antes. ' +
-        'Se o contexto nao bastar, diga o que falta em vez de inventar.',
-    },
-    ...(input.history ?? []),
+  const messages: ModelMessage[] = [
+    ...(input.history ?? []).map((h) => ({
+      role: h.role,
+      content: h.content,
+    })),
     {
       role: 'user',
       content: `${context}\n\nPergunta: ${input.question ?? 'Explique o que esta acontecendo nesta pagina.'}`,
     },
-  ]);
+  ];
+
+  const result = streamText({
+    model,
+    system:
+      'Voce e um leitor experiente de manga/HQ ajudando em portugues do Brasil. Explique contexto, ' +
+      'personagens, referencias culturais e o que acontece na cena. Seja direto. ' +
+      'NUNCA entregue spoiler alem do ponto informado: se precisar, avise antes. ' +
+      'Se o contexto nao bastar, diga o que falta em vez de inventar.',
+    messages,
+    temperature: 0.4,
+    maxOutputTokens: config.ai.maxTokens,
+    maxRetries: 0,
+    abortSignal: AbortSignal.timeout(config.ai.timeoutMs),
+  });
+
+  const encoder = new TextEncoder();
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        for await (const chunk of result.textStream) {
+          controller.enqueue(encoder.encode(chunk));
+        }
+        controller.close();
+      } catch (err) {
+        controller.error(err);
+      }
+    },
+  });
 }
 
-export async function aiHealth(): Promise<{
+export async function aiHealth(providerName: AiProvider = config.ai.provider): Promise<{
   ok: boolean;
+  provider: AiProvider;
   baseUrl: string;
   model: string;
   configuredModel: string;
@@ -311,16 +288,73 @@ export async function aiHealth(): Promise<{
   models?: string[];
   error?: string;
 }> {
+  const pConfig = getProviderConfig(providerName);
   const base = {
-    baseUrl: config.ai.baseUrl,
-    model: config.ai.model,
-    configuredModel: config.ai.model,
-    visionModel: config.ai.visionModel,
+    provider: providerName,
+    baseUrl: pConfig.baseUrl,
+    model: pConfig.model,
+    configuredModel: pConfig.model,
+    visionModel: pConfig.visionModel ?? '',
   };
-  const models = await listModels();
+  const models = await listModels(providerName);
   if (!models.length) {
-    return { ...base, ok: false, error: `sem resposta de ${config.ai.baseUrl}/models` };
+    return { ...base, ok: false, error: `sem resposta de ${pConfig.baseUrl}/models` };
   }
-  // Estar listado nao prova que responde — a homologacao real e' pedir uma traducao.
-  return { ...base, ok: true, model: await resolveModel(), models };
+  return { ...base, ok: true, model: await resolveModel(providerName), models };
+}
+
+export function invalidateProvider(providerName?: AiProvider): void {
+  if (providerName) {
+    providers.delete(providerName);
+    effectiveModels.delete(providerName);
+  } else {
+    providers.clear();
+    effectiveModels.clear();
+  }
+}
+
+export function getAvailableProviders(): {
+  active: AiProvider;
+  providers: {
+    id: AiProvider;
+    name: string;
+    baseUrl: string;
+    model: string;
+    visionModel?: string;
+    hasKey: boolean;
+    apiKey: string;
+  }[];
+} {
+  return {
+    active: config.ai.provider,
+    providers: [
+      {
+        id: 'ollama',
+        name: 'Ollama',
+        baseUrl: config.ai.ollama.baseUrl,
+        model: config.ai.ollama.model,
+        visionModel: config.ai.ollama.visionModel ?? '',
+        hasKey: Boolean(config.ai.ollama.apiKey && config.ai.ollama.apiKey !== 'ollama'),
+        apiKey: config.ai.ollama.apiKey ?? '',
+      },
+      {
+        id: 'openrouter',
+        name: 'OpenRouter',
+        baseUrl: config.ai.openrouter.baseUrl,
+        model: config.ai.openrouter.model,
+        visionModel: config.ai.openrouter.visionModel ?? '',
+        hasKey: Boolean(config.ai.openrouter.apiKey),
+        apiKey: config.ai.openrouter.apiKey ?? '',
+      },
+      {
+        id: 'openaicompatible',
+        name: 'OpenAI Compatible',
+        baseUrl: config.ai.openaiCompatible.baseUrl,
+        model: config.ai.openaiCompatible.model,
+        visionModel: config.ai.openaiCompatible.visionModel ?? '',
+        hasKey: Boolean(config.ai.openaiCompatible.apiKey && config.ai.openaiCompatible.apiKey !== 'ollama'),
+        apiKey: config.ai.openaiCompatible.apiKey ?? '',
+      },
+    ],
+  };
 }

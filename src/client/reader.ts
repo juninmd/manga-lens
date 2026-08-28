@@ -1,4 +1,17 @@
-import { aiHealth, explain, getPages, visionTranslate, type ChapterRef, type PageRef, type SeriesDetail } from './api.ts';
+import {
+  aiHealth,
+  explain,
+  getAiProviders,
+  getEngines,
+  getPages,
+  getTargets,
+  visionTranslate,
+  type ChapterRef,
+  type PageRef,
+  type SeriesDetail,
+  type TargetLangInfo,
+  type TranslateEngineInfo,
+} from './api.ts';
 import { el, langLabel, toast } from './ui.ts';
 import {
   hasBookmark,
@@ -7,26 +20,14 @@ import {
   saveProgress,
   store,
   toggleBookmark,
+  type AiProviderName,
   type FitMode,
   type LetterFont,
   type ReadingMode,
   type TranslateEngine,
 } from './state.ts';
-import { getEngines, getTargets, type TargetLangInfo, type TranslateEngineInfo } from './api.ts';
 import { Viewer } from './viewer.ts';
 import { langFor, paintPage, recognizePage, translateBlocks, type OcrBlock } from './ocr.ts';
-
-/** Carrega a imagem fora da tela com CORS, para o canvas do OCR poder ler os pixels. */
-function loadImage(url: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.decoding = 'async';
-    img.addEventListener('load', () => resolve(img), { once: true });
-    img.addEventListener('error', () => reject(new Error(`imagem nao carregou: ${url}`)), { once: true });
-    img.src = url;
-  });
-}
 
 /**
  * Espera a imagem do sheet ficar utilizavel. Ouvir so' `load` era uma armadilha:
@@ -81,8 +82,11 @@ export class Reader {
   private ocrStatus = el('span', { class: 'ml-ocr-status' }, '');
   private aiDot = el('span', { class: 'ml-dot' });
   private aiLabel = el('span', {}, 'IA: verificando...');
-  private queueInfo = el('span', { class: 'ml-status-queue' }, '');
-  private autoBtn = el('button', { class: 'ml-btn ml-btn-sm' }, 'auto');
+  private tooltipEl = el('div', { class: 'ml-balloon-tooltip', hidden: true });
+  private highlightBox = el('div', { class: 'ml-balloon-highlight', hidden: true });
+  private popoverEl = el('div', { class: 'ml-popover', hidden: true });
+  private popoverBackdrop = el('div', { class: 'ml-popover-backdrop', hidden: true });
+  private popoverOpen = false;
   private aiTimer?: number;
 
   private detail?: SeriesDetail;
@@ -99,19 +103,12 @@ export class Reader {
    */
   private translatedAs = new Map<string, string>();
   private busy = false;
-  /** pedido explicito de OCR feito enquanto outro estava em curso */
-  private ocrRequested = false;
   private paintHandle = 0;
   private history: { role: 'user' | 'assistant'; content: string }[] = [];
 
-  /** fila de adiantamento: paginas do capitulo atual e dos proximos, em ordem */
-  private queue: { chapter: ChapterRef; page: number; url: string }[] = [];
-  private queueRunning = false;
-  private enqueued = new Set<string>();
-  private pagesByChapter = new Map<string, PageRef[]>();
-  private generation = 0;
   private engines: TranslateEngineInfo[] = [{ id: 'auto', name: 'Automatico (sem IA primeiro)', needsAi: false, note: '' }];
   private targets: TargetLangInfo[] = [{ id: 'pt-BR', name: 'Portugues (Brasil)' }];
+  private aiProviders: { id: string; name: string; baseUrl: string; model: string; hasKey: boolean }[] = [];
 
   constructor(private onExit: () => void) {
     this.viewer = new Viewer({
@@ -119,22 +116,34 @@ export class Reader {
       onTransform: ({ scale }) => {
         this.zoomLabel.textContent = `${Math.round(scale * 100)}%`;
         this.zoomRange.value = String(Math.round(scale * 100));
+        this.hideTooltip();
       },
-      onSheetsChange: () => this.paintOverlays(),
+      onSheetsChange: () => {
+        this.paintOverlays();
+        this.hideTooltip();
+      },
     });
     this.build();
     document.body.append(this.host);
     document.addEventListener('keydown', this.onKey);
-    // janela de inspecao usada pela homologacao (e util para depurar a fila)
+    this.popoverBackdrop.addEventListener('click', () => this.togglePopover(false));
     (window as unknown as { __mangaLens?: unknown }).__mangaLens = {
       translatedKeys: (): string[] => [...this.ocrCache.keys()],
-      queueSize: (): number => this.queue.length,
-      queuedChapters: (): string[] => [...new Set(this.queue.map((i) => i.chapter.id))],
       blocksFor: (key: string): OcrBlock[] => this.ocrCache.get(key) ?? [],
     };
-    void Promise.all([getEngines().catch(() => []), getTargets().catch(() => [])]).then(([engines, targets]) => {
+    void Promise.all([
+      getEngines().catch(() => []),
+      getTargets().catch(() => []),
+      getAiProviders().catch(() => ({ active: 'ollama' as const, providers: [] })),
+    ]).then(([engines, targets, provData]) => {
       if (engines.length) this.engines = engines;
       if (targets.length) this.targets = targets;
+      if (provData.providers?.length) {
+        this.aiProviders = provData.providers;
+        if (!store.settings.aiProvider && provData.active) {
+          store.settings.aiProvider = provData.active;
+        }
+      }
       this.refreshBars();
     });
   }
@@ -142,13 +151,16 @@ export class Reader {
   // ---------- montagem ----------
 
   private build(): void {
-    this.host.append(this.buildTopBar(), this.stage, this.buildStatusBar(), this.buildBottomBar(), this.chat);
+    this.host.append(this.buildTopBar(), this.stage, this.buildStatusBar(), this.buildBottomBar(), this.chat, this.tooltipEl, this.popoverBackdrop, this.popoverEl);
     this.viewer.mount(this.stage);
     // mount() reescreve o innerHTML do palco — o overlay so' pode entrar depois
     this.stage.append(this.stageLoading);
     this.viewer.mode = store.settings.mode;
     this.viewer.fit = store.settings.fit;
     this.viewer.rtl = store.settings.rtl;
+
+    this.stage.addEventListener('pointermove', this.onStagePointerMove);
+    this.stage.addEventListener('pointerleave', this.onStagePointerLeave);
 
     this.zoomRange.addEventListener('input', () => this.viewer.setZoom(Number(this.zoomRange.value) / 100));
     this.chat.append(
@@ -163,12 +175,140 @@ export class Reader {
     );
   }
 
+  private onStagePointerMove = (e: PointerEvent): void => {
+    this.checkBalloonHover(e.clientX, e.clientY);
+  };
+
+  private onStagePointerLeave = (): void => {
+    this.hideTooltip();
+  };
+
+  private checkBalloonHover(clientX: number, clientY: number): void {
+    if (this.viewer.isDragging()) {
+      this.hideTooltip();
+      return;
+    }
+    const hit = this.findBlockAt(clientX, clientY);
+    if (!hit) {
+      this.hideTooltip();
+      return;
+    }
+    this.showTooltip(hit.block, clientX, clientY, hit.sheet);
+  }
+
+  private findBlockAt(clientX: number, clientY: number): { block: OcrBlock; sheet: { page: number; el: HTMLDivElement; x: number; y: number; w: number; h: number } } | null {
+    const stageRect = this.stage.getBoundingClientRect();
+    const stageX = clientX - stageRect.left;
+    const stageY = clientY - stageRect.top;
+
+    const transform = this.viewer.getTransform();
+    const canvasX = (stageX - transform.tx) / transform.scale;
+    const canvasY = (stageY - transform.ty) / transform.scale;
+
+    for (const sheet of this.viewer.getSheets()) {
+      if (canvasX >= sheet.x && canvasX <= sheet.x + sheet.w && canvasY >= sheet.y && canvasY <= sheet.y + sheet.h) {
+        const imgX = canvasX - sheet.x;
+        const imgY = canvasY - sheet.y;
+        const blocks = this.ocrCache.get(this.pageKey(sheet.page));
+        if (!blocks || !blocks.length) continue;
+
+        for (let i = blocks.length - 1; i >= 0; i--) {
+          const b = blocks[i]!;
+          if (imgX >= b.x && imgX <= b.x + b.w && imgY >= b.y && imgY <= b.y + b.h) {
+            return { block: b, sheet };
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  private showTooltip(block: OcrBlock, clientX: number, clientY: number, sheet: { el: HTMLDivElement }): void {
+    const origText = block.text?.trim();
+    if (!origText) {
+      this.hideTooltip();
+      return;
+    }
+
+    this.highlightBox.style.left = `${block.x}px`;
+    this.highlightBox.style.top = `${block.y}px`;
+    this.highlightBox.style.width = `${block.w}px`;
+    this.highlightBox.style.height = `${block.h}px`;
+    if (this.highlightBox.parentElement !== sheet.el) {
+      sheet.el.append(this.highlightBox);
+    }
+    this.highlightBox.hidden = false;
+
+    this.tooltipEl.innerHTML = '';
+    const header = el(
+      'div',
+      { class: 'ml-tooltip-header' },
+      el('span', { class: 'ml-tooltip-tag' }, 'Texto original'),
+      block.confidence ? el('span', { class: 'ml-tooltip-confidence' }, `${Math.round(block.confidence)}% conf.`) : el('span', {}),
+    );
+    const origEl = el('div', { class: 'ml-tooltip-original' }, origText);
+    this.tooltipEl.append(header, origEl);
+
+    if (block.pt && block.pt.trim() && block.pt.trim() !== origText) {
+      const transEl = el(
+        'div',
+        { class: 'ml-tooltip-translated' },
+        el('span', { class: 'ml-tooltip-subtag' }, 'Tradução:'),
+        block.pt.trim(),
+      );
+      this.tooltipEl.append(transEl);
+    }
+
+    this.tooltipEl.hidden = false;
+
+    const pad = 16;
+    const ttW = this.tooltipEl.offsetWidth || 240;
+    const ttH = this.tooltipEl.offsetHeight || 80;
+    const vpW = window.innerWidth;
+    const vpH = window.innerHeight;
+
+    let left = clientX + 16;
+    let top = clientY + 16;
+
+    if (left + ttW > vpW - pad) {
+      left = Math.max(pad, clientX - ttW - 16);
+    }
+    if (top + ttH > vpH - pad) {
+      top = Math.max(pad, clientY - ttH - 16);
+    }
+
+    this.tooltipEl.style.left = `${left}px`;
+    this.tooltipEl.style.top = `${top}px`;
+  }
+
+  private hideTooltip(): void {
+    this.tooltipEl.hidden = true;
+    this.highlightBox.hidden = true;
+  }
+
   private toggle(label: string, on: boolean, onclick: () => void, title?: string): HTMLElement {
     return el('button', { class: `ml-btn ml-btn-sm ${on ? 'is-on' : ''}`, title: title ?? label, onclick }, label);
   }
 
+  private togglePopover(open?: boolean): void {
+    this.popoverOpen = open !== undefined ? open : !this.popoverOpen;
+    this.popoverEl.classList.toggle('is-open', this.popoverOpen);
+    this.popoverBackdrop.classList.toggle('is-open', this.popoverOpen);
+    this.popoverEl.hidden = !this.popoverOpen;
+    this.popoverBackdrop.hidden = !this.popoverOpen;
+    const btn = document.getElementById('ml-btn-options');
+    if (btn) btn.classList.toggle('is-on', this.popoverOpen);
+    if (this.popoverOpen) {
+      this.buildPopover();
+    }
+  }
+
   private buildTopBar(): HTMLElement {
     const s = store.settings;
+    const detectedLang = this.chapter?.lang ?? this.detail?.origin;
+    const originName = detectedLang ? langLabel(detectedLang) : 'Auto';
+    const originBadge = el('span', { class: 'ml-lang-badge', title: `Idioma original detectado: ${originName}` }, `Origem: ${originName}`);
+
     const modes = el(
       'div',
       { class: 'ml-group' },
@@ -194,51 +334,159 @@ export class Reader {
       ),
       this.toggle('1:1', false, () => this.viewer.setZoom(1)),
     );
+    const rtlBtn = this.toggle('RTL', this.rtl, () => {
+      this.rtl = !this.rtl;
+      s.rtl = this.rtl;
+      persist();
+      this.viewer.setRtl(this.rtl);
+      this.refreshBars();
+    }, 'Sentido de leitura japonês (direita para esquerda)');
 
     return el(
       'header',
       { class: 'ml-reader-top' },
-      el('button', { class: 'ml-btn ml-btn-ghost', onclick: () => this.close() }, '‹ voltar'),
-      el('div', { class: 'ml-reader-title', id: 'reader-title' }),
-      this.pageLabel,
-      modes,
-      fits,
-      this.toggle('RTL', this.rtl, () => {
-        this.rtl = !this.rtl;
-        s.rtl = this.rtl;
-        persist();
-        this.viewer.setRtl(this.rtl);
-        this.refreshBars();
-      }, 'sentido de leitura japones (direita para esquerda)'),
-      el('div', { class: 'ml-group' },
-        el('button', { class: 'ml-btn ml-btn-sm', onclick: () => void this.runOcr(true) }, 'OCR'),
-        this.engineSelect(),
-        this.targetSelect(),
-        this.fontSelect(),
-        this.toggle('traduzir', s.autoTranslate, () => {
-          s.autoTranslate = !s.autoTranslate;
-          persist();
-          this.refreshBars();
-          if (s.autoTranslate) {
-            void this.runOcr(false);
-            void this.pumpQueue();
-          } else {
-            this.stopQueue();
-            this.ocrStatus.textContent = '';
-          }
-        }, 'traduz os baloes para pt-BR e segue adiantando os proximos capitulos'),
-        this.toggle('original', s.showOriginal, () => {
-          s.showOriginal = !s.showOriginal;
-          persist();
-          this.refreshBars();
-          this.paintOverlays();
-        }, 'mostra o texto reconhecido em vez da traducao'),
-        el('button', { class: 'ml-btn ml-btn-sm', onclick: () => void this.visionRead() }, 'IA le a pagina'),
+      // Esquerda: Navegação e Informações
+      el(
+        'div',
+        { class: 'ml-top-left' },
+        el('button', { class: 'ml-btn ml-btn-ghost', onclick: () => this.close(), title: 'Voltar ao catálogo' }, '‹ voltar'),
+        el('div', { class: 'ml-reader-title', id: 'reader-title' }),
+        originBadge,
+        this.pageLabel,
       ),
-      this.bookmarkButton(),
-      el('button', { class: 'ml-btn ml-btn-sm', onclick: () => this.chat.classList.toggle('is-open') }, 'explicar'),
-      el('button', { class: 'ml-btn ml-btn-sm', onclick: () => void this.toggleFullscreen() }, '⛶'),
+      // Centro: Modos de Leitura/Ajuste + Ações de Tradução
+      el(
+        'div',
+        { class: 'ml-top-center' },
+        modes,
+        fits,
+        rtlBtn,
+        el('button', {
+          class: 'ml-btn ml-btn-sm ml-btn-action-primary',
+          onclick: () => void this.runTranslate(),
+          title: 'Traduzir os balões da página atual (Atalho: tecla R)',
+        }, '🪄 Traduzir'),
+        el('button', {
+          class: 'ml-btn ml-btn-sm',
+          onclick: () => void this.runOcrOnly(),
+          title: 'Executar reconhecimento OCR apenas (Atalho: tecla O)',
+        }, '🔍 OCR'),
+        this.toggle(
+          s.showOriginal ? '👁️ Original: Ligado' : '👁️ Original',
+          s.showOriginal,
+          () => {
+            s.showOriginal = !s.showOriginal;
+            persist();
+            this.refreshBars();
+            this.paintOverlays();
+          },
+          'Alternar entre exibir o mangá original limpo ou balões traduzidos (Atalho: tecla T)',
+        ),
+      ),
+      // Direita: Configurações, Assistente e Ferramentas
+      el(
+        'div',
+        { class: 'ml-top-right' },
+        el('button', {
+          id: 'ml-btn-options',
+          class: `ml-btn ml-btn-sm ${this.popoverOpen ? 'is-on' : ''}`,
+          onclick: (e: MouseEvent) => {
+            e.stopPropagation();
+            this.togglePopover();
+          },
+          title: 'Configurações de Tradução (Modo IA, OCR, Provedores, Idiomas e Fontes)',
+        }, '⚙️ Opções'),
+        el('button', {
+          class: 'ml-btn ml-btn-sm',
+          onclick: () => void this.visionRead(),
+          title: 'IA analisa e descreve a página inteira com visão computacional',
+        }, '🤖 Visão'),
+        el('button', {
+          class: 'ml-btn ml-btn-sm',
+          onclick: () => this.chat.classList.toggle('is-open'),
+          title: 'Assistente e explicador de mangá',
+        }, '💬 Explicar'),
+        this.bookmarkButton(),
+        el('button', {
+          class: 'ml-btn ml-btn-sm',
+          onclick: () => void this.toggleFullscreen(),
+          title: 'Alternar tela cheia',
+        }, '⛶'),
+      ),
     );
+  }
+
+  private buildPopover(): void {
+    const s = store.settings;
+    this.popoverEl.innerHTML = '';
+
+    const head = el(
+      'div',
+      { class: 'ml-popover-head' },
+      el('span', { class: 'ml-popover-title' }, 'Configurações de Tradução'),
+      el('button', {
+        class: 'ml-btn ml-btn-ghost ml-btn-sm',
+        onclick: (e: MouseEvent) => {
+          e.stopPropagation();
+          this.togglePopover(false);
+        },
+        title: 'Fechar opções',
+      }, '✕'),
+    );
+
+    const isAi = s.translateMode === 'ai';
+    const modeSection = el(
+      'div',
+      { class: 'ml-popover-section' },
+      el('span', { class: 'ml-popover-label' }, 'Modo de Tradução'),
+      el(
+        'div',
+        { class: 'ml-segmented' },
+        el('button', {
+          class: `ml-segmented-btn ${isAi ? 'is-active' : ''}`,
+          onclick: (e: MouseEvent) => {
+            e.stopPropagation();
+            s.translateMode = 'ai';
+            persist();
+            this.invalidateTranslations();
+            this.buildPopover();
+          },
+        }, '✨ IA (Contextual)'),
+        el('button', {
+          class: `ml-segmented-btn ${!isAi ? 'is-active' : ''}`,
+          onclick: (e: MouseEvent) => {
+            e.stopPropagation();
+            s.translateMode = 'ocr';
+            persist();
+            this.invalidateTranslations();
+            this.buildPopover();
+          },
+        }, '🌐 Tradutor Web'),
+      ),
+    );
+
+    const providerSection = el(
+      'div',
+      { class: 'ml-popover-section' },
+      el('span', { class: 'ml-popover-label' }, isAi ? 'Provedor de IA' : 'Motor de Tradução'),
+      isAi ? this.providerSelect() : this.engineSelect(),
+    );
+
+    const targetSection = el(
+      'div',
+      { class: 'ml-popover-section' },
+      el('span', { class: 'ml-popover-label' }, 'Traduzir Para'),
+      this.targetSelect(),
+    );
+
+    const fontSection = el(
+      'div',
+      { class: 'ml-popover-section' },
+      el('span', { class: 'ml-popover-label' }, 'Estilo da Fonte no Balão'),
+      this.fontSelect(),
+    );
+
+    this.popoverEl.append(head, modeSection, providerSection, targetSection, fontSection);
   }
 
   /** Idioma de chegada: vale para os tres motores; trocar reletreira o capitulo. */
@@ -260,20 +508,21 @@ export class Reader {
     );
   }
 
-  /** Motor de traducao: com IA (contexto) ou tradutor classico, sem IA nenhuma. */
+  /** Motor de traducao: Google ou MyMemory (modo OCR tradicional). */
   private engineSelect(): HTMLElement {
+    const traditionalEngines = this.engines.filter((eng) => eng.id !== 'llm');
     const select = el(
       'select',
       {
         class: 'ml-select ml-select-sm',
-        title: 'motor de traducao dos baloes',
+        title: 'motor de tradução dos balões (modo OCR tradicional)',
         onchange: (e: Event) => {
           store.settings.engine = (e.target as HTMLSelectElement).value as TranslateEngine;
           persist();
           this.invalidateTranslations();
         },
       },
-      ...this.engines.map((eng) =>
+      ...(traditionalEngines.length ? traditionalEngines : this.engines).map((eng) =>
         el('option', { value: eng.id, selected: eng.id === store.settings.engine, title: eng.note }, eng.name),
       ),
     );
@@ -281,24 +530,44 @@ export class Reader {
   }
 
   private fontSelect(): HTMLElement {
-    const fonts: [LetterFont, string][] = [
-      ['comic', 'letreiro'],
-      ['sans', 'sem serifa'],
-      ['serif', 'serifada'],
+    const fonts: [LetterFont, string, string][] = [
+      ['comic', 'Balão HQ (Quadrinhos)', 'Fonte estilo revista em quadrinhos / mangá'],
+      ['sans', 'Moderna (Limpa)', 'Fonte limpa e moderna sem serifa'],
+      ['serif', 'Clássica (Livro)', 'Fonte clássica estilo livro impresso'],
     ];
     return el(
       'select',
       {
         class: 'ml-select ml-select-sm',
-        title: 'fonte do letreiramento da traducao',
+        title: 'estilo da fonte para os balões traduzidos',
         onchange: (e: Event) => {
           store.settings.font = (e.target as HTMLSelectElement).value as LetterFont;
           persist();
           this.paintOverlays();
         },
       },
-      ...fonts.map(([id, label]) =>
-        el('option', { value: id, selected: id === store.settings.font }, label),
+      ...fonts.map(([id, label, desc]) =>
+        el('option', { value: id, selected: id === store.settings.font, title: desc }, label),
+      ),
+    );
+  }
+
+  /** Provider de IA: openrouter, ollama, openaicompatible (via AI SDK). */
+  private providerSelect(): HTMLElement {
+    return el(
+      'select',
+      {
+        class: 'ml-select ml-select-sm',
+        title: 'provedor de IA (modo IA)',
+        onchange: (e: Event) => {
+          store.settings.aiProvider = (e.target as HTMLSelectElement).value as AiProviderName;
+          persist();
+          this.invalidateTranslations();
+          this.checkAi();
+        },
+      },
+      ...this.aiProviders.map((p) =>
+        el('option', { value: p.id, selected: p.id === store.settings.aiProvider }, `IA: ${p.name}`),
       ),
     );
   }
@@ -351,53 +620,26 @@ export class Reader {
    * sem nenhum sinal na tela nem como interromper.
    */
   private buildStatusBar(): HTMLElement {
-    this.autoBtn.addEventListener('click', () => {
-      const s = store.settings;
-      s.autoTranslate = !s.autoTranslate;
-      persist();
-      if (s.autoTranslate) {
-        void this.runOcr(false);
-        void this.pumpQueue();
-      } else {
-        this.stopQueue();
-        this.ocrStatus.textContent = '';
-      }
-      this.refreshBars();
-      this.syncStatus();
-    });
-
     return el(
       'div',
       { class: 'ml-statusbar' },
       el('span', { class: 'ml-status-item' }, this.aiDot, this.aiLabel),
       el('span', { class: 'ml-status-item ml-status-grow' }, this.ocrStatus),
-      el('span', { class: 'ml-status-item' }, this.queueInfo),
-      this.autoBtn,
     );
   }
 
   /** Reflete na barra o que a fila esta' fazendo agora. */
   private syncStatus(): void {
-    const on = store.settings.autoTranslate;
-    this.autoBtn.textContent = on ? 'parar auto' : 'auto desligado';
-    this.autoBtn.classList.toggle('is-on', on);
-
-    if (!on) {
-      this.queueInfo.textContent = '';
-      return;
-    }
-    const chapters = [...new Set(this.queue.map((i) => i.chapter.number ?? i.chapter.id))];
-    this.queueInfo.textContent = this.queue.length
-      ? `fila: ${this.queue.length} pag. · cap. ${chapters.slice(0, 3).join(', ')}${chapters.length > 3 ? '...' : ''}`
-      : 'fila vazia';
+    // no-op: mantido para compatibilidade
   }
 
   /** Estado do endpoint de IA — so' importa quando o motor cai nela. */
   private async checkAi(): Promise<void> {
     try {
-      const h = await aiHealth();
+      const h = await aiHealth(store.settings.aiProvider);
       this.aiDot.classList.toggle('is-on', Boolean(h.ok));
-      this.aiLabel.textContent = h.ok ? `IA: ${h.model}` : 'IA: offline';
+      const provPrefix = h.provider ? `[${h.provider}] ` : '';
+      this.aiLabel.textContent = h.ok ? `IA: ${provPrefix}${h.model}` : `IA: ${provPrefix}offline`;
       this.aiLabel.title = h.ok ? `${h.baseUrl} — ${h.models?.length ?? 0} modelos` : (h.error ?? '');
     } catch {
       this.aiDot.classList.remove('is-on');
@@ -409,11 +651,19 @@ export class Reader {
     return el(
       'footer',
       { class: 'ml-reader-bottom' },
-      el('button', { class: 'ml-btn ml-btn-ghost', onclick: () => this.prevChapter() }, '« cap'),
-      el('button', { class: 'ml-btn ml-btn-ghost', onclick: () => this.viewer.prev() }, '‹'),
+      el(
+        'div',
+        { class: 'ml-bottom-nav' },
+        el('button', { class: 'ml-btn ml-btn-ghost', onclick: () => this.prevChapter(), title: 'Capítulo anterior' }, '« cap'),
+        el('button', { class: 'ml-btn ml-btn-ghost', onclick: () => this.viewer.prev(), title: 'Página anterior' }, '‹'),
+      ),
       this.film,
-      el('button', { class: 'ml-btn ml-btn-ghost', onclick: () => this.viewer.next() }, '›'),
-      el('button', { class: 'ml-btn ml-btn-ghost', onclick: () => this.nextChapter() }, 'cap »'),
+      el(
+        'div',
+        { class: 'ml-bottom-nav' },
+        el('button', { class: 'ml-btn ml-btn-ghost', onclick: () => this.viewer.next(), title: 'Próxima página' }, '›'),
+        el('button', { class: 'ml-btn ml-btn-ghost', onclick: () => this.nextChapter(), title: 'Próximo capítulo' }, 'cap »'),
+      ),
       el(
         'div',
         { class: 'ml-zoom' },
@@ -490,15 +740,12 @@ export class Reader {
     const sameSeries = this.detail?.provider === detail.provider && this.detail?.id === detail.id;
     this.detail = detail;
     this.chapter = chapter;
-    // seguir para o proximo capitulo da mesma obra aproveita o que a fila ja' traduziu
     if (!sameSeries) {
       this.ocrCache.clear();
       this.translatedAs.clear();
-      this.pagesByChapter.clear();
     }
     this.rtl = this.rtlFor(detail);
     this.viewer.setRtl(this.rtl);
-    this.stopQueue();
     this.history = [];
     this.chatLog.innerHTML = '';
     this.host.classList.add('is-open');
@@ -520,12 +767,7 @@ export class Reader {
       this.viewer.setPages(pages, startPage);
       this.viewer.applyFit(store.settings.fit);
       this.buildFilm();
-      this.pagesByChapter.set(chapter.id, pages);
-      if (store.settings.autoTranslate) {
-        this.paintOverlays();
-        void this.runOcr(false);
-        void this.pumpQueue();
-      }
+      this.paintOverlays();
     } catch (err) {
       // `this.chapter` ja' aponta para o capitulo novo: deixar as paginas do
       // anterior no palco faria o OCR gravar pagina velha sob a chave do novo
@@ -540,7 +782,7 @@ export class Reader {
   }
 
   close(): void {
-    this.stopQueue();
+    this.hideTooltip();
     clearInterval(this.aiTimer);
     this.host.classList.remove('is-open');
     document.body.classList.remove('is-reading');
@@ -565,6 +807,7 @@ export class Reader {
     // capitulo que nao abriu nao tem pagina: sem esta guarda o `page >= length-1`
     // abaixo daria verdadeiro em 0 >= -1 e marcaria como lido o que nunca abriu
     if (!this.pages.length) return;
+    this.hideTooltip();
     this.pageLabel.textContent = `${page + 1} / ${this.pages.length}`;
     for (const t of this.film.children) t.classList.toggle('is-current', t.getAttribute('data-page') === String(page));
     this.film.querySelector('.is-current')?.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
@@ -585,7 +828,6 @@ export class Reader {
       }
     }
     this.paintOverlays();
-    if (store.settings.autoTranslate) void this.runOcr(false);
   }
 
   /**
@@ -622,14 +864,11 @@ export class Reader {
 
   // ---------- OCR + traducao ----------
 
-  /** Motor + idioma com que uma traducao foi feita; muda um, a traducao vence. */
+  /** Motor + idioma + provider com que uma traducao foi feita; muda um, a traducao vence. */
   private stamp(): string {
-    return `${store.settings.engine}|${store.settings.targetLang}`;
-  }
-
-  /** Pagina ja' reconhecida E traduzida com o motor/idioma atuais. */
-  private isFresh(key: string): boolean {
-    return this.ocrCache.has(key) && this.translatedAs.get(key) === this.stamp();
+    const mode = store.settings.translateMode;
+    const prov = mode === 'ai' ? store.settings.aiProvider : store.settings.engine;
+    return `${mode}|${prov}|${store.settings.targetLang}`;
   }
 
   /**
@@ -638,185 +877,113 @@ export class Reader {
    */
   private invalidateTranslations(): void {
     this.translatedAs.clear();
-    this.enqueued.clear();
-    this.queue.length = 0;
     this.paintOverlays();
-    if (store.settings.autoTranslate) {
-      void this.runOcr(true, true);
-      void this.pumpQueue();
-    }
   }
 
-  private async runOcr(force: boolean, reuseOcr = false): Promise<void> {
-    if (this.busy) {
-      // Pedido explicito (botao OCR, tecla `o`, troca de idioma) era descartado em
-      // silencio quando a pagina anterior ainda estava sendo reconhecida: o usuario
-      // clicava e nada acontecia, sem nenhuma mensagem. Fica agendado.
-      if (force) {
-        this.ocrRequested = true;
-        this.ocrStatus.textContent = 'OCR pedido: entra assim que a pagina atual terminar';
-      }
-      return;
-    }
-    const targets = this.viewer.visibleSheets().filter((s) => force || !this.isFresh(this.pageKey(s.page)));
+  /** Executa OCR apenas na página atual, sem traduzir. */
+  private async runOcrOnly(): Promise<void> {
+    if (this.busy) return;
+    const targets = this.viewer.visibleSheets();
     if (!targets.length) return;
     this.busy = true;
 
     try {
+      let totalBalloons = 0;
       for (const sheet of targets) {
-        // uma pagina quebrada nao pode levar junto as outras do mesmo spread
         try {
           if (!(await imageReady(sheet.img))) {
             this.ocrStatus.textContent = `pag. ${sheet.page + 1} nao carregou`;
             continue;
           }
           const key = this.pageKey(sheet.page);
-          const blocks = await this.processImage(sheet.img, this.chapter, `pag. ${sheet.page + 1}`, key, reuseOcr);
-          this.ocrCache.set(key, blocks);
-          this.paintOverlays();
-          this.ocrStatus.textContent = blocks.length ? `${blocks.length} baloes` : 'sem texto nesta pagina';
-        } catch (err) {
-          this.ocrStatus.textContent = '';
-          toast(`OCR/traducao falhou: ${(err as Error).message}`, 'error');
-        }
-      }
-    } finally {
-      this.busy = false;
-      if (this.ocrRequested) {
-        this.ocrRequested = false;
-        void this.runOcr(true, reuseOcr);
-      } else {
-        void this.pumpQueue();
-      }
-    }
-  }
-
-  /** OCR + traducao de uma imagem ja' carregada. Serve tanto a pagina atual quanto a fila. */
-  private async processImage(
-    img: HTMLImageElement,
-    chapter: ChapterRef | undefined,
-    label: string,
-    key: string,
-    reuseOcr: boolean,
-  ): Promise<OcrBlock[]> {
-    // reconhecer e' a parte cara; quando so' a traducao venceu, reaproveita
-    let blocks = reuseOcr ? this.ocrCache.get(key) : undefined;
-    if (!blocks) {
-      const lang = langFor(chapter?.lang, this.detail?.origin, store.settings.ocrLang);
-      this.ocrStatus.textContent = `OCR ${label} (${lang})...`;
-      blocks = await recognizePage(img, lang, (p) => {
-        this.ocrStatus.textContent = `${label}: ${p.stage} ${Math.round(p.ratio * 100)}%`;
-      });
-    }
-    // pagina sem balao ja' esta' pronta para qualquer idioma
-    if (!blocks.length) {
-      this.translatedAs.set(key, this.stamp());
-      return blocks;
-    }
-    // sem traducao ligada nao ha' o que carimbar: ligar o `traduzir` depois
-    // precisa encontrar a pagina como pendente, nao como pronta
-    if (!store.settings.autoTranslate) return blocks;
-
-    this.ocrStatus.textContent = `${label}: traduzindo ${blocks.length} baloes...`;
-    // carimbo lido AGORA, nao no fim: se o usuario trocar de idioma enquanto esta
-    // pagina traduz, ela guarda o idioma com que foi realmente traduzida e a troca
-    // volta a alcanca-la
-    const stamp = this.stamp();
-    const translated = await translateBlocks(blocks, {
-      sourceLang: chapter?.lang ?? this.detail?.origin,
-      series: this.detail?.title,
-      chapter: chapter?.number,
-      engine: store.settings.engine,
-      target: store.settings.targetLang,
-    });
-    // so' depois de traduzir de fato: tradutor que falha nao pode deixar a pagina
-    // marcada como pronta e nunca mais ser tentada
-    this.translatedAs.set(key, stamp);
-    return translated;
-  }
-
-  // ---------- fila: traduz os proximos capitulos em sequencia ----------
-
-  private static readonly LOOKAHEAD = 60;
-  private static readonly CACHE_LIMIT = 3000;
-
-  /** Enfileira o que falta do capitulo atual e segue pelos proximos, em ordem. */
-  private async fillQueue(): Promise<void> {
-    if (!this.detail || !this.chapter) return;
-    // `stopQueue` zera a fila, mas um fillQueue em voo terminava depois e a
-    // repopulava — parar precisa valer tambem para o enfileiramento em curso
-    const mine = this.generation;
-    const list = this.siblingChapters();
-    let index = Math.max(
-      list.findIndex((c) => c.id === this.chapter!.id),
-      0,
-    );
-    let fromPage = this.viewer.currentPage;
-
-    while (this.queue.length < Reader.LOOKAHEAD && index < list.length) {
-      if (this.generation !== mine) return;
-      const chapter = list[index]!;
-      let pages = this.pagesByChapter.get(chapter.id);
-      if (!pages) {
-        if (chapter.id === this.chapter.id) pages = this.pages;
-        else pages = (await getPages(chapter.provider, chapter.id).catch(() => ({ pages: [] }))).pages;
-        this.pagesByChapter.set(chapter.id, pages);
-      }
-      // a busca de paginas acima e' assincrona: o usuario pode ter parado no meio
-      if (this.generation !== mine) return;
-      for (let p = fromPage; p < pages.length && this.queue.length < Reader.LOOKAHEAD; p++) {
-        const key = this.pageKey(p, chapter.id);
-        if (this.isFresh(key) || this.enqueued.has(key)) continue;
-        this.enqueued.add(key);
-        this.queue.push({ chapter, page: p, url: pages[p]!.url });
-      }
-      index++;
-      fromPage = 0;
-    }
-  }
-
-  /** Um item por vez: OCR e' pesado e a leitura do usuario tem prioridade. */
-  private async pumpQueue(): Promise<void> {
-    if (this.queueRunning || !store.settings.autoTranslate) return;
-    if (!this.host.classList.contains('is-open')) return;
-    this.queueRunning = true;
-    const mine = this.generation;
-
-    try {
-      while (store.settings.autoTranslate && this.generation === mine && this.host.classList.contains('is-open')) {
-        if (this.busy) break; // usuario pediu OCR da pagina atual: cede a vez
-        if (!this.queue.length) await this.fillQueue();
-        const item = this.queue.shift();
-        if (!item) break;
-
-        const label = `${item.chapter.number ? `cap. ${item.chapter.number}` : 'cap.'} pag. ${item.page + 1}`;
-        try {
-          const img = await loadImage(item.url);
-          const key = this.pageKey(item.page, item.chapter.id);
-          const blocks = await this.processImage(img, item.chapter, label, key, true);
-          if (this.generation !== mine) break;
+          const detectedLang = this.chapter?.lang ?? this.detail?.origin;
+          const langDisplay = detectedLang ? langLabel(detectedLang) : 'auto';
+          const lang = langFor(this.chapter?.lang, this.detail?.origin, store.settings.ocrLang);
+          this.ocrStatus.textContent = `OCR pag. ${sheet.page + 1} (${langDisplay})...`;
+          const blocks = await recognizePage(sheet.img, lang, (p) => {
+            this.ocrStatus.textContent = `pag. ${sheet.page + 1}: ${p.stage} ${Math.round(p.ratio * 100)}%`;
+          });
           this.ocrCache.set(key, blocks);
           this.trimCache();
-          if (item.chapter.id === this.chapter?.id) this.paintOverlays();
+          totalBalloons += blocks.length;
+          this.paintOverlays();
         } catch (err) {
-          console.error(`[fila] ${label}: ${(err as Error).message}`);
+          toast(`OCR falhou: ${(err as Error).message}`, 'error');
         }
-        this.ocrStatus.textContent = `adiantando (${this.queue.length} na fila)`;
-        this.syncStatus();
-        // devolve o quadro para a UI nao travar entre paginas
-        await new Promise((r) => setTimeout(r, 0));
       }
+      this.ocrStatus.textContent = totalBalloons
+        ? `OCR: ${totalBalloons} balão(ões) detectado(s)`
+        : 'sem texto detectado nesta página';
     } finally {
-      this.queueRunning = false;
+      this.busy = false;
     }
   }
 
-  private stopQueue(): void {
-    this.generation++;
-    this.queue = [];
-    this.enqueued.clear();
-    this.syncStatus();
+  /** Traduz os balões da página atual (executa OCR antes se ainda não tiver sido feito). */
+  private async runTranslate(): Promise<void> {
+    if (this.busy) return;
+    const targets = this.viewer.visibleSheets();
+    if (!targets.length) return;
+    this.busy = true;
+    if (store.settings.translateMode === 'ai') void this.checkAi();
+
+    try {
+      let translatedBalloons = 0;
+      for (const sheet of targets) {
+        try {
+          if (!(await imageReady(sheet.img))) {
+            this.ocrStatus.textContent = `pag. ${sheet.page + 1} nao carregou`;
+            continue;
+          }
+          const key = this.pageKey(sheet.page);
+          let blocks = this.ocrCache.get(key);
+          if (!blocks) {
+            const detectedLang = this.chapter?.lang ?? this.detail?.origin;
+            const langDisplay = detectedLang ? langLabel(detectedLang) : 'auto';
+            const lang = langFor(this.chapter?.lang, this.detail?.origin, store.settings.ocrLang);
+            this.ocrStatus.textContent = `OCR pag. ${sheet.page + 1} (${langDisplay})...`;
+            blocks = await recognizePage(sheet.img, lang, (p) => {
+              this.ocrStatus.textContent = `pag. ${sheet.page + 1}: ${p.stage} ${Math.round(p.ratio * 100)}%`;
+            });
+            this.ocrCache.set(key, blocks);
+            this.trimCache();
+          }
+          if (!blocks.length) {
+            this.translatedAs.set(key, this.stamp());
+            continue;
+          }
+
+          const mode = store.settings.translateMode;
+          const modeLabel = mode === 'ai' ? `IA (${store.settings.aiProvider})` : `motor (${store.settings.engine})`;
+          this.ocrStatus.textContent = `pag. ${sheet.page + 1}: traduzindo ${blocks.length} balões via ${modeLabel}...`;
+          const stamp = this.stamp();
+          const activeEngine = mode === 'ai' ? 'llm' : store.settings.engine;
+          const translated = await translateBlocks(blocks, {
+            sourceLang: this.chapter?.lang ?? this.detail?.origin,
+            series: this.detail?.title,
+            chapter: this.chapter?.number,
+            engine: activeEngine,
+            target: store.settings.targetLang,
+            provider: mode === 'ai' ? store.settings.aiProvider : undefined,
+          });
+          this.ocrCache.set(key, translated);
+          this.trimCache();
+          this.translatedAs.set(key, stamp);
+          translatedBalloons += translated.length;
+          this.paintOverlays();
+        } catch (err) {
+          toast(`Tradução falhou: ${(err as Error).message}`, 'error');
+        }
+      }
+      this.ocrStatus.textContent = translatedBalloons
+        ? `Traduzido: ${translatedBalloons} balão(ões)`
+        : 'sem balões para traduzir';
+    } finally {
+      this.busy = false;
+    }
   }
+
+  private static readonly CACHE_LIMIT = 3000;
 
   private trimCache(): void {
     while (this.ocrCache.size > Reader.CACHE_LIMIT) {
@@ -843,6 +1010,7 @@ export class Reader {
         imageDataUrl: canvas.toDataURL('image/jpeg', 0.85),
         series: this.detail?.title,
         chapter: this.chapter?.number,
+        provider: store.settings.aiProvider,
       });
       bubble.textContent = balloons.length
         ? balloons.map((b, i) => `${i + 1}. ${b.pt}\n   (${b.original})`).join('\n')
@@ -880,6 +1048,7 @@ export class Reader {
         pageText,
         question,
         history: this.history.slice(-6),
+        provider: store.settings.aiProvider,
       })) {
         full += chunk;
         bubble.textContent = full;
@@ -954,11 +1123,18 @@ export class Reader {
         this.viewer.setZoom(1);
         break;
       case 'o':
-        void this.runOcr(true);
+      case 'O':
+        void this.runOcrOnly();
+        break;
+      case 'r':
+      case 'R':
+        void this.runTranslate();
         break;
       case 't':
+      case 'T':
         store.settings.showOriginal = !store.settings.showOriginal;
         persist();
+        this.refreshBars();
         this.paintOverlays();
         break;
       case 'f':

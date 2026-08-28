@@ -690,7 +690,14 @@ async function recognize(
 
 export async function translateBlocks(
   blocks: OcrBlock[],
-  meta: { sourceLang?: string; series?: string; chapter?: string; engine?: string; target?: string },
+  meta: {
+    sourceLang?: string;
+    series?: string;
+    chapter?: string;
+    engine?: string;
+    target?: string;
+    provider?: string;
+  },
 ): Promise<OcrBlock[]> {
   if (!blocks.length) return blocks;
   const { translations } = await translate({
@@ -990,13 +997,14 @@ export function paintPage(
   }
   const ctx = canvas.getContext('2d')!;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  if (!blocks.length) return;
+  // Se o usuario quer ver o original, mantem o canvas limpo para exibir o scan original intacto
+  if (opts.showOriginal || !blocks.length) return;
 
   const family = FONT_STACK[opts.font];
   for (const b of blocks) {
-    const raw = opts.showOriginal ? b.text : b.pt || '';
+    const raw = b.pt || '';
     if (!raw.trim()) continue;
-    const text = b.upper && !opts.showOriginal ? raw.toLocaleUpperCase('pt-BR') : raw;
+    const text = b.upper ? raw.toLocaleUpperCase('pt-BR') : raw;
 
     eraseBalloon(ctx, b);
 

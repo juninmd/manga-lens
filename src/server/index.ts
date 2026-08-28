@@ -1,14 +1,14 @@
 import { Hono } from 'hono';
 import { join, extname } from 'node:path';
 import { mkdir } from 'node:fs/promises';
-import { config, hostAllowed } from './config.ts';
+import { config, getProviderConfig, hostAllowed, normalizeProvider, saveAiConfig, type AiProvider } from './config.ts';
 import { signUrl, verifyUrl } from './sign.ts';
 import { httpFetch } from './http.ts';
 import { enabledProviders, getProvider, searchAll } from './providers/index.ts';
 import type { SearchFilters, SeriesCard } from './providers/types.ts';
 import { assertInsideLibrary, localPagePaths } from './providers/local.ts';
 import { readZipEntry, readZipIndex } from './zip.ts';
-import { aiHealth, explainStream, translateBlocks, visionTranslate } from './ai.ts';
+import { aiHealth, explainStream, getAvailableProviders, invalidateProvider, listModels, translateBlocks, visionTranslate } from './ai.ts';
 import { engines, targets, translateWithEngine, type Engine } from './translators.ts';
 
 const app = new Hono();
@@ -215,7 +215,55 @@ app.get('/api/tessdata/:file', async (c) => {
   return new Response(buf, { headers: { 'Content-Type': 'application/octet-stream' } });
 });
 
-app.get('/api/ai/health', async (c) => c.json(await aiHealth()));
+app.get('/api/ai/health', async (c) => {
+  const prov = c.req.query('provider');
+  return c.json(await aiHealth(prov ? normalizeProvider(prov) : undefined));
+});
+
+app.get('/api/ai/providers', (c) => c.json(getAvailableProviders()));
+
+app.get('/api/ai/models', async (c) => {
+  const prov = c.req.query('provider');
+  const provider = prov ? normalizeProvider(prov) : config.ai.provider;
+  try {
+    const models = await listModels(provider);
+    return c.json({ ok: models.length > 0, provider, models });
+  } catch (err) {
+    return c.json({ ok: false, provider, models: [], error: (err as Error).message }, 502);
+  }
+});
+
+app.post('/api/ai/config', async (c) => {
+  const body = (await c.req.json()) as {
+    active?: AiProvider;
+    provider?: AiProvider;
+    baseUrl?: string;
+    apiKey?: string;
+    model?: string;
+    visionModel?: string;
+  };
+  if (body.active) {
+    config.ai.provider = normalizeProvider(body.active);
+  }
+  const target = body.provider ? normalizeProvider(body.provider) : undefined;
+  if (target) {
+    const patch: Record<string, string> = {};
+    if (typeof body.baseUrl === 'string') patch.baseUrl = body.baseUrl.trim().replace(/\/+$/, '');
+    if (typeof body.apiKey === 'string') patch.apiKey = body.apiKey.trim();
+    if (typeof body.model === 'string') patch.model = body.model.trim();
+    if (typeof body.visionModel === 'string') patch.visionModel = body.visionModel.trim();
+
+    if (target === 'openrouter') Object.assign(config.ai.openrouter, patch);
+    else if (target === 'openaicompatible') Object.assign(config.ai.openaiCompatible, patch);
+    else if (target === 'ollama') Object.assign(config.ai.ollama, patch);
+
+    invalidateProvider(target);
+  } else {
+    invalidateProvider();
+  }
+  saveAiConfig();
+  return c.json(getAvailableProviders());
+});
 
 app.get('/api/translate/engines', (c) => c.json(engines));
 
@@ -340,7 +388,8 @@ if (parentPid > 0) {
 export default { hostname: '127.0.0.1', port: config.port, fetch: app.fetch, idleTimeout: 60 };
 
 console.log(`manga-lens em http://localhost:${config.port}`);
-console.log(`LLM: ${config.ai.baseUrl} (${config.ai.model})`);
+const activeProv = getProviderConfig(config.ai.provider);
+console.log(`LLM: [${config.ai.provider}] ${activeProv.baseUrl} (${activeProv.model})`);
 console.log(
   config.localRoots.length
     ? `biblioteca local: ${config.localRoots.join(', ')}`

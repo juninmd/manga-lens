@@ -83,12 +83,13 @@ async function showAiStatus(): Promise<void> {
   try {
     const h = await aiHealth();
     const swapped = h.ok && h.configuredModel && h.model !== h.configuredModel;
+    const provPrefix = h.provider ? `[${h.provider}] ` : '';
     badge.textContent = h.ok
-      ? `IA: ${h.model}${swapped ? ' (substituto)' : ''}${h.visionModel ? ` + visao (${h.visionModel})` : ''}`
-      : `IA offline (${h.error ?? '?'})`;
+      ? `IA: ${provPrefix}${h.model}${swapped ? ' (substituto)' : ''}${h.visionModel ? ` + visao (${h.visionModel})` : ''}`
+      : `IA offline ${provPrefix}(${h.error ?? '?'})`;
     badge.classList.toggle('is-bad', !h.ok);
     if (swapped) badge.title = `AI_MODEL="${h.configuredModel}" nao existe em ${h.baseUrl}; usando ${h.model}`;
-    if (!h.ok) badge.title = `configure AI_BASE_URL/AI_MODEL no .env — endpoint atual: ${h.baseUrl}`;
+    if (!h.ok) badge.title = `configure AI_PROVIDER/AI_BASE_URL/AI_MODEL no .env — endpoint atual: ${h.baseUrl}`;
   } catch {
     badge.textContent = 'IA indisponivel';
     badge.classList.add('is-bad');

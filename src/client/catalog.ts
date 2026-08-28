@@ -1,8 +1,14 @@
 import {
+  aiHealth,
+  getAiModels,
+  getAiProviders,
   getProviders,
   getSeries,
   getTags,
+  saveAiConfig,
   search,
+  type AiProviderInfo,
+  type AiProviderName,
   type ContentType,
   type ProviderInfo,
   type SearchResponse,
@@ -14,8 +20,10 @@ import {
   bookmarks,
   favorites,
   isFavorite,
+  persist,
   readCount,
   recentReads,
+  store,
   toggleFavorite,
   updateStoredCover,
 } from './state.ts';
@@ -107,6 +115,10 @@ export class Catalog {
   private statusBar!: HTMLElement;
   private drawer!: HTMLElement;
   private providerModal!: HTMLElement;
+  private aiDrawer!: HTMLElement;
+  private aiBackdrop!: HTMLElement;
+  private aiData?: { active: AiProviderName; providers: AiProviderInfo[] };
+  private selectedAiProvider: AiProviderName = 'ollama';
   private providerBtn?: HTMLElement;
   private favBtn?: HTMLElement;
   /** favoritos vivem no localStorage, nao na busca: viram uma listagem propria */
@@ -140,6 +152,8 @@ export class Catalog {
       (this.typeTabs = this.buildTypeTabs()),
       this.buildDrawer(),
       this.buildProviderModal(),
+      this.buildAiDrawer(),
+      this.aiBackdrop,
       (this.statusBar = el('div', { class: 'ml-status' })),
       (this.grid = el('div', { class: 'ml-grid' })),
     );
@@ -155,7 +169,8 @@ export class Catalog {
 
     document.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape') return;
-      if (this.providerModal.classList.contains('is-open')) this.openProviders(false);
+      if (this.aiDrawer?.classList.contains('is-open')) this.openAiDrawer(false);
+      else if (this.providerModal.classList.contains('is-open')) this.openProviders(false);
       else if (this.drawer.classList.contains('is-open')) this.drawer.classList.remove('is-open');
     });
   }
@@ -211,6 +226,15 @@ export class Catalog {
         { class: 'ml-btn', onclick: () => this.openProviders(true) },
         'Fontes',
       )),
+      el(
+        'button',
+        {
+          class: 'ml-btn ml-btn-ai-config',
+          title: 'Configurar Provedores de IA / LLM (Ollama, OpenRouter, OpenAI, Modelos, Endpoints e Tokens)',
+          onclick: () => void this.openAiDrawer(true),
+        },
+        '🤖 IA / LLM',
+      ),
       (this.favBtn = el(
         'button',
         {
@@ -903,6 +927,329 @@ export class Catalog {
       // uma unica origem nao vira aba: seria ruido em quase todo card
       sources.length > 1 ? el('div', { class: 'ml-tabs' }, ...tabs) : null,
       el('div', { class: 'ml-tags' }, ...(item.tags ?? []).slice(0, 4).map((t) => el('span', {}, t))),
+    );
+  }
+
+  // ---------- drawer de provedores de IA / LLM ----------
+
+  private buildAiDrawer(): HTMLElement {
+    this.aiBackdrop = el('div', {
+      class: 'ml-ai-backdrop',
+      hidden: true,
+      onclick: () => this.openAiDrawer(false),
+    });
+
+    this.aiDrawer = el(
+      'aside',
+      { class: 'ml-drawer ml-ai-drawer' },
+      el(
+        'div',
+        { class: 'ml-drawer-head' },
+        el('strong', {}, '🤖 Provedores de IA / LLM'),
+        el(
+          'button',
+          {
+            class: 'ml-btn ml-btn-ghost',
+            onclick: () => this.openAiDrawer(false),
+            title: 'Fechar painel',
+          },
+          '✕',
+        ),
+      ),
+      el('div', { class: 'ml-drawer-body ml-ai-drawer-body', id: 'ai-drawer-content' }),
+    );
+    return this.aiDrawer;
+  }
+
+  async openAiDrawer(open = true): Promise<void> {
+    this.aiDrawer.classList.toggle('is-open', open);
+    this.aiBackdrop.classList.toggle('is-open', open);
+    this.aiBackdrop.hidden = !open;
+    if (open) {
+      const container = this.aiDrawer.querySelector('#ai-drawer-content');
+      if (container) container.innerHTML = '<div class="ml-loading-note">Carregando provedores de IA...</div>';
+      try {
+        this.aiData = await getAiProviders();
+        if (this.aiData.active) this.selectedAiProvider = this.aiData.active;
+      } catch (err) {
+        toast(`Erro ao carregar IA: ${(err as Error).message}`, 'error');
+      }
+      this.renderAiDrawer();
+    }
+  }
+
+  private renderAiDrawer(): void {
+    const container = this.aiDrawer.querySelector('#ai-drawer-content');
+    if (!container || !this.aiData) return;
+    container.innerHTML = '';
+
+    const currentActive = this.aiData.active;
+    const provConfig =
+      this.aiData.providers.find((p) => p.id === this.selectedAiProvider) ?? this.aiData.providers[0];
+    if (!provConfig) return;
+
+    // Tabs de seleção do provedor
+    const tabs = el(
+      'div',
+      { class: 'ml-ai-tabs' },
+      ...this.aiData.providers.map((p) => {
+        const isSelected = p.id === this.selectedAiProvider;
+        const isActiveDefault = p.id === currentActive;
+        const icon = p.id === 'ollama' ? '🦙' : p.id === 'openrouter' ? '🌐' : '⚡';
+        return el(
+          'button',
+          {
+            class: `ml-ai-tab ${isSelected ? 'is-selected' : ''} ${isActiveDefault ? 'is-active-provider' : ''}`,
+            onclick: () => {
+              this.selectedAiProvider = p.id;
+              this.renderAiDrawer();
+            },
+          },
+          `${icon} ${p.name}`,
+          isActiveDefault ? el('span', { class: 'ml-ai-active-badge' }, 'Padrão') : '',
+        );
+      }),
+    );
+
+    // Header do provedor selecionado
+    const isCurrentActive = this.selectedAiProvider === currentActive;
+    const activeToggle = el(
+      'div',
+      { class: 'ml-ai-status-row' },
+      el('span', { class: 'ml-ai-subhead' }, `Configuração: ${provConfig.name}`),
+      el(
+        'button',
+        {
+          class: `ml-btn ml-btn-sm ${isCurrentActive ? 'is-on' : ''}`,
+          onclick: () => {
+            if (this.aiData) {
+              this.aiData.active = this.selectedAiProvider;
+              store.settings.aiProvider = this.selectedAiProvider;
+              persist();
+              this.renderAiDrawer();
+            }
+          },
+        },
+        isCurrentActive ? '✓ Provedor Ativo' : 'Definir como Ativo',
+      ),
+    );
+
+    // Form inputs
+    const baseUrlInput = el('input', {
+      class: 'ml-input',
+      type: 'text',
+      value: provConfig.baseUrl,
+      placeholder: provConfig.id === 'ollama' ? 'http://127.0.0.1:11434/v1' : 'https://openrouter.ai/api/v1',
+    }) as HTMLInputElement;
+
+    const apiKeyInput = el('input', {
+      class: 'ml-input',
+      type: 'password',
+      value: provConfig.apiKey,
+      placeholder: provConfig.id === 'ollama' ? 'opcional para Ollama local' : 'sk-or-v1-...',
+    }) as HTMLInputElement;
+
+    const toggleKeyVisibilityBtn = el(
+      'button',
+      {
+        class: 'ml-btn ml-btn-ghost ml-btn-sm',
+        title: 'Mostrar / Ocultar chave',
+        onclick: (e: MouseEvent) => {
+          e.preventDefault();
+          apiKeyInput.type = apiKeyInput.type === 'password' ? 'text' : 'password';
+        },
+      },
+      '👁️',
+    );
+
+    const modelInput = el('input', {
+      class: 'ml-input',
+      type: 'text',
+      value: provConfig.model,
+      placeholder: 'ex: qwen2.5:7b-instruct, meta-llama/llama-3.3-70b-instruct',
+    }) as HTMLInputElement;
+
+    const modelSelect = el('select', {
+      class: 'ml-select ml-select-sm',
+      style: 'display: none; margin-top: 4px;',
+      onchange: (e: Event) => {
+        const val = (e.target as HTMLSelectElement).value;
+        if (val) modelInput.value = val;
+      },
+    }) as HTMLSelectElement;
+
+    const fetchModelsBtn = el(
+      'button',
+      {
+        class: 'ml-btn ml-btn-sm',
+        title: 'Consultar endpoint para listar modelos instalados/disponíveis',
+        onclick: async () => {
+          fetchModelsBtn.textContent = '⏳ Buscando...';
+          try {
+            await saveAiConfig({
+              provider: this.selectedAiProvider,
+              baseUrl: baseUrlInput.value,
+              apiKey: apiKeyInput.value,
+            });
+            const res = await getAiModels(this.selectedAiProvider);
+            if (res.ok && res.models?.length) {
+              modelSelect.innerHTML = '<option value="">-- Selecionar modelo disponível --</option>';
+              for (const m of res.models) {
+                const opt = document.createElement('option');
+                opt.value = m;
+                opt.textContent = m;
+                if (m === modelInput.value) opt.selected = true;
+                modelSelect.appendChild(opt);
+              }
+              modelSelect.style.display = 'block';
+              toast(`${res.models.length} modelos encontrados!`);
+            } else {
+              toast('Nenhum modelo retornado pelo endpoint', 'error');
+            }
+          } catch (err) {
+            toast(`Erro ao buscar modelos: ${(err as Error).message}`, 'error');
+          } finally {
+            fetchModelsBtn.textContent = '🔄 Buscar Modelos';
+          }
+        },
+      },
+      '🔄 Buscar Modelos',
+    );
+
+    const visionModelInput = el('input', {
+      class: 'ml-input',
+      type: 'text',
+      value: provConfig.visionModel ?? '',
+      placeholder: 'ex: llava, qwen2-vl (opcional)',
+    }) as HTMLInputElement;
+
+    const testResultEl = el('div', { class: 'ml-ai-test-result', hidden: true });
+
+    const testBtn = el(
+      'button',
+      {
+        class: 'ml-btn ml-btn-sm',
+        onclick: async () => {
+          testBtn.textContent = '⏳ Testando conexão...';
+          testResultEl.hidden = false;
+          testResultEl.className = 'ml-ai-test-result ml-ai-testing';
+          testResultEl.textContent = 'Enviando requisição ao endpoint...';
+          try {
+            await saveAiConfig({
+              provider: this.selectedAiProvider,
+              baseUrl: baseUrlInput.value,
+              apiKey: apiKeyInput.value,
+              model: modelInput.value,
+              visionModel: visionModelInput.value,
+            });
+            const start = performance.now();
+            const health = await aiHealth(this.selectedAiProvider);
+            const elapsed = Math.round(performance.now() - start);
+            if (health.ok) {
+              testResultEl.className = 'ml-ai-test-result ml-ai-success';
+              testResultEl.textContent = `🟢 Conexão OK (${elapsed}ms)! Modelo: ${health.model} · ${
+                health.models?.length ?? 0
+              } modelos encontrados.`;
+            } else {
+              testResultEl.className = 'ml-ai-test-result ml-ai-error';
+              testResultEl.textContent = `🔴 Falha: ${health.error ?? 'sem resposta'}`;
+            }
+          } catch (err) {
+            testResultEl.className = 'ml-ai-test-result ml-ai-error';
+            testResultEl.textContent = `🔴 Erro: ${(err as Error).message}`;
+          } finally {
+            testBtn.textContent = '⚡ Testar Conexão';
+          }
+        },
+      },
+      '⚡ Testar Conexão',
+    );
+
+    const saveBtn = el(
+      'button',
+      {
+        class: 'ml-btn ml-btn-action-primary',
+        style: 'width: 100%; margin-top: 8px;',
+        onclick: async () => {
+          saveBtn.textContent = '⏳ Salvando...';
+          try {
+            const updated = await saveAiConfig({
+              active: this.aiData?.active,
+              provider: this.selectedAiProvider,
+              baseUrl: baseUrlInput.value,
+              apiKey: apiKeyInput.value,
+              model: modelInput.value,
+              visionModel: visionModelInput.value,
+            });
+            this.aiData = updated;
+            if (this.aiData.active) {
+              store.settings.aiProvider = this.aiData.active;
+              persist();
+            }
+            toast('Configurações de IA salvas com sucesso!');
+            this.renderAiDrawer();
+          } catch (err) {
+            toast(`Erro ao salvar: ${(err as Error).message}`, 'error');
+          } finally {
+            saveBtn.textContent = '💾 Salvar Configurações';
+          }
+        },
+      },
+      '💾 Salvar Configurações',
+    );
+
+    // Monta o container
+    container.append(
+      tabs,
+      activeToggle,
+      // Endpoint Base URL
+      el(
+        'div',
+        { class: 'ml-field' },
+        el('label', {}, 'Endpoint Base URL:'),
+        baseUrlInput,
+        el(
+          'small',
+          { class: 'ml-field-hint' },
+          provConfig.id === 'ollama'
+            ? 'Padrão Ollama local: http://127.0.0.1:11434/v1'
+            : provConfig.id === 'openrouter'
+            ? 'Padrão OpenRouter: https://openrouter.ai/api/v1'
+            : 'Qualquer API compatível com OpenAI (ex: vLLM, LMStudio, FastChat)',
+        ),
+      ),
+      // API Key / Token
+      el(
+        'div',
+        { class: 'ml-field' },
+        el('label', {}, 'Chave de API / Token:'),
+        el('div', { class: 'ml-input-with-btn' }, apiKeyInput, toggleKeyVisibilityBtn),
+        el(
+          'small',
+          { class: 'ml-field-hint' },
+          provConfig.id === 'openrouter'
+            ? 'Necessário token da sua conta em openrouter.ai'
+            : 'Opcional para servidores locais sem autenticação',
+        ),
+      ),
+      // Modelo Principal
+      el(
+        'div',
+        { class: 'ml-field' },
+        el('label', {}, 'Modelo Principal (Tradução e Chat):'),
+        el('div', { class: 'ml-input-with-btn' }, modelInput, fetchModelsBtn),
+        modelSelect,
+      ),
+      // Modelo de Visão
+      el(
+        'div',
+        { class: 'ml-field' },
+        el('label', {}, 'Modelo de Visão Computacional (Opcional):'),
+        visionModelInput,
+        el('small', { class: 'ml-field-hint' }, 'Usado pelo botão [🤖 Visão] no leitor (ex: llava, qwen2-vl)'),
+      ),
+      // Botões de Teste e Salvar
+      el('div', { class: 'ml-ai-actions' }, testBtn, testResultEl, saveBtn),
     );
   }
 

@@ -3,6 +3,8 @@ export type FitMode = 'width' | 'page' | 'height' | 'free';
 
 export type TranslateEngine = 'auto' | 'llm' | 'google' | 'mymemory';
 export type LetterFont = 'comic' | 'sans' | 'serif';
+export type TranslateMode = 'ocr' | 'ai';
+export type AiProviderName = 'openrouter' | 'ollama' | 'openaicompatible';
 
 export interface Settings {
   mode: ReadingMode;
@@ -13,10 +15,14 @@ export interface Settings {
   showOriginal: boolean;
   invertScroll: boolean;
   engine: TranslateEngine;
+  /** modo de traducao: OCR tradicional (motores web) ou IA (LLM) */
+  translateMode: TranslateMode;
   /** idioma de chegada da traducao (pt-BR, en, es...) */
   targetLang: string;
   /** familia usada para letreirar a traducao dentro do balao */
   font: LetterFont;
+  /** provider de IA (openrouter, ollama, openaicompatible) */
+  aiProvider: AiProviderName;
 }
 
 export interface Bookmark {
@@ -62,8 +68,10 @@ const DEFAULTS: Store = {
     showOriginal: false,
     invertScroll: false,
     engine: 'auto',
+    translateMode: 'ai',
     targetLang: 'pt-BR',
     font: 'comic',
+    aiProvider: 'ollama',
   },
   favorites: {},
   progress: {},

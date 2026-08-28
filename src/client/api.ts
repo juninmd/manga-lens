@@ -102,15 +102,60 @@ export const getSeries = (provider: string, id: string): Promise<SeriesDetail> =
 export const getPages = (provider: string, chapter: string): Promise<{ pages: PageRef[] }> =>
   json(`/api/pages?provider=${encodeURIComponent(provider)}&chapter=${encodeURIComponent(chapter)}`);
 
-export const aiHealth = (): Promise<{
+export type AiProviderName = 'openrouter' | 'ollama' | 'openaicompatible';
+
+export interface AiProviderInfo {
+  id: AiProviderName;
+  name: string;
+  baseUrl: string;
+  model: string;
+  visionModel?: string;
+  hasKey: boolean;
+  apiKey: string;
+}
+
+export const aiHealth = (provider?: string): Promise<{
   ok: boolean;
+  provider?: string;
   model: string;
   configuredModel?: string;
   visionModel: string;
   baseUrl: string;
   models?: string[];
   error?: string;
-}> => json('/api/ai/health');
+}> => json(provider ? `/api/ai/health?provider=${encodeURIComponent(provider)}` : '/api/ai/health');
+
+export const getAiProviders = (): Promise<{
+  active: AiProviderName;
+  providers: AiProviderInfo[];
+}> => json('/api/ai/providers');
+
+export const getAiModels = (provider?: string): Promise<{
+  ok: boolean;
+  provider: string;
+  models: string[];
+  error?: string;
+}> => json(provider ? `/api/ai/models?provider=${encodeURIComponent(provider)}` : '/api/ai/models');
+
+export const saveAiConfig = (data: {
+  active?: AiProviderName;
+  provider?: AiProviderName;
+  baseUrl?: string;
+  apiKey?: string;
+  model?: string;
+  visionModel?: string;
+}): Promise<{
+  active: AiProviderName;
+  providers: AiProviderInfo[];
+}> =>
+  fetch('/api/ai/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  }).then((r) => {
+    if (!r.ok) throw new Error(`Falha ao salvar: ${r.status}`);
+    return r.json();
+  });
 
 export interface TranslateEngineInfo {
   id: 'auto' | 'llm' | 'google' | 'mymemory';
@@ -135,6 +180,7 @@ export const translate = (body: {
   chapter?: string;
   engine?: string;
   target?: string;
+  provider?: string;
 }): Promise<{ translations: { id: number; pt: string }[]; engine?: string }> =>
   json('/api/ai/translate', {
     method: 'POST',
@@ -146,6 +192,7 @@ export const visionTranslate = (body: {
   imageDataUrl: string;
   series?: string;
   chapter?: string;
+  provider?: string;
 }): Promise<{ balloons: { original: string; pt: string }[] }> =>
   json('/api/ai/vision', {
     method: 'POST',
@@ -161,6 +208,7 @@ export async function* explain(body: {
   pageText?: string[];
   question?: string;
   history?: { role: 'user' | 'assistant'; content: string }[];
+  provider?: string;
 }): AsyncGenerator<string> {
   const res = await fetch(api('/api/ai/explain'), {
     method: 'POST',

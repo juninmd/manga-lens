@@ -152,17 +152,40 @@ O app escolhe uma porta livre para o sidecar e a entrega ao front pelo comando
 
 ## Configuração de IA
 
-Qualquer endpoint **OpenAI-compatible** serve — Ollama, LiteLLM, vLLM, LM Studio:
+A IA é integrada via **Vercel AI SDK**, permitindo escolher o provider através da variável `AI_PROVIDER`:
 
-```
-AI_BASE_URL=http://127.0.0.1:11434/v1
-AI_API_KEY=ollama
-AI_MODEL=qwen2.5:7b-instruct
-AI_VISION_MODEL=            # opcional, habilita "IA lê a página"
+| Provider | `AI_PROVIDER` | Descrição |
+|---|---|---|
+| **Ollama** (padrão) | `ollama` | Execução local com modelos como `qwen2.5:7b-instruct` |
+| **OpenRouter** | `openrouter` | Gateway em nuvem para dezenas de modelos (Llama 3.3, Claude, GPT, etc.) |
+| **OpenAI-Compatible** | `openaicompatible` | Qualquer endpoint compatível (LM Studio, vLLM, LiteLLM, Groq, etc.) |
+
+Exemplo de `.env`:
+
+```env
+# Escolha do provider: ollama | openrouter | openaicompatible
+AI_PROVIDER=openrouter
+
+# Configurações do OpenRouter
+OPENROUTER_API_KEY=sk-or-v1-...
+OPENROUTER_MODEL=meta-llama/llama-3.3-70b-instruct
+OPENROUTER_VISION_MODEL=
+
+# Ou configurações do Ollama
+OLLAMA_BASE_URL=http://127.0.0.1:11434/v1
+OLLAMA_MODEL=qwen2.5:7b-instruct
+
+# Ou OpenAI-Compatible (LM Studio / vLLM / etc.)
+OPENAI_COMPATIBLE_BASE_URL=http://127.0.0.1:1234/v1
+OPENAI_COMPATIBLE_API_KEY=lm-studio
+OPENAI_COMPATIBLE_MODEL=model-id
+
+# Variáveis globais retrocompatíveis
 AI_MAX_TOKENS=1200          # modelos de raciocínio voltam vazios com valor baixo
+AI_TIMEOUT_MS=120000
 ```
 
-O selo no canto inferior mostra o modelo ativo ou o erro de conexão. Estar
+O selo no canto inferior mostra o provider e modelo ativo ou o erro de conexão. Estar
 listado em `/v1/models` não prova que o modelo responde — o teste real é pedir
 uma tradução.
 

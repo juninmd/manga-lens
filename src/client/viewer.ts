@@ -99,6 +99,18 @@ export class Viewer {
     return this.pagesInSpread(this.spread)[0] ?? 0;
   }
 
+  getTransform(): { tx: number; ty: number; scale: number } {
+    return { tx: this.tx, ty: this.ty, scale: this.scale };
+  }
+
+  getSheets(): { page: number; el: HTMLDivElement; img: HTMLImageElement; ocr: HTMLCanvasElement; x: number; y: number; w: number; h: number }[] {
+    return this.sheets;
+  }
+
+  isDragging(): boolean {
+    return this.dragging;
+  }
+
   // ---------- layout ----------
 
   private perSpread(): number {
