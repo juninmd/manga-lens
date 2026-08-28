@@ -554,6 +554,34 @@ function flatBackground(img: HTMLImageElement, box: Box): { bg: string; fg: stri
   };
 }
 
+/** Limpa caracteres de borda, aspas perdidas e quebras excessivas geradas por artefatos de OCR. */
+export function cleanOcrText(raw: string): string {
+  return raw
+    .trim()
+    .replace(/^[|:;~^`'"\\/_-]+|[|:;~^`'"\\/_-]+$/g, '')
+    .replace(/\r\n|\r/g, '\n')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n\s*\n+/g, '\n')
+    .trim();
+}
+
+/** Classifica se o bloco reconhecido e' ruido de arte/trama ou texto valido. */
+export function isOcrNoise(text: string, confidence: number): boolean {
+  const cleaned = cleanOcrText(text);
+  if (!cleaned) return true;
+  const letters = cleaned.replace(/[^\p{L}\p{N}]/gu, '');
+  if (letters.length < 2) return true;
+  // Apenas pontuacao, digitos isolados ou simbolos (ex: "...", "---", "_!_")
+  if (/^[\p{P}\p{S}\s\d]+$/u.test(cleaned)) return true;
+  // Proporcao de caracteres legiveis vs simbolos de ruido
+  const nonSpace = cleaned.replace(/\s/g, '').length;
+  if (nonSpace > 0 && letters.length / nonSpace < 0.45) return true;
+  // Confianca baixa: texto curto (<=3 letras) precisa de confianca maior (>=45) para nao ser falso positivo
+  if (letters.length <= 3 && confidence < 45) return true;
+  if (confidence < 28) return true;
+  return false;
+}
+
 /**
  * Segunda passada, na pagina inteira: le o que nao mora em balao — epigrafe,
  * caixa de narracao, legenda de tempo/lugar, titulo. O detector de baloes procura
@@ -579,7 +607,9 @@ async function looseText(
   const out: OcrBlock[] = [];
   for (const block of data.blocks ?? []) {
     for (const par of block.paragraphs ?? []) {
-      const text = (par.text ?? '').replace(/\s*\n\s*/g, '\n').trim();
+      const rawText = (par.text ?? '').replace(/\s*\n\s*/g, '\n').trim();
+      const text = cleanOcrText(rawText);
+      if (isOcrNoise(text, par.confidence ?? 0)) continue;
       if (text.replace(/[^\p{L}\p{N}]/gu, '').length < 3) continue;
       if ((par.confidence ?? 0) < 40) continue;
 
@@ -654,15 +684,13 @@ async function recognize(
         const region = regions[i]!;
         // deteccao trabalha reduzida; o OCR e a composicao usam o tamanho real
         const box: Box = { x: region.x / scale, y: region.y / scale, w: region.w / scale, h: region.h / scale };
-        const { data } = await worker.recognize(crop(page, box, 6), {}, { text: true });
+        const { data } = await worker.recognize(crop(page, box, 12), {}, { text: true });
         done++;
         onProgress?.({ stage: `balao ${done}/${regions.length}`, ratio: done / regions.length });
 
-        const text = (data.text ?? '').replace(/\s*\n\s*/g, '\n').trim();
-        if (text.replace(/[\s|_\-.,'"]/g, '').length < 2) continue;
-        // confianca abaixo disso e' ruido de verdade: medido em scan de 1946, o
-        // texto legivel pontuou 59 e o ilegivel ficou entre 15 e 25
-        if ((data.confidence ?? 0) < 30) continue;
+        const rawText = (data.text ?? '').replace(/\s*\n\s*/g, '\n').trim();
+        const text = cleanOcrText(rawText);
+        if (isOcrNoise(text, data.confidence ?? 0)) continue;
 
         const letters = text.replace(/[^\p{L}]/gu, '');
         const uppers = text.replace(/[^\p{Lu}]/gu, '');

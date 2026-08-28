@@ -108,8 +108,15 @@ async function myMemoryTranslate(text: string, source: string, target: string): 
   return (data.responseData?.translatedText ?? '').trim();
 }
 
-/** Ruido de OCR quase nunca tem duas letras de verdade — digito e pontuacao nao contam. */
-const isNoise = (text: string): boolean => text.replace(/[^\p{L}]/gu, '').length < 2;
+/** Ruido de OCR quase nunca tem letras legiveis de verdade — simbolos isolados, digitos e pontuacao repetida nao contam. */
+export const isNoise = (text: string): boolean => {
+  const cleaned = text.replace(/^[|:;~^`'"\\/_-]+|[|:;~^`'"\\/_-]+$/g, '').trim();
+  const letters = cleaned.replace(/[^\p{L}\p{N}]/gu, '');
+  if (letters.length < 2) return true;
+  if (/^[\p{P}\p{S}\s\d]+$/u.test(cleaned)) return true;
+  const nonSpace = cleaned.replace(/\s/g, '').length;
+  return nonSpace > 0 && letters.length / nonSpace < 0.45;
+};
 
 /**
  * Quantos baloes traduzem ao mesmo tempo. Os endpoints livres respondem 429 em
