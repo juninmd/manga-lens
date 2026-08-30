@@ -7,9 +7,11 @@
     ".workflow/5-competitive-quality/research.md",
     ".workflow/5-competitive-quality/plan.md",
     ".workflow/5-competitive-quality/ocr-benchmark.md",
-    ".workflow/5-competitive-quality/progress.md"
+    ".workflow/5-competitive-quality/progress.md",
+    "https://github.com/juninmd/manga-lens/pull/6"
   ],
   "branch": "quality/competitive-round-5",
+  "pr": "https://github.com/juninmd/manga-lens/pull/6",
   "rounds": { "implement": 1 },
   "skipped": [
     {
