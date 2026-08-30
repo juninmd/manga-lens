@@ -131,7 +131,10 @@ Há dois caminhos alternativos:
   anteriores** (útil ao pegar uma série no meio). O painel mostra `X de Y lidos`
   e o card do catálogo traz o contador.
 
-Tudo vive no `localStorage` do app — nada sai da máquina.
+Tudo vive no `localStorage` do app — nada sai da máquina. O botão **⭳
+Backup** na barra de cima baixa um `.json` com favoritos, progresso,
+marcadores e capítulos lidos; **⭱ Importar** restaura esse arquivo (em
+qualquer máquina) sem precisar de conta nem serviço externo.
 
 ## Rodando
 

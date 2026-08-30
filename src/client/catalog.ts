@@ -18,7 +18,9 @@ import {
 import { debounce, el, langLabel, STATUS_LABEL, toast } from './ui.ts';
 import {
   bookmarks,
+  exportStore,
   favorites,
+  importStore,
   isFavorite,
   persist,
   readCount,
@@ -235,6 +237,16 @@ export class Catalog {
         },
         '🤖 IA / LLM',
       ),
+      el(
+        'button',
+        {
+          class: 'ml-btn',
+          title: 'Baixar um arquivo com favoritos, progresso, marcadores e capitulos lidos',
+          onclick: () => this.exportBackup(),
+        },
+        '⭳ Backup',
+      ),
+      this.buildImportBackupInput(),
       (this.favBtn = el(
         'button',
         {
@@ -248,6 +260,45 @@ export class Catalog {
         },
         '★ Favoritos',
       )),
+    );
+  }
+
+  /** Baixa favoritos/progresso/marcadores/lidos como um `.json` — para levar pra outra maquina. */
+  private exportBackup(): void {
+    const blob = new Blob([exportStore()], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = el('a', { href: url, download: `manga-lens-backup-${Date.now()}.json` });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast('Backup baixado');
+  }
+
+  /** Input de arquivo escondido pro botao "Importar backup" — evita reinventar file picker. */
+  private buildImportBackupInput(): HTMLElement {
+    const input = el('input', {
+      type: 'file',
+      accept: 'application/json',
+      style: { display: 'none' },
+      onchange: async (e: Event) => {
+        const file = (e.target as HTMLInputElement).files?.[0];
+        (e.target as HTMLInputElement).value = '';
+        if (!file) return;
+        const result = importStore(await file.text());
+        if (result.ok) {
+          toast('Backup importado — recarregando...');
+          setTimeout(() => location.reload(), 600);
+        } else {
+          toast(`Backup invalido: ${result.error}`, 'error');
+        }
+      },
+    });
+    return el(
+      'label',
+      { class: 'ml-btn', title: 'Restaurar favoritos, progresso, marcadores e capitulos lidos de um backup' },
+      '⭱ Importar',
+      input,
     );
   }
 

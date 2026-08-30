@@ -1,0 +1,12 @@
+{
+  "lang": "jpn",
+  "source": "sintetico (MS Gothic) — manga-ocr so' reconhece japones, sem raw JP a mao nesta rodada",
+  "items": {
+    "jp1-horizontal-clean": "おはようございます",
+    "jp2-horizontal-clean": "これは本当ですか",
+    "jp3-horizontal-textured": "ナルトは強い忍者だ",
+    "jp4-vertical-clean": "静かにしろ",
+    "jp5-vertical-textured": "助けてくれ",
+    "jp6-horizontal-clean": "火影様お許しください"
+  }
+}

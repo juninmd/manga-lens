@@ -1,0 +1,24 @@
+{
+  "lang": "eng",
+  "source": "Naruto ch.1 (mangapill), páginas 5/9/10 — texto real tipografado",
+  "note": "Ground truth escrito a mao a partir da leitura visual de cada recorte em crops/. p5-* sao caixas de narracao sobre arte pintada/texturizada (sem balao) — caso-alvo do item de inpainting.",
+  "items": {
+    "p9-hokage-yes": "YES? WHAT IS IT? SOME NEW OUTRAGE BY NARUTO, I PRESUME?",
+    "p9-lordhokage": "LORD HOKAGE!!!",
+    "p9-graffiti": "THAT YOUNG DEVIL IS GRAFFITI-ING THE MOUNTAINSIDE IMAGES OF ALL THE HEROES OF OUR VILLAGE-YOUR HONORED FOREBEARS!",
+    "p9-inpaint": "IN PAINT!!",
+    "p9-hmf": "HMF.",
+    "p9-sickofit": "WE'RE SICK OF IT! GROW THE HECK UP!",
+    "p9-enough": "ENOUGH WITH THE STUPID PRANKS!",
+    "p9-lookatim": "LOOK AT 'IM...",
+    "p10-loosers": "LOOOOSERS!! WANNA-BE'S!",
+    "p10-drool": "I RULE, AND YOU DROOL!",
+    "p10-cantapolog": "LORD HOKAGE... I CAN'T APOLOGIZE ENOUGH... EH?",
+    "p10-howdareyou": "HOW DARE YOU?! WHO DO YOU THINK YOU ARE?!",
+    "p10-shf": "SHF",
+    "p5-oncetime": "ONCE UPON A TIME, THERE LIVED A FOX SPIRIT WITH NINE TAILS. AND HE WAS SO POWERFUL THAT WHENEVER HE SHOOK THOSE TAILS, LANDSLIDES AND TSUNAMIS WOULD RESULT.",
+    "p5-suffering": "THE SUFFERING PEOPLE GATHERED THE GREAT SHINOBI CLANS TO FIGHT THIS MENACE. FINALLY, RISKING HIS LIFE, ONE NINJA WAS ABLE TO IMPRISON ITS SOUL..",
+    "p5-shinobidied": "HAVING DEFEATED THE DEMON, THE BRAVE SHINOBI DIED.",
+    "p5-fourthhokage": "THAT SHINOBI WAS THE FOURTH HOKAGE, THE FIRE SHADOW, CHAMPION OF THE VILLAGE HIDDEN IN THE LEAVES..."
+  }
+}

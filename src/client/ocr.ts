@@ -23,6 +23,12 @@ export interface OcrBlock {
   /** cor de fundo do balao e cor da tinta, amostradas da propria pagina */
   bg?: string;
   fg?: string;
+  /**
+   * Fundo reconstruido por difusao, para texto solto sobre arte/textura (sem
+   * balao, sem `bg` solido). Desenhado no lugar do fundo liso ao apagar —
+   * ver `diffuseFill`.
+   */
+  bgCanvas?: HTMLCanvasElement;
   /** o texto original era caixa alta? a traducao acompanha */
   upper?: boolean;
 }
@@ -498,13 +504,11 @@ function covered(b: OcrBlock, box: Box): boolean {
   return (ix * iy) / (box.w * box.h) > 0.5;
 }
 
-/**
- * Amostra o retangulo na pagina original. Devolve as cores so' quando o fundo e'
- * liso: sem mascara de balao, apagar significa `fillRect`, e fazer isso em cima
- * de arte apagaria o desenho. Texto sobre desenho (onomatopeia, letreiro na
- * ilustracao) fica de fora de proposito — melhor nao traduzir do que destruir.
- */
-function flatBackground(img: HTMLImageElement, box: Box): { bg: string; fg: string } | null {
+/** Amostra o retangulo na pagina original e separa cor dominante (fundo) de cor extrema (tinta). */
+function sampleColors(
+  img: HTMLImageElement,
+  box: Box,
+): { bg: string; fg: string; flatness: number } {
   const w = Math.max(1, Math.min(Math.round(box.w), 220));
   const h = Math.max(1, Math.round((box.h * w) / Math.max(box.w, 1)));
   const canvas = document.createElement('canvas');
@@ -546,12 +550,121 @@ function flatBackground(img: HTMLImageElement, box: Box): { bg: string; fg: stri
       fgB += px[i + 2]!;
     }
   }
-  // fundo liso = a cor dominante ocupa a maior parte do retangulo
-  if (bgN / gray.length < 0.55) return null;
   return {
-    bg: rgb(bgR / bgN, bgG / bgN, bgB / bgN),
+    bg: bgN ? rgb(bgR / bgN, bgG / bgN, bgB / bgN) : rgb(peak, peak, peak),
     fg: fgN ? rgb(fgR / fgN, fgG / fgN, fgB / fgN) : '#111111',
+    flatness: bgN / gray.length,
   };
+}
+
+/**
+ * Amostra o retangulo na pagina original. Devolve as cores so' quando o fundo e'
+ * liso: sem mascara de balao, apagar significa `fillRect`, e fazer isso em cima
+ * de arte apagaria o desenho — a menos que `diffuseFill` reconstrua a textura
+ * em vez de usar uma cor solida (ver chamada em `looseText`).
+ */
+function flatBackground(img: HTMLImageElement, box: Box): { bg: string; fg: string } | null {
+  const s = sampleColors(img, box);
+  // fundo liso = a cor dominante ocupa a maior parte do retangulo
+  return s.flatness >= 0.55 ? { bg: s.bg, fg: s.fg } : null;
+}
+
+const DIFFUSE_MARGIN = 10;
+const DIFFUSE_ITERATIONS = 16;
+
+/**
+ * Reconstroi o fundo sob o texto por difusao: a moldura ao redor da caixa (arte
+ * real, nao letra) e' conhecida; o interior e' preenchido fazendo cada pixel
+ * desconhecido convergir pra media dos vizinhos, dentro pra fora, algumas
+ * iteracoes — e' o mesmo principio do "fast marching"/harmonic inpainting
+ * (Telea et al.), so' que sem biblioteca: cadeia de medias e' barata e da'
+ * conta de gradiente/textura suave, que e' o caso comum de fundo de pagina.
+ * Nao substitui arte com detalhe fino (linhas, tracejado) — para isso o app
+ * continua preferindo nao desenhar por cima (ver `flatBackground`).
+ */
+/**
+ * Faz cada pixel marcado em `unknown` convergir pra media dos vizinhos
+ * conhecidos, algumas iteracoes — matematica pura, sem canvas, pra dar pra
+ * testar sem DOM. Muta `data` (RGBA, `w*h*4`) no lugar.
+ */
+export function diffusePixels(data: Uint8ClampedArray, w: number, h: number, unknown: Uint8Array, iterations: number): void {
+  const next = new Float32Array(data.length);
+  for (let it = 0; it < iterations; it++) {
+    next.set(data as unknown as ArrayLike<number>);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const p = y * w + x;
+        if (!unknown[p]) continue;
+        let n = 0;
+        let r = 0;
+        let g = 0;
+        let b = 0;
+        for (const [dx, dy] of [
+          [1, 0],
+          [-1, 0],
+          [0, 1],
+          [0, -1],
+        ]) {
+          const nx = x + dx!;
+          const ny = y + dy!;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          const np = ny * w + nx;
+          n++;
+          r += data[np * 4]!;
+          g += data[np * 4 + 1]!;
+          b += data[np * 4 + 2]!;
+        }
+        if (n === 0) continue;
+        const i = p * 4;
+        next[i] = r / n;
+        next[i + 1] = g / n;
+        next[i + 2] = b / n;
+        next[i + 3] = 255;
+      }
+    }
+    data.set(next.map((v) => Math.round(v)));
+  }
+}
+
+/**
+ * Reconstroi o fundo sob a caixa a partir da moldura ao redor (arte real, nao
+ * letra) via `diffusePixels`. Ver o comentario dessa funcao para o principio.
+ */
+function diffuseFill(img: HTMLImageElement, box: Box): HTMLCanvasElement {
+  const w = Math.max(1, Math.round(box.w));
+  const h = Math.max(1, Math.round(box.h));
+  const sx = Math.max(0, box.x - DIFFUSE_MARGIN);
+  const sy = Math.max(0, box.y - DIFFUSE_MARGIN);
+  const sw = Math.min(img.naturalWidth - sx, w + DIFFUSE_MARGIN * 2);
+  const sh = Math.min(img.naturalHeight - sy, h + DIFFUSE_MARGIN * 2);
+  const padX = box.x - sx;
+  const padY = box.y - sy;
+
+  const work = document.createElement('canvas');
+  work.width = sw;
+  work.height = sh;
+  const wctx = work.getContext('2d', { willReadFrequently: true })!;
+  wctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+  const image = wctx.getImageData(0, 0, sw, sh);
+
+  // desconhecido = o interior da caixa, dentro da moldura amostrada
+  const unknown = new Uint8Array(sw * sh);
+  for (let y = 0; y < sh; y++) {
+    for (let x = 0; x < sw; x++) {
+      if (x >= padX && x < padX + w && y >= padY && y < padY + h) unknown[y * sw + x] = 1;
+    }
+  }
+  diffusePixels(image.data, sw, sh, unknown, DIFFUSE_ITERATIONS);
+  wctx.putImageData(image, 0, 0);
+
+  const out = document.createElement('canvas');
+  out.width = w;
+  out.height = h;
+  const octx = out.getContext('2d')!;
+  octx.imageSmoothingEnabled = true;
+  octx.imageSmoothingQuality = 'high';
+  octx.drawImage(work, padX, padY, w, h, 0, 0, w, h);
+  return out;
 }
 
 /** Limpa caracteres de borda, aspas perdidas e quebras excessivas geradas por artefatos de OCR. */
@@ -622,8 +735,11 @@ async function looseText(
       if (box.w < 24 || box.h < 12) continue;
       if (balloons.some((b) => covered(b, box))) continue;
 
+      // fundo liso: recolore com a cor solida (rapido, sem perda). Fundo com
+      // arte/textura: reconstroi por difusao em vez de descartar o bloco —
+      // antes esse texto solto simplesmente nao era traduzido.
       const flat = flatBackground(img, box);
-      if (!flat) continue;
+      const sampled = flat ?? sampleColors(img, box);
 
       const letters = text.replace(/[^\p{L}]/gu, '');
       const uppers = text.replace(/[^\p{Lu}]/gu, '');
@@ -632,8 +748,9 @@ async function looseText(
         text,
         confidence: par.confidence ?? 0,
         ...box,
-        bg: flat.bg,
-        fg: flat.fg,
+        bg: sampled.bg,
+        fg: sampled.fg,
+        bgCanvas: flat ? undefined : diffuseFill(img, box),
         upper: letters.length > 0 && uppers.length / letters.length > 0.7,
       });
     }
@@ -985,6 +1102,11 @@ function inkFor(bg: string, fg: string): string {
 /** Pinta o interior do balao com a cor dele — apaga o texto original sem tocar na arte. */
 function eraseBalloon(ctx: CanvasRenderingContext2D, b: OcrBlock): void {
   if (!b.mask) {
+    if (b.bgCanvas) {
+      // texto solto sobre arte/textura: fundo reconstruido por difusao, nao cor solida
+      ctx.drawImage(b.bgCanvas, b.x, b.y, b.w, b.h);
+      return;
+    }
     ctx.fillStyle = b.bg ?? '#ffffff';
     ctx.fillRect(b.x, b.y, b.w, b.h);
     return;

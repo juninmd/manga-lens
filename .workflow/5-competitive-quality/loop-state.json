@@ -1,0 +1,23 @@
+{
+  "issue": 5,
+  "slug": "5-competitive-quality",
+  "stage": "implement",
+  "awaiting": "iterate",
+  "artifacts": [
+    ".workflow/5-competitive-quality/research.md",
+    ".workflow/5-competitive-quality/plan.md",
+    ".workflow/5-competitive-quality/ocr-benchmark.md",
+    ".workflow/5-competitive-quality/progress.md",
+    "https://github.com/juninmd/manga-lens/pull/6"
+  ],
+  "branch": "quality/competitive-round-5",
+  "pr": "https://github.com/juninmd/manga-lens/pull/6",
+  "rounds": { "implement": 1 },
+  "skipped": [
+    {
+      "stage": "prototype",
+      "reason": "research.md's open questions are all technical/scope decisions (OCR engine viability, inpainting approach, scope breadth, export format) — none is a UI-direction choice a clickable variant would settle. Routed to the plan questionnaire instead."
+    }
+  ],
+  "scratch": []
+}
