@@ -1,0 +1,90 @@
+[32m2026-08-30 13:23:01.102[0m | [1mINFO    [0m | [36mmanga_ocr.ocr[0m:[36m__init__[0m:[36m16[0m - [1mLoading OCR model from kha-white/manga-ocr-base[0m
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+
+=== manga-ocr (kha-white, transformer JP) ===
+Loading weights:   0%|          | 0/264 [00:00<?, ?it/s]Loading weights: 100%|██████████| 264/264 [00:00<00:00, 12510.27it/s]
+[32m2026-08-30 13:23:04.053[0m | [1mINFO    [0m | [36mmanga_ocr.ocr[0m:[36m__init__[0m:[36m30[0m - [1mUsing CPU[0m
+[32m2026-08-30 13:23:16.806[0m | [1mINFO    [0m | [36mmanga_ocr.ocr[0m:[36m__init__[0m:[36m37[0m - [1mOCR ready[0m
+Downloading detection model, please wait. This may take several minutes depending upon your network connection.
+Downloading recognition model, please wait. This may take several minutes depending upon your network connection.
+C:\Users\jr_ac\AppData\Roaming\Python\Python314\site-packages\torch\ao\nn\quantized\dynamic\modules\rnn.py:162: UserWarning: torch.quantize_per_tensor, torch.quantize_per_channel and other quantized tensor creation functions that produce tensors with dtype torch.quint8, torch.qint8, and torch.qint32 are deprecated and will be removed in a future PyTorch release. Please see https://github.com/pytorch/pytorch/issues/184982 for more information. (Triggered internally at C:\actions-runner\_work\pytorch\pytorch\aten\src\ATen\quantized\Quantizer.cpp:116.)
+  w_ih = torch.quantize_per_tensor(
+C:\Users\jr_ac\AppData\Roaming\Python\Python314\site-packages\torch\utils\data\dataloader.py:759: UserWarning: 'pin_memory' argument is set as true but no accelerator is found, then device pinned memory won't be used.
+  super().__init__(loader)
+  [jp1-horizontal-clean] CER=0.00 4199ms
+    ref: 'おはようございます'
+    hyp: 'おはようございます'
+  [jp2-horizontal-clean] CER=0.00 438ms
+    ref: 'これは本当ですか'
+    hyp: 'これは本当ですか'
+  [jp3-horizontal-textured] CER=0.00 355ms
+    ref: 'ナルトは強い忍者だ'
+    hyp: 'ナルトは強い忍者だ'
+  [jp4-vertical-clean] CER=0.00 285ms
+    ref: '静かにしろ'
+    hyp: '静かにしろ'
+  [jp5-vertical-textured] CER=0.00 252ms
+    ref: '助けてくれ'
+    hyp: '助けてくれ'
+  [jp6-horizontal-clean] CER=0.00 326ms
+    ref: '火影様お許しください'
+    hyp: '火影様お許しください'
+  -> CER medio: 0.000 · latencia media: 976ms  (6 itens)
+
+=== EasyOCR (deep learning, multi-idioma, eng) ===
+  [p9-hokage-yes] CER=0.07 17268ms
+    ref: 'YES? WHAT IS IT? SOME NEW OUTRAGE BY NARUTO, I PRESUME?'
+    hyp: 'YES? WHAT IsIT? SOmE NEW OUTRAGE BY NARUTO, ppesume?'
+  [p9-lordhokage] CER=0.21 318ms
+    ref: 'LORD HOKAGE!!!'
+    hyp: 'LORD HOKAGEII'
+  [p9-graffiti] CER=0.05 880ms
+    ref: 'THAT YOUNG DEVIL IS GRAFFITI-ING THE MOUNTAINSIDE IMAGES OF ALL THE HEROES OF OUR VILLAGE-YOUR HONORED FOREBEARS!'
+    hyp: 'THAT YOUNG DEvilis GRAFFITI- Ing THE MOUNTAINSIDE IMAGES OF ALL THE HEROESOF OuRvillaGe_ YOUR HONORED FOREBEARS!'
+  [p9-inpaint] CER=0.40 133ms
+    ref: 'IN PAINT!!'
+    hyp: 'INpAntw'
+  [p9-hmf] CER=0.25 102ms
+    ref: 'HMF.'
+    hyp: 'HMFI'
+  [p9-sickofit] CER=0.20 250ms
+    ref: "WE'RE SICK OF IT! GROW THE HECK UP!"
+    hyp: 'WERe SICK OF IT! GROW THE HECK UP! E^ WI'
+  [p9-enough] CER=0.03 248ms
+    ref: 'ENOUGH WITH THE STUPID PRANKS!'
+    hyp: 'ENOuGH With THE STUPId PRANKSI'
+  [p9-lookatim] CER=0.50 107ms
+    ref: "LOOK AT 'IM..."
+    hyp: 'LOOK AT'
+  [p10-loosers] CER=0.57 1642ms
+    ref: "LOOOOSERS!! WANNA-BE'S!"
+    hyp: 'VMSERSH WAWABSU'
+  [p10-drool] CER=0.09 972ms
+    ref: 'I RULE, AND YOU DROOL!'
+    hyp: 'RUle, AND YOU DROOL!'
+  [p10-cantapolog] CER=0.20 11347ms
+    ref: "LORD HOKAGE... I CAN'T APOLOGIZE ENOUGH... EH?"
+    hyp: 'LORD HOKAGE, CANT ApologizE EnouGH_ EH?'
+  [p10-howdareyou] CER=0.02 986ms
+    ref: 'HOW DARE YOU?! WHO DO YOU THINK YOU ARE?!'
+    hyp: 'HOW DARE You?! WHO DO YOU THINK YOU ApE?!'
+  [p10-shf] CER=1.00 97ms
+    ref: 'SHF'
+    hyp: 'lleHf'
+  [p5-oncetime] CER=0.10 1023ms
+    ref: 'ONCE UPON A TIME, THERE LIVED A FOX SPIRIT WITH NINE TAILS. AND HE WAS SO POWERFUL THAT WHENEVER HE SHOOK THOSE TAILS, LANDSLIDES AND TSUNAMIS WOULD RESULT.'
+    hyp: 'ONCE UPONAtime ThErE LivedAFox Spiritwithninetails AND Hewas SopowerFUL THAT WHENEVER He Shookthosetails LANDsLiDes AND tsunaMiS Would Result:'
+  [p5-suffering] CER=0.08 797ms
+    ref: 'THE SUFFERING PEOPLE GATHERED THE GREAT SHINOBI CLANS TO FIGHT THIS MENACE. FINALLY, RISKING HIS LIFE, ONE NINJA WAS ABLE TO IMPRISON ITS SOUL..'
+    hyp: 'THesuffering peuplegatHERED THE GREAT Shinobi CLANSTo Fight This MENACE FiNAllY, Risking His life; ONENiNJA WAS AbletoimpriSoN ItsSoul:'
+  [p5-shinobidied] CER=0.08 362ms
+    ref: 'HAVING DEFEATED THE DEMON, THE BRAVE SHINOBI DIED.'
+    hyp: 'HAVING DEFEAteDtheDeMON the BRAvE Shinobi Died:'
+  [p5-fourthhokage] CER=0.09 696ms
+    ref: 'THAT SHINOBI WAS THE FOURTH HOKAGE, THE FIRE SHADOW, CHAMPION OF THE VILLAGE HIDDEN IN THE LEAVES...'
+    hyp: 'THAT Shinobi Wasthe FourthHOKAge; The Fire SHADOW, CHAMPION OfthevillAGe HiDDEN inthe LEAvES_'
+  -> CER medio: 0.232 · latencia media: 2190ms  (17 itens)
+
+=== Resumo ===
+  manga-ocr (jpn, sintetico): CER medio 0.000, 976ms/item
+  EasyOCR (eng, paginas reais): CER medio 0.232, 2190ms/item

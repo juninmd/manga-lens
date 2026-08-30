@@ -254,3 +254,47 @@ export const recentReads = (): Progress[] =>
   Object.values(store.progress)
     .sort((a, b) => b.at - a.at)
     .slice(0, 12);
+
+// ---------- backup (export/import) ----------
+
+interface StoreBackup {
+  version: 1;
+  exportedAt: string;
+  store: Store;
+}
+
+/** JSON baixavel com favoritos, progresso, marcadores e capitulos lidos — para trocar de maquina sem perder nada. */
+export function exportStore(): string {
+  const payload: StoreBackup = { version: 1, exportedAt: new Date().toISOString(), store };
+  return JSON.stringify(payload, null, 2);
+}
+
+/** Sobrescreve o estado a partir de um backup exportado por `exportStore`. Falha sem tocar no estado atual se o JSON for invalido ou incompleto. */
+export function importStore(json: string): { ok: true } | { ok: false; error: string } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return { ok: false, error: 'arquivo nao e um JSON valido' };
+  }
+  const backup = parsed as Partial<StoreBackup> | null;
+  const s = backup?.store as Partial<Store> | undefined;
+  if (
+    !s ||
+    typeof s.settings !== 'object' ||
+    typeof s.favorites !== 'object' ||
+    typeof s.progress !== 'object' ||
+    typeof s.read !== 'object' ||
+    !Array.isArray(s.bookmarks)
+  ) {
+    return { ok: false, error: 'arquivo nao parece um backup do MangaLens' };
+  }
+  store.settings = { ...DEFAULTS.settings, ...s.settings };
+  store.favorites = s.favorites as Store['favorites'];
+  store.progress = s.progress as Store['progress'];
+  store.read = s.read as Store['read'];
+  store.bookmarks = s.bookmarks as Bookmark[];
+  readCache.clear();
+  persist();
+  return { ok: true };
+}
