@@ -135,6 +135,12 @@ function getPool(lang: string): Promise<Worker>[] {
             ? (m: { status: string; progress: number }) =>
                 activeProgress?.({ stage: m.status, ratio: m.progress ?? 0 })
             : () => undefined,
+      }).catch((err: unknown) => {
+        // sidecar ainda subindo ou rede fora: sem isto a promise rejeitada fica
+        // no cache e todo OCR desse idioma falha para sempre, ate' recarregar
+        pools.delete(lang);
+        lastUsed.delete(lang);
+        throw err;
       }),
     );
     pools.set(lang, pool);

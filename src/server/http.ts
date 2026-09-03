@@ -15,6 +15,8 @@ interface FetchOpts {
   timeoutMs?: number;
   retries?: number;
   headers?: Record<string, string>;
+  /** `manual` devolve o 3xx cru para quem chama decidir se segue (proxy de imagem). */
+  redirect?: RequestRedirect;
 }
 
 const originFrom = (ref: string | undefined): string | undefined => {
@@ -28,7 +30,7 @@ const originFrom = (ref: string | undefined): string | undefined => {
 
 /** fetch com UA de browser, timeout e retry com backoff em 429/5xx. */
 export async function httpFetch(url: string, opts: FetchOpts = {}): Promise<Response> {
-  const { referer, accept, timeoutMs = 20_000, retries = 2 } = opts;
+  const { referer, accept, timeoutMs = 20_000, retries = 2, redirect = 'follow' } = opts;
   let lastErr: unknown;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
@@ -38,7 +40,7 @@ export async function httpFetch(url: string, opts: FetchOpts = {}): Promise<Resp
       const origin = originFrom(referer);
       const res = await fetch(url, {
         signal: ctrl.signal,
-        redirect: 'follow',
+        redirect,
         headers: {
           'User-Agent': config.userAgent,
           'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8,ja;q=0.7',
