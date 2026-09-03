@@ -92,6 +92,14 @@ function load(): Store {
       bookmarks: parsed.bookmarks ?? [],
     };
   } catch {
+    // JSON quebrado: o proximo persist() sobrescreveria o valor cru, que ainda
+    // da' para recuperar a mao. Guarda uma copia antes de cair no padrao.
+    try {
+      const raw = localStorage.getItem(KEY);
+      if (raw) localStorage.setItem(`${KEY}.corrupt`, raw);
+    } catch {
+      /* sem espaco: nao ha' o que salvar */
+    }
     return structuredClone(DEFAULTS);
   }
 }

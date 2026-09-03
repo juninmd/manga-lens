@@ -3,7 +3,7 @@ import { join, extname } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { config, getProviderConfig, hostAllowed, normalizeProvider, saveAiConfig, type AiProvider } from './config.ts';
 import { signUrl, verifyUrl } from './sign.ts';
-import { httpFetch } from './http.ts';
+import { HttpError, httpFetch } from './http.ts';
 import { enabledProviders, getProvider, searchAll } from './providers/index.ts';
 import type { SearchFilters, SeriesCard } from './providers/types.ts';
 import { assertInsideLibrary, localPagePaths } from './providers/local.ts';
@@ -38,8 +38,31 @@ const originAllowed = (origin: string): boolean =>
   /^https?:\/\/tauri\.localhost$/.test(origin) ||
   /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(origin);
 
+/**
+ * O servidor so' escuta em loopback, mas isso nao impede um site qualquer aberto
+ * no browser de falar com ele: `fetch('http://127.0.0.1:7788/...')` sai do
+ * browser normalmente. Duas barreiras:
+ *
+ * - `Host` fora de loopback e' DNS rebinding — o atacante aponta o proprio
+ *   dominio para 127.0.0.1 e a pagina dele passa a ser "mesma origem" que a
+ *   API, lendo `/api/ai/providers` (que devolve a chave da IA) sem CORS.
+ * - POST com `Origin` de fora e' CSRF — `Content-Type: text/plain` nao dispara
+ *   preflight, e `POST /api/ai/config` trocaria o `baseUrl` do provider pelo do
+ *   atacante; a proxima traducao entregaria o `Authorization: Bearer <chave>`.
+ *
+ * Sem `Origin` (curl, testes, requisicao de mesma origem em browser antigo)
+ * passa: browser moderno sempre manda `Origin` em POST.
+ */
+const LOOPBACK_HOST = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i;
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
 app.use('*', async (c, next) => {
+  const host = c.req.header('Host') ?? '';
+  if (host && !LOOPBACK_HOST.test(host)) return c.text('host invalido', 403);
   const origin = c.req.header('Origin') ?? '';
+  if (!SAFE_METHODS.has(c.req.method) && origin && !originAllowed(origin)) {
+    return c.text('origem nao permitida', 403);
+  }
   if (c.req.method === 'OPTIONS' && originAllowed(origin)) {
     return new Response(null, {
       status: 204,
@@ -123,6 +146,37 @@ app.get('/api/pages', async (c) => {
   return c.json({ pages: pages.map((p) => ({ ...p, url: proxied(p.url, p.referer) })) });
 });
 
+const MAX_IMAGE_HOPS = 4;
+
+/**
+ * Busca a imagem seguindo redirect um salto por vez: a allowlist vale para CADA
+ * destino, nao so' para a URL assinada. Com `redirect: 'follow'` um CDN da
+ * allowlist que responda 302 para um host interno (metadata da nuvem, outro
+ * servico em loopback) seria seguido as cegas pelo proxy.
+ */
+async function fetchImage(url: string, referer?: string): Promise<Response> {
+  let current = url;
+  for (let hop = 0; hop < MAX_IMAGE_HOPS; hop++) {
+    const parsed = new URL(current);
+    if (parsed.protocol !== 'https:' || !hostAllowed(parsed.hostname)) {
+      throw new HttpError(`host bloqueado: ${parsed.hostname}`, 403);
+    }
+    const res = await httpFetch(current, {
+      referer,
+      accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
+      timeoutMs: 30_000,
+      redirect: 'manual',
+    });
+    const location = res.headers.get('location');
+    if (res.status >= 300 && res.status < 400 && location) {
+      current = new URL(location, current).href;
+      continue;
+    }
+    return res;
+  }
+  throw new HttpError('redirects demais', 502);
+}
+
 app.get('/api/img', async (c) => {
   const { u = '', r = '', s = '' } = c.req.query();
   let target: { url: string; referer?: string };
@@ -131,15 +185,15 @@ app.get('/api/img', async (c) => {
   } catch {
     return c.text('assinatura invalida', 403);
   }
-  const parsed = new URL(target.url);
-  if (parsed.protocol !== 'https:' || !hostAllowed(parsed.hostname)) {
-    return c.text(`host bloqueado: ${parsed.hostname}`, 403);
+  let res: Response;
+  try {
+    res = await fetchImage(target.url, target.referer);
+  } catch (err) {
+    // host bloqueado (403), upstream esgotado ou redirect sem fim (502): o status
+    // ja' vem certo do HttpError — subir para o onError viraria 500 generico
+    if (err instanceof HttpError) return new Response(err.message, { status: err.status });
+    throw err;
   }
-  const res = await httpFetch(target.url, {
-    referer: target.referer,
-    accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
-    timeoutMs: 30_000,
-  });
   if (!res.ok || !res.body) return c.text(`upstream ${res.status}`, 502);
   return new Response(res.body, {
     headers: {
@@ -177,10 +231,13 @@ app.get('/api/local/page', async (c) => {
   if (!name) return c.text('pagina inexistente', 404);
   const type = MIME[extname(name).toLowerCase()] ?? 'application/octet-stream';
 
+  // sem `Access-Control-Allow-Origin: *`: o token e' so' o caminho em base64,
+  // e um site qualquer no browser adivinharia `D:\Manga\...` e leria a
+  // biblioteca. O middleware ja' libera a origem do app (o <img> do leitor
+  // carrega com `crossorigin=anonymous`, entao manda `Origin`).
   const imageHeaders = {
     'Content-Type': type,
     'Cache-Control': 'public, max-age=3600',
-    'Access-Control-Allow-Origin': '*',
     'Cross-Origin-Resource-Policy': 'cross-origin',
   };
 
