@@ -822,8 +822,10 @@ export class Reader {
         cover: this.detail.cover,
         at: Date.now(),
       });
-      // chegou na ultima pagina: o capitulo conta como lido
-      if (page >= this.pages.length - 1) {
+      // chegou na ultima pagina: o capitulo conta como lido. No modo dupla `page`
+      // e' a primeira da folha; a ultima folha [8,9] de 10 paginas nunca marcava.
+      const lastShown = Math.max(page, ...this.viewer.visibleSheets().map((s) => s.page));
+      if (lastShown >= this.pages.length - 1) {
         markChapterRead(this.detail.provider, this.detail.id, this.chapter.id);
       }
     }
@@ -1001,6 +1003,11 @@ export class Reader {
     this.chat.classList.add('is-open');
     const bubble = this.pushMessage('assistant', 'lendo a pagina com o modelo de visao...');
     try {
+      // sem a imagem decodificada o canvas sai 0x0 e o modelo recebe "data:," vazio
+      if (!(await imageReady(sheet.img))) {
+        bubble.textContent = 'a pagina ainda nao carregou; tente de novo';
+        return;
+      }
       const canvas = document.createElement('canvas');
       const scale = Math.min(1, 1400 / (sheet.img.naturalWidth || 1400));
       canvas.width = Math.round(sheet.img.naturalWidth * scale);
@@ -1090,7 +1097,9 @@ export class Reader {
 
   private onKey = (e: KeyboardEvent): void => {
     if (!this.host.classList.contains('is-open')) return;
-    if ((e.target as HTMLElement)?.tagName === 'TEXTAREA' || (e.target as HTMLElement)?.tagName === 'INPUT') return;
+    // <select> das opcoes: seta troca a opcao E virava a pagina, letras disparavam OCR
+    const target = e.target as HTMLElement | null;
+    if (/^(TEXTAREA|INPUT|SELECT)$/.test(target?.tagName ?? '') || target?.isContentEditable) return;
     const rtl = this.rtl;
     switch (e.key) {
       case 'ArrowRight':
