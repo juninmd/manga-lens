@@ -1,5 +1,5 @@
 import type { PageRef } from './api.ts';
-import type { FitMode, ReadingMode } from './state.ts';
+import { store, type FitMode, type ReadingMode } from './state.ts';
 
 interface Sheet {
   page: number;
@@ -15,7 +15,12 @@ interface Sheet {
 
 const GAP = 16; // espaco entre paginas, em pixels de imagem
 const MIN_SCALE = 0.05;
-const MAX_SCALE = 12;
+export const MAX_SCALE = 12;
+// toque: abaixo disso e' tap, nao arrasto; deslize horizontal rapido vira pagina
+const TAP_SLOP = 8;
+const SWIPE_MIN = 60;
+const SWIPE_MAX_MS = 400;
+const WHEEL_TURN_MS = 250;
 // modo tira pode empilhar centenas de paginas na mesma tela; sem isso o navegador
 // mantem todas decodificadas na memoria o capitulo inteiro. So' o que esta' perto
 // da leitura fica carregado — o resto libera o `src` e recarrega ao reaproximar.
@@ -25,8 +30,12 @@ const clamp = (v: number, lo: number, hi: number): number => Math.min(Math.max(v
 
 export interface ViewerEvents {
   onPageChange?: (page: number) => void;
-  onTransform?: (info: { scale: number; fitScale: number }) => void;
+  onTransform?: (info: { scale: number; fitScale: number; fit: FitMode }) => void;
   onSheetsChange?: (sheets: { page: number; img: HTMLImageElement; ocr: HTMLCanvasElement }[]) => void;
+  /** tap na lateral / deslize / roda pediram virar pagina — o app decide o que fazer no fim do capitulo */
+  onNavigate?: (dir: 1 | -1) => void;
+  /** tap (sem arrasto) no palco; devolver true consome o toque — um balao nao vira a pagina */
+  onTap?: (clientX: number, clientY: number) => boolean;
 }
 
 /**
@@ -61,6 +70,13 @@ export class Viewer {
   private inertia = 0;
   private pinchStart: { dist: number; scale: number; cx: number; cy: number } | null = null;
   private lastEmittedPage = -1;
+  /** onde o dedo/mouse desceu — decide entre tap, deslize e arrasto ao soltar */
+  private gesture: { x: number; y: number; t: number; type: string; pinched: boolean } | null = null;
+  private lastWheelTurn = 0;
+  /** ultimo tap de toque: dois seguidos (< 300ms, < 24px) valem um duplo clique — iOS nao sintetiza dblclick com touch-action:none */
+  private lastTap: { x: number; y: number; t: number } | null = null;
+  /** pagina pedida antes das imagens da tira carregarem — reancorada a cada `load` */
+  private stripStart: number | undefined;
 
   constructor(private events: ViewerEvents = {}) {}
 
@@ -81,12 +97,15 @@ export class Viewer {
     stage.addEventListener('dblclick', this.onDoubleClick);
     stage.addEventListener('contextmenu', (e) => e.preventDefault());
     this.nav.addEventListener('pointerdown', this.onNavDrag);
-    new ResizeObserver(() => this.applyFit()).observe(stage);
+    // girar o celular / teclado do chat redimensiona o palco: na tira, sem preservar a rolagem, voltava ao topo
+    new ResizeObserver(() => this.applyFit(this.fit, this.mode === 'strip')).observe(stage);
   }
 
   setPages(pages: PageRef[], startPage = 0): void {
     this.pages = pages;
     this.spread = this.spreadOf(startPage);
+    // na tira nao existe folha: a pagina inicial vira rolagem depois de montar
+    this.stripStart = this.mode === 'strip' && startPage > 0 ? startPage : undefined;
     this.build();
   }
 
@@ -117,14 +136,38 @@ export class Viewer {
     return this.mode === 'double' ? 2 : 1;
   }
 
+  /**
+   * Deslocamento da dupla: manga com capa na pagina 0 desalinha todos os pares
+   * ([0,1],[2,3]...). Com offset 1 a capa fica sozinha e as duplas viram [1,2],[3,4].
+   */
+  private offset: 0 | 1 = 0;
+
+  private spreadOffset(): number {
+    return this.mode === 'double' ? this.offset : 0;
+  }
+
   private spreadOf(page: number): number {
-    return this.mode === 'strip' ? 0 : Math.floor(page / this.perSpread());
+    return this.mode === 'strip' ? 0 : Math.floor((page + this.spreadOffset()) / this.perSpread());
   }
 
   private pagesInSpread(spread: number): number[] {
     if (this.mode === 'strip') return this.pages.map((_, i) => i);
     const per = this.perSpread();
-    return this.pages.map((_, i) => i).slice(spread * per, spread * per + per);
+    const start = spread * per - this.spreadOffset();
+    return this.pages.map((_, i) => i).slice(Math.max(0, start), start + per);
+  }
+
+  get coverOffset(): 0 | 1 {
+    return this.offset;
+  }
+
+  /** Alterna o deslocamento mantendo a pagina atual em cena. */
+  setCoverOffset(offset: 0 | 1): void {
+    if (this.offset === offset) return;
+    const page = this.currentPage;
+    this.offset = offset;
+    this.spread = this.spreadOf(page);
+    this.build();
   }
 
   private build(): void {
@@ -160,6 +203,20 @@ export class Viewer {
       img.addEventListener('error', () => {
         el.classList.add('is-broken');
         sheet.loaded = true;
+        // retangulo mudo nao diz se foi rede, 404 ou proxy: da' o numero e um retry
+        if (!el.querySelector('.ml-sheet-retry')) {
+          const retry = document.createElement('button');
+          retry.className = 'ml-btn ml-btn-sm ml-sheet-retry';
+          retry.type = 'button';
+          retry.textContent = `pagina ${page + 1} nao carregou — tentar de novo`;
+          retry.addEventListener('click', () => {
+            el.classList.remove('is-broken');
+            retry.remove();
+            const url = this.pages[page]!.url;
+            img.src = `${url}${url.includes('?') ? '&' : '?'}r=${Date.now()}`;
+          });
+          el.append(retry);
+        }
         this.relayout();
       });
       this.sheets.push(sheet);
@@ -167,6 +224,10 @@ export class Viewer {
 
     this.lastEmittedPage = -1;
     this.relayout(true);
+    if (this.stripStart !== undefined) {
+      this.goToPage(this.stripStart);
+      this.stripStart = undefined;
+    }
     this.preload();
     this.events.onSheetsChange?.(this.sheets.map((s) => ({ page: s.page, img: s.img, ocr: s.ocr })));
     this.events.onPageChange?.(this.currentPage);
@@ -176,6 +237,12 @@ export class Viewer {
     if (!this.sheets.length) return;
 
     if (this.mode === 'strip') {
+      // imagem que carrega acima da leitura muda a altura da pilha: guarda qual
+      // pagina esta' no topo da tela (e quanto dela ja' passou) para recolocar
+      // a rolagem no mesmo lugar depois de reempilhar
+      const top = -this.ty / this.scale;
+      const anchor = refit ? undefined : this.sheets.find((s) => s.y + s.h > top);
+      const offset = anchor ? top - anchor.y : 0;
       const width = Math.max(...this.sheets.map((s) => s.w));
       let y = 0;
       for (const s of this.sheets) {
@@ -185,6 +252,7 @@ export class Viewer {
       }
       this.contentW = width;
       this.contentH = Math.max(y - GAP, 1);
+      if (anchor) this.ty = -(anchor.y + offset) * this.scale;
     } else {
       const order = this.rtl ? [...this.sheets].reverse() : this.sheets;
       const height = Math.max(...this.sheets.map((s) => s.h));
@@ -218,6 +286,8 @@ export class Viewer {
   }
 
   applyFit(fit: FitMode = this.fit, preserveScroll = false): void {
+    // na tira "ajustar" encolheria o capitulo inteiro a um fio — la' o unico ajuste que faz sentido e' largura
+    if (this.mode === 'strip' && fit !== 'free') fit = 'width';
     this.fit = fit;
     const { w, h } = this.stageSize();
     const previous = this.scale;
@@ -251,7 +321,7 @@ export class Viewer {
     this.clampPan();
     this.canvas.style.transform = `translate3d(${this.tx}px, ${this.ty}px, 0) scale(${this.scale})`;
     this.updateNavigator();
-    this.events.onTransform?.({ scale: this.scale, fitScale: this.fitScale });
+    this.events.onTransform?.({ scale: this.scale, fitScale: this.fitScale, fit: this.fit });
     if (this.mode === 'strip') {
       // apply() roda a cada quadro do arrasto: so avisa quando a pagina muda mesmo
       const page = this.visibleStripPage();
@@ -321,24 +391,35 @@ export class Viewer {
   private onWheel = (e: WheelEvent): void => {
     e.preventDefault();
     this.stopInertia();
-    const zoomGesture = this.mode !== 'strip' ? !e.ctrlKey && !e.shiftKey : e.ctrlKey;
-
+    // Folha: roda solta da' zoom (o smoke e os usuarios atuais dependem disso),
+    // Shift+roda vira pagina. Tira: roda rola, Ctrl+roda da' zoom. Ctrl/Cmd+roda
+    // da' zoom em qualquer modo.
+    const zoomGesture = e.ctrlKey || e.metaKey || (this.mode !== 'strip' && !e.shiftKey);
     if (zoomGesture) {
       const factor = Math.exp(-e.deltaY * 0.0015);
       this.zoomAt(factor, e.clientX, e.clientY);
       return;
     }
-    if (this.mode !== 'strip' && e.shiftKey) {
-      if (e.deltaY > 0) this.next();
-      else this.prev();
+    if (this.mode !== 'strip') {
+      const now = performance.now();
+      if (now - this.lastWheelTurn < WHEEL_TURN_MS) return;
+      this.lastWheelTurn = now;
+      const forward = store.settings.invertScroll ? e.deltaY < 0 : e.deltaY > 0;
+      this.navigate(forward ? 1 : -1);
       return;
     }
     // strip: rolagem normal move a pagina; nas bordas, troca de capitulo fica com o app
     this.panBy(-e.deltaX, -e.deltaY);
   };
 
+  /** Chromium/Android sintetiza `dblclick` apos dois toques: o detector manual ja' tratou */
+  private lastPointerType = 'mouse';
+
   private onPointerDown = (e: PointerEvent): void => {
+    this.lastPointerType = e.pointerType;
     if (e.button !== 0 && e.button !== 1) return;
+    // botao dentro do palco (retry da pagina quebrada): capturar o ponteiro aqui engoliria o click
+    if ((e.target as Element | null)?.closest('button')) return;
     this.stopInertia();
     this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     this.stage.setPointerCapture(e.pointerId);
@@ -351,8 +432,10 @@ export class Viewer {
         cx: (a!.x + b!.x) / 2,
         cy: (a!.y + b!.y) / 2,
       };
+      if (this.gesture) this.gesture.pinched = true;
       return;
     }
+    this.gesture = { x: e.clientX, y: e.clientY, t: performance.now(), type: e.pointerType, pinched: false };
     this.dragging = true;
     this.stage.classList.add('is-dragging');
     this.last = { x: e.clientX, y: e.clientY, t: performance.now() };
@@ -367,7 +450,13 @@ export class Viewer {
       const [a, b] = [...this.pointers.values()];
       const dist = Math.hypot(a!.x - b!.x, a!.y - b!.y);
       const target = clamp((this.pinchStart.scale * dist) / this.pinchStart.dist, MIN_SCALE, MAX_SCALE);
-      this.zoomAt(target / this.scale, this.pinchStart.cx, this.pinchStart.cy);
+      // o centro dos dedos anda junto: beliscar e arrastar no mesmo gesto
+      const cx = (a!.x + b!.x) / 2;
+      const cy = (a!.y + b!.y) / 2;
+      this.panBy(cx - this.pinchStart.cx, cy - this.pinchStart.cy);
+      this.pinchStart.cx = cx;
+      this.pinchStart.cy = cy;
+      this.zoomAt(target / this.scale, cx, cy);
       return;
     }
     if (!this.dragging) return;
@@ -383,12 +472,80 @@ export class Viewer {
 
   private onPointerUp = (e: PointerEvent): void => {
     this.pointers.delete(e.pointerId);
-    if (this.pointers.size < 2) this.pinchStart = null;
+    if (this.pointers.size < 2 && this.pinchStart) {
+      this.pinchStart = null;
+      // sobrou um dedo: `last` ainda e' de antes do pinch e o proximo move daria um salto
+      const rest = [...this.pointers.values()][0];
+      if (rest) {
+        this.last = { x: rest.x, y: rest.y, t: performance.now() };
+        this.velocity = { x: 0, y: 0 };
+      }
+    }
     if (this.pointers.size > 0) return;
     this.dragging = false;
     this.stage.classList.remove('is-dragging');
+    const g = this.gesture;
+    this.gesture = null;
+    // pointerdown num botao do palco nao registra gesto: o up correspondente nao pode disparar inercia velha
+    if (!g) return;
+    if (!g.pinched && e.type === 'pointerup' && g.type !== 'mouse') {
+      const dx = e.clientX - g.x;
+      const dy = e.clientY - g.y;
+      const dt = performance.now() - g.t;
+      // "ampliado" e' ter saido do ajuste (zoom livre): com ajuste largura/altura
+      // a escala passa do fitScale e o toque lateral/deslize ficavam mudos
+      const notZoomed = this.fit !== 'free';
+      // toque/duplo-toque valem em todo modo (na tira o touch nao tinha como fixar o tooltip);
+      // so' a lateral e o deslize sao de folha
+      if (Math.hypot(dx, dy) < TAP_SLOP) {
+        const now = performance.now();
+        const prev = this.lastTap;
+        this.lastTap = { x: e.clientX, y: e.clientY, t: now };
+        if (prev && now - prev.t < 300 && Math.hypot(e.clientX - prev.x, e.clientY - prev.y) < 24) {
+          this.lastTap = null;
+          this.toggleZoomAt(e.clientX, e.clientY);
+          return;
+        }
+        // toque em cima de um balao mostra o original; so' fora dele a lateral vira pagina
+        if (this.events.onTap?.(e.clientX, e.clientY)) {
+          this.lastTap = null;
+          return;
+        }
+        // ampliado, o toque leve (parar a inercia, soltar um pan curto) nao pode pular de pagina
+        if (!notZoomed || this.mode === 'strip') return;
+        // tap na lateral vira pagina (terco do meio fica livre para o tooltip)
+        const rect = this.stage.getBoundingClientRect();
+        const third = (e.clientX - rect.left) / Math.max(rect.width, 1);
+        if (third < 1 / 3 || third > 2 / 3) {
+          // folhear rapido na borda nao pode virar duplo toque (zoom)
+          this.lastTap = null;
+          this.navigate((third < 1 / 3) === this.rtl ? 1 : -1);
+        }
+        return;
+      }
+      if (
+        notZoomed &&
+        this.mode !== 'strip' &&
+        dt < SWIPE_MAX_MS &&
+        Math.abs(dx) > SWIPE_MIN &&
+        Math.abs(dx) > Math.abs(dy) * 1.5
+      ) {
+        // deslizar para a esquerda avanca em LTR e volta em RTL
+        const forward = dx < 0 ? !this.rtl : this.rtl;
+        this.velocity = { x: 0, y: 0 };
+        this.navigate(forward ? 1 : -1);
+        return;
+      }
+    }
     this.startInertia();
   };
+
+  /** virar pagina por gesto: o app trata o fim do capitulo (proximo/anterior) */
+  private navigate(dir: 1 | -1): void {
+    if (this.events.onNavigate) this.events.onNavigate(dir);
+    else if (dir > 0) this.next();
+    else this.prev();
+  }
 
   private startInertia(): void {
     const speed = Math.hypot(this.velocity.x, this.velocity.y);
@@ -412,10 +569,19 @@ export class Viewer {
 
   private onDoubleClick = (e: MouseEvent): void => {
     e.preventDefault();
-    const atFit = Math.abs(this.scale - this.fitScale) < 0.01;
-    if (atFit) this.zoomAt(1 / this.scale, e.clientX, e.clientY);
-    else this.applyFit('page');
+    // touch/pen: o duplo toque manual (onPointerUp) ja' alternou; rodar de novo anulava o zoom
+    if (this.lastPointerType !== 'mouse') return;
+    this.toggleZoomAt(e.clientX, e.clientY);
   };
+
+  /** duplo clique / duplo toque: 100% no ponto, ou de volta ao ajuste */
+  private toggleZoomAt(x: number, y: number): void {
+    // "no ajuste" e' o ajuste corrente (largura/altura/pagina), nao so' o 'page';
+    // na tira o alvo e' largura — 'page' encolhia o capitulo e zerava a rolagem
+    const atFit = this.fit !== 'free';
+    if (atFit) this.zoomAt(1 / this.scale, x, y);
+    else this.applyFit(this.mode === 'strip' ? 'width' : 'page', true);
+  }
 
   // ---------- navegador (mini mapa) ----------
 
@@ -469,7 +635,7 @@ export class Viewer {
   }
 
   private spreadCount(): number {
-    return this.mode === 'strip' ? 1 : Math.ceil(this.pages.length / this.perSpread());
+    return this.mode === 'strip' ? 1 : Math.ceil((this.pages.length + this.spreadOffset()) / this.perSpread());
   }
 
   next(): boolean {
@@ -514,8 +680,9 @@ export class Viewer {
     const page = this.currentPage;
     this.mode = mode;
     this.spread = this.spreadOf(page);
+    // na tira a pagina atual vira rolagem; sem isto trocar de modo voltava ao topo
+    if (mode === 'strip') this.stripStart = page > 0 ? page : undefined;
     this.build();
-    if (mode === 'strip') this.applyFit('width');
   }
 
   setRtl(rtl: boolean): void {

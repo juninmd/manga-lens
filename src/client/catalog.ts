@@ -15,7 +15,7 @@ import {
   type SeriesCard,
   type TagInfo,
 } from './api.ts';
-import { debounce, el, langLabel, STATUS_LABEL, toast } from './ui.ts';
+import { debounce, el, langLabel, plural, STATUS_LABEL, toast, TYPE_LABEL } from './ui.ts';
 import {
   bookmarks,
   exportStore,
@@ -93,7 +93,7 @@ const RATINGS = [
   ['pornographic', 'Adulto'],
 ];
 const TYPE_TABS: [ContentType, string][] = [
-  ['manga', 'Mangá'],
+  ['manga', 'Manga'],
   ['hq', 'HQ'],
   ['livro', 'Livro'],
 ];
@@ -116,13 +116,24 @@ export class Catalog {
   private grid!: HTMLElement;
   private statusBar!: HTMLElement;
   private drawer!: HTMLElement;
+  private drawerBackdrop!: HTMLElement;
   private providerModal!: HTMLElement;
   private aiDrawer!: HTMLElement;
   private aiBackdrop!: HTMLElement;
   private aiData?: { active: AiProviderName; providers: AiProviderInfo[] };
   private selectedAiProvider: AiProviderName = 'ollama';
   private providerBtn?: HTMLElement;
+  private providerLabel?: HTMLElement;
+  private filtersBtn?: HTMLElement;
   private favBtn?: HTMLElement;
+  private searchInput!: HTMLInputElement;
+  private sortSelect!: HTMLSelectElement;
+  /** quem tinha o foco antes de um drawer/modal abrir — devolvido ao fechar */
+  private lastFocus?: HTMLElement;
+  /** ticket da busca em voo: resposta de uma busca antiga nao pode pintar por cima da nova */
+  private seq = 0;
+  private tagsLoading = false;
+  private tagsSeq = 0;
   /** favoritos vivem no localStorage, nao na busca: viram uma listagem propria */
   private showFavorites = false;
   private providers: ProviderInfo[] = [];
@@ -153,6 +164,7 @@ export class Catalog {
       this.buildToolbar(),
       (this.typeTabs = this.buildTypeTabs()),
       this.buildDrawer(),
+      this.drawerBackdrop,
       this.buildProviderModal(),
       this.buildAiDrawer(),
       this.aiBackdrop,
@@ -161,7 +173,7 @@ export class Catalog {
     );
 
     this.providers = await getProviders().catch((e) => {
-      toast(`falha ao listar providers: ${e.message}`, 'error');
+      toast(`falha ao listar fontes: ${e.message}`, 'error');
       return [];
     });
     this.renderTypeTabs();
@@ -169,44 +181,100 @@ export class Catalog {
     void this.loadTags();
     await this.run();
 
-    document.addEventListener('keydown', (e) => {
-      if (e.key !== 'Escape') return;
-      if (this.aiDrawer?.classList.contains('is-open')) this.openAiDrawer(false);
-      else if (this.providerModal.classList.contains('is-open')) this.openProviders(false);
-      else if (this.drawer.classList.contains('is-open')) this.drawer.classList.remove('is-open');
+    // painel de serie sem capitulos pede "buscar em outras fontes"
+    window.addEventListener('ml:search', (e) => {
+      const q = (e as CustomEvent<{ q?: string }>).detail?.q ?? '';
+      if (this.showFavorites) this.favBtn?.click();
+      this.filters.q = q;
+      this.filters.providers = [];
+      this.filters.page = 1;
+      this.syncToolbar();
+      this.renderProviders();
+      void this.run();
     });
+
+    // `capture`: leitor e painel de serie registram o keydown antes e fecham
+    // sincronamente — sem captura, quando este listener rodava eles ja' tinham
+    // sumido e o Esc fechava duas camadas de uma vez
+    document.addEventListener(
+      'keydown',
+      (e) => {
+        if (e.key !== 'Escape') return;
+        // leitor e painel de serie ficam por cima: o Esc deles nao pode fechar o que esta' atras
+        if (document.body.classList.contains('is-reading') || document.querySelector('.ml-series.is-open')) return;
+        // so' a camada mais alta fecha — um Esc, um overlay
+        if (this.aiDrawer?.classList.contains('is-open')) void this.openAiDrawer(false);
+        else if (this.providerModal.classList.contains('is-open')) this.openProviders(false);
+        else if (this.drawer.classList.contains('is-open')) this.openDrawer(false);
+        else return;
+        e.stopImmediatePropagation();
+      },
+      { capture: true },
+    );
+  }
+
+  /** Guarda o foco atual e leva o foco para o primeiro controle do overlay. */
+  private focusInto(overlay: HTMLElement): void {
+    this.lastFocus = (document.activeElement as HTMLElement | null) ?? undefined;
+    overlay.querySelector<HTMLElement>('button, input, select, textarea')?.focus();
+  }
+
+  /** Devolve o foco a quem abriu o overlay (ou ao botao indicado). */
+  private restoreFocus(fallback?: HTMLElement): void {
+    const target = this.lastFocus?.isConnected ? this.lastFocus : fallback;
+    this.lastFocus = undefined;
+    target?.focus();
   }
 
   private async loadTags(): Promise<void> {
     const online = this.providersOfType(this.activeType)
       .filter((p) => p.kind === 'online')
       .map((p) => p.id);
+    // trocar de aba rapido deixava duas cargas em voo; a mais lenta gravava as tags da aba errada
+    const ticket = ++this.tagsSeq;
+    this.tagsLoading = true;
+    this.renderTagPickers();
     const lists = await Promise.all(online.map((p) => getTags(p).catch(() => [] as TagInfo[])));
+    if (ticket !== this.tagsSeq) return;
     const byName = new Map<string, TagInfo>();
     for (const list of lists) for (const t of list) byName.set(t.name.toLowerCase(), t);
     this.tags = [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+    this.tagsLoading = false;
     this.renderTagPickers();
   }
 
   // ---------- toolbar ----------
 
   private buildToolbar(): HTMLElement {
-    const input = el('input', {
+    // debounce proprio (nao o de ui.ts) para o Enter poder cancelar o disparo pendente
+    let typing: number | undefined;
+    const applyQuery = (value: string): void => {
+      clearTimeout(typing);
+      typing = undefined;
+      this.filters.q = value;
+      this.filters.page = 1;
+      void this.run();
+    };
+    this.searchInput = el('input', {
       class: 'ml-search',
       type: 'search',
       placeholder: 'Buscar manga, manhwa, HQ...',
+      'aria-label': 'Buscar no catalogo',
       value: this.filters.q,
-      oninput: debounce((e: Event) => {
-        this.filters.q = (e.target as HTMLInputElement).value;
-        this.filters.page = 1;
-        void this.run();
-      }, 420),
+      oninput: (e: Event) => {
+        clearTimeout(typing);
+        typing = window.setTimeout(() => applyQuery((e.target as HTMLInputElement).value), 420);
+      },
+      onkeydown: (e: KeyboardEvent) => {
+        if (e.key === 'Enter') applyQuery((e.target as HTMLInputElement).value);
+      },
     });
 
-    const sort = el(
+    this.sortSelect = el(
       'select',
       {
         class: 'ml-select',
+        'aria-label': 'Ordenar por',
         onchange: (e: Event) => {
           this.filters.sort = (e.target as HTMLSelectElement).value;
           this.filters.page = 1;
@@ -220,31 +288,47 @@ export class Catalog {
       'header',
       { class: 'ml-toolbar' },
       el('div', { class: 'ml-brand' }, el('span', { class: 'ml-logo' }, '◧'), 'MangaLens'),
-      input,
-      sort,
-      el('button', { class: 'ml-btn', onclick: () => this.drawer.classList.toggle('is-open') }, 'Filtros'),
+      this.searchInput,
+      this.sortSelect,
+      (this.filtersBtn = el(
+        'button',
+        {
+          class: 'ml-btn',
+          'aria-label': 'Abrir filtros',
+          'aria-expanded': 'false',
+          onclick: () => this.openDrawer(!this.drawer.classList.contains('is-open')),
+        },
+        '☰ ',
+        el('span', { class: 'ml-btn-label' }, 'Filtros'),
+      )),
       (this.providerBtn = el(
         'button',
-        { class: 'ml-btn', onclick: () => this.openProviders(true) },
-        'Fontes',
+        { class: 'ml-btn', 'aria-label': 'Escolher fontes', onclick: () => this.openProviders(true) },
+        '⊞ ',
+        (this.providerLabel = el('span', { class: 'ml-btn-label' }, 'Fontes')),
       )),
       el(
         'button',
         {
           class: 'ml-btn ml-btn-ai-config',
-          title: 'Configurar Provedores de IA / LLM (Ollama, OpenRouter, OpenAI, Modelos, Endpoints e Tokens)',
+          title: 'Configurar IA (Ollama, OpenRouter, OpenAI)',
+          'aria-label': 'Configurar IA',
           onclick: () => void this.openAiDrawer(true),
         },
-        '🤖 IA / LLM',
+        '🤖 ',
+        el('span', { class: 'ml-btn-label' }, 'IA'),
       ),
       el(
         'button',
         {
-          class: 'ml-btn',
+          // acao rara: no celular sai da barra (CSS esconde `.ml-btn-rare`)
+          class: 'ml-btn ml-btn-rare',
           title: 'Baixar um arquivo com favoritos, progresso, marcadores e capitulos lidos',
+          'aria-label': 'Baixar backup',
           onclick: () => this.exportBackup(),
         },
-        '⭳ Backup',
+        '⭳ ',
+        el('span', { class: 'ml-btn-label' }, 'Backup'),
       ),
       this.buildImportBackupInput(),
       (this.favBtn = el(
@@ -252,13 +336,16 @@ export class Catalog {
         {
           class: 'ml-btn',
           title: 'mostrar so os favoritos',
+          'aria-pressed': 'false',
           onclick: () => {
             this.showFavorites = !this.showFavorites;
             this.favBtn?.classList.toggle('is-on', this.showFavorites);
+            this.favBtn?.setAttribute('aria-pressed', String(this.showFavorites));
             void this.run();
           },
         },
-        '★ Favoritos',
+        '★ ',
+        el('span', { class: 'ml-btn-label' }, 'Favoritos'),
       )),
     );
   }
@@ -285,6 +372,8 @@ export class Catalog {
         const file = (e.target as HTMLInputElement).files?.[0];
         (e.target as HTMLInputElement).value = '';
         if (!file) return;
+        // substitui o estado inteiro e recarrega: nao ha' desfazer
+        if (!confirm('Substituir favoritos, progresso, marcadores e capitulos lidos atuais pelo backup?')) return;
         const result = importStore(await file.text());
         if (result.ok) {
           toast('Backup importado — recarregando...');
@@ -296,8 +385,13 @@ export class Catalog {
     });
     return el(
       'label',
-      { class: 'ml-btn', title: 'Restaurar favoritos, progresso, marcadores e capitulos lidos de um backup' },
-      '⭱ Importar',
+      {
+        class: 'ml-btn ml-btn-rare',
+        title: 'Restaurar favoritos, progresso, marcadores e capitulos lidos de um backup',
+        'aria-label': 'Importar backup',
+      },
+      '⭱ ',
+      el('span', { class: 'ml-btn-label' }, 'Importar'),
       input,
     );
   }
@@ -316,12 +410,13 @@ export class Catalog {
   private buildTypeTabs(): HTMLElement {
     return el(
       'div',
-      { class: 'ml-typetabs' },
+      { class: 'ml-typetabs', role: 'tablist', 'aria-label': 'Tipo de conteudo' },
       ...TYPE_TABS.map(([type, label]) =>
         el(
           'button',
           {
             class: `ml-typetab ml-typetab-${type}`,
+            role: 'tab',
             'data-type': type,
             onclick: () => this.switchType(type),
           },
@@ -333,14 +428,23 @@ export class Catalog {
 
   private renderTypeTabs(): void {
     for (const btn of this.typeTabs.children) {
-      (btn as HTMLElement).classList.toggle('is-on', (btn as HTMLElement).dataset['type'] === this.activeType);
+      const on = (btn as HTMLElement).dataset['type'] === this.activeType;
+      (btn as HTMLElement).classList.toggle('is-on', on);
+      btn.setAttribute('aria-selected', String(on));
     }
+  }
+
+  /** Caixa de busca e ordenacao sao uma so' para todas as abas: refletem o filtro ativo. */
+  private syncToolbar(): void {
+    this.searchInput.value = this.filters.q;
+    this.sortSelect.value = this.filters.sort;
   }
 
   private switchType(type: ContentType): void {
     if (this.activeType === type) return;
     this.activeType = type;
     this.renderTypeTabs();
+    this.syncToolbar();
     this.renderProviders();
     this.rebuildDrawer();
     void this.loadTags();
@@ -358,6 +462,17 @@ export class Catalog {
 
   private openProviders(open: boolean): void {
     this.providerModal.classList.toggle('is-open', open);
+    if (open) this.focusInto(this.providerModal);
+    else this.restoreFocus(this.providerBtn);
+  }
+
+  private openDrawer(open: boolean): void {
+    this.drawer.classList.toggle('is-open', open);
+    this.drawerBackdrop.classList.toggle('is-open', open);
+    this.drawerBackdrop.hidden = !open;
+    this.filtersBtn?.setAttribute('aria-expanded', String(open));
+    if (open) this.focusInto(this.drawer);
+    else this.restoreFocus(this.filtersBtn);
   }
 
   /**
@@ -377,7 +492,7 @@ export class Catalog {
       },
       el(
         'div',
-        { class: 'ml-modal-card', role: 'dialog', 'aria-label': 'Fontes' },
+        { class: 'ml-modal-card', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Fontes' },
         el(
           'div',
           { class: 'ml-modal-head' },
@@ -395,7 +510,11 @@ export class Catalog {
             },
             'Todas',
           ),
-          el('button', { class: 'ml-btn ml-btn-ghost', onclick: () => this.openProviders(false) }, '✕'),
+          el(
+            'button',
+            { class: 'ml-btn ml-btn-ghost', 'aria-label': 'Fechar fontes', onclick: () => this.openProviders(false) },
+            '✕',
+          ),
         ),
         el('div', { class: 'ml-modal-body', id: 'provider-list' }),
       ),
@@ -403,14 +522,24 @@ export class Catalog {
     return this.providerModal;
   }
 
+  private syncProviderBtn(): void {
+    const pool = this.providersOfType(this.activeType);
+    const active = this.activeProviders().length;
+    if (!this.providerBtn) return;
+    const todas = active === pool.length;
+    // so' o rotulo muda: o icone antes dele e' o que sobra na tela estreita
+    if (this.providerLabel) this.providerLabel.textContent = todas ? 'Fontes' : `Fontes (${active}/${pool.length})`;
+    this.providerBtn.title = todas ? 'todas as fontes' : `${active} de ${pool.length} fontes selecionadas`;
+    this.providerBtn.classList.toggle('is-on', !todas);
+  }
+
+  /** marcar quatro fontes seguidas nao pode virar quatro buscas: junta os cliques */
+  private runAfterSourceToggle = debounce(() => void this.run(), 400);
+
   private renderProviders(): void {
     const pool = this.providersOfType(this.activeType);
     const active = new Set(this.activeProviders());
-    if (this.providerBtn) {
-      const todas = active.size === pool.length;
-      this.providerBtn.textContent = todas ? 'Fontes' : `Fontes (${active.size}/${pool.length})`;
-      this.providerBtn.classList.toggle('is-on', !todas);
-    }
+    this.syncProviderBtn();
 
     const host = this.providerModal?.querySelector('#provider-list');
     if (!host) return;
@@ -418,12 +547,14 @@ export class Catalog {
 
     for (const p of pool) {
       const on = active.has(p.id);
+      const mark = el('span', { class: 'ml-source-mark' }, on ? '✓' : '');
       host.append(
         el(
           'button',
           {
             class: `ml-source ${on ? 'is-on' : ''}`,
-            onclick: () => {
+            'aria-pressed': String(on),
+            onclick: (e: Event) => {
               const set = new Set(this.activeProviders());
               if (set.has(p.id)) set.delete(p.id);
               else set.add(p.id);
@@ -431,11 +562,19 @@ export class Catalog {
               if (!set.size) this.filters.providers = [];
               else this.filters.providers = set.size === pool.length ? [] : [...set];
               this.filters.page = 1;
-              this.renderProviders();
-              void this.run();
+              // so' o botao clicado muda: reconstruir a lista jogava o scroll do modal ao topo
+              const nowOn = this.activeProviders().includes(p.id);
+              const btn = e.currentTarget as HTMLElement;
+              btn.classList.toggle('is-on', nowOn);
+              btn.setAttribute('aria-pressed', String(nowOn));
+              mark.textContent = nowOn ? '✓' : '';
+              // "nenhuma" virou "todas": as outras tambem acendem
+              if (!set.size) this.renderProviders();
+              this.syncProviderBtn();
+              this.runAfterSourceToggle();
             },
           },
-          el('span', { class: 'ml-source-mark' }, on ? '✓' : ''),
+          mark,
           el(
             'span',
             { class: 'ml-source-text' },
@@ -448,6 +587,16 @@ export class Catalog {
               }`,
             ),
           ),
+        ),
+      );
+    }
+    // sem LOCAL_LIBRARY o provider local nem aparece: o recurso ficava invisivel
+    if (!pool.some((p) => p.kind === 'local') && !this.providers.some((p) => p.kind === 'local')) {
+      host.append(
+        el(
+          'p',
+          { class: 'ml-field-hint' },
+          'Biblioteca local (CBZ/pastas): desativada. Defina LOCAL_LIBRARY=<pasta> no ambiente do servidor e reinicie para ler arquivos do computador.',
         ),
       );
     }
@@ -469,12 +618,14 @@ export class Catalog {
             'button',
             {
               class: `ml-chip ${current.includes(value) ? 'is-on' : ''}`,
+              'aria-pressed': String(current.includes(value)),
               onclick: (e: Event) => {
                 const arr = this.filters[key] as string[];
                 const i = arr.indexOf(value);
                 if (i >= 0) arr.splice(i, 1);
                 else arr.push(value);
-                (e.currentTarget as HTMLElement).classList.toggle('is-on');
+                const on = (e.currentTarget as HTMLElement).classList.toggle('is-on');
+                (e.currentTarget as HTMLElement).setAttribute('aria-pressed', String(on));
                 this.filters.page = 1;
                 void this.run();
               },
@@ -487,9 +638,14 @@ export class Catalog {
   }
 
   private buildDrawer(): HTMLElement {
+    this.drawerBackdrop = el('div', {
+      class: 'ml-drawer-backdrop',
+      hidden: true,
+      onclick: () => this.openDrawer(false),
+    });
     this.drawer = el(
       'aside',
-      { class: 'ml-drawer' },
+      { class: 'ml-drawer', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Filtro completo' },
       el(
         'div',
         { class: 'ml-drawer-head' },
@@ -498,16 +654,15 @@ export class Catalog {
           'button',
           {
             class: 'ml-btn ml-btn-ghost',
-            onclick: () => {
-              this.filters = emptyFilters();
-              this.rebuildDrawer();
-              this.renderProviders();
-              void this.run();
-            },
+            onclick: () => this.clearFilters(),
           },
           'Limpar',
         ),
-        el('button', { class: 'ml-btn ml-btn-ghost', onclick: () => this.drawer.classList.remove('is-open') }, '✕'),
+        el(
+          'button',
+          { class: 'ml-btn ml-btn-ghost', 'aria-label': 'Fechar filtros', onclick: () => this.openDrawer(false) },
+          '✕',
+        ),
       ),
       el('div', { class: 'ml-drawer-body' }),
     );
@@ -545,6 +700,7 @@ export class Catalog {
           value: this.filters.yearFrom,
           oninput: debounce((e: Event) => {
             this.filters.yearFrom = (e.target as HTMLInputElement).value;
+            this.filters.page = 1;
             void this.run();
           }, 500),
         }),
@@ -555,6 +711,7 @@ export class Catalog {
           value: this.filters.yearTo,
           oninput: debounce((e: Event) => {
             this.filters.yearTo = (e.target as HTMLInputElement).value;
+            this.filters.page = 1;
             void this.run();
           }, 500),
         }),
@@ -570,9 +727,13 @@ export class Catalog {
             'button',
             {
               class: `ml-chip ${this.filters.order !== 'asc' ? 'is-on' : ''}`,
+              'aria-pressed': String(this.filters.order !== 'asc'),
               onclick: (e: Event) => {
                 this.filters.order = this.filters.order === 'asc' ? 'desc' : 'asc';
-                (e.currentTarget as HTMLElement).classList.toggle('is-on', this.filters.order !== 'asc');
+                const desc = this.filters.order !== 'asc';
+                (e.currentTarget as HTMLElement).classList.toggle('is-on', desc);
+                (e.currentTarget as HTMLElement).setAttribute('aria-pressed', String(desc));
+                this.filters.page = 1;
                 void this.run();
               },
             },
@@ -606,17 +767,20 @@ export class Catalog {
         },
       });
       for (const t of this.tags) {
+        const on = (this.filters[key] as string[]).includes(t.name);
         chips.append(
           el(
             'button',
             {
-              class: `ml-chip ${(this.filters[key] as string[]).includes(t.name) ? 'is-on' : ''}`,
+              class: `ml-chip ${on ? 'is-on' : ''}`,
+              'aria-pressed': String(on),
               onclick: (e: Event) => {
                 const arr = this.filters[key] as string[];
                 const i = arr.indexOf(t.name);
                 if (i >= 0) arr.splice(i, 1);
                 else arr.push(t.name);
-                (e.currentTarget as HTMLElement).classList.toggle('is-on');
+                const nowOn = (e.currentTarget as HTMLElement).classList.toggle('is-on');
+                (e.currentTarget as HTMLElement).setAttribute('aria-pressed', String(nowOn));
                 this.filters.page = 1;
                 void this.run();
               },
@@ -625,11 +789,29 @@ export class Catalog {
           ),
         );
       }
+      // sem isso o campo aparecia vazio e nao dava para saber se ainda vinha algo
+      if (!this.tags.length) {
+        chips.append(
+          el('small', { class: 'ml-field-hint' }, this.tagsLoading ? 'carregando tags...' : 'esta fonte nao expoe tags'),
+        );
+      }
       host.append(el('label', {}, label), filterInput, chips);
     }
   }
 
   // ---------- busca ----------
+
+  /** Nenhum filtro alem do padrao (paginacao nao conta). */
+  private isDefaultFilters(): boolean {
+    const base = emptyFilters();
+    const norm = (v: unknown): string => (Array.isArray(v) ? [...v].sort().join(',') : String(v));
+    return (Object.keys(base) as (keyof Filters)[]).every((k) => {
+      if (k === 'page') return true;
+      // o chip de ordem alterna asc/desc e nunca volta a '': desc e' o padrao
+      if (k === 'order') return this.filters.order === '' || this.filters.order === 'desc';
+      return norm(this.filters[k]) === norm(base[k]);
+    });
+  }
 
   toParams(): URLSearchParams {
     const f = this.filters;
@@ -658,30 +840,47 @@ export class Catalog {
   }
 
   async run(): Promise<void> {
+    // favorito nao vem da busca: ele vive no localStorage e pode nem estar no
+    // resultado atual, entao filtrar a resposta deixaria a lista incompleta.
+    // Vem antes do `loading`: a lista e' local, nao precisa esperar busca nenhuma.
+    if (this.showFavorites) {
+      // uma busca em voo nao pode pintar por cima dos favoritos quando voltar
+      this.seq++;
+      this.pending = false;
+      this.renderFavorites();
+      return;
+    }
     // Sem a repescagem, um filtro clicado durante a busca em voo era simplesmente perdido.
     if (this.loading) {
       this.pending = true;
       return;
     }
-    // favorito nao vem da busca: ele vive no localStorage e pode nem estar no
-    // resultado atual, entao filtrar a resposta deixaria a lista incompleta
-    if (this.showFavorites) {
-      this.renderFavorites();
-      return;
-    }
 
     this.loading = true;
+    const ticket = ++this.seq;
     // resultado anterior fica visivel (so' esmaece) — sem o susto do grid vazio
     // toda vez que um filtro e' clicado
     this.grid.classList.add('is-loading');
     this.statusBar.innerHTML = '';
-    this.statusBar.append(el('div', { class: 'ml-spinner ml-spinner-sm' }), el('span', {}, 'buscando...'));
+    const q = this.filters.q.trim();
+    this.statusBar.append(
+      el('div', { class: 'ml-spinner ml-spinner-sm' }),
+      el('span', {}, q ? `buscando "${q}"...` : 'buscando...'),
+    );
     try {
       const res = await search(this.toParams());
+      // aba/filtro mudou enquanto esperava (`pending`) ou favoritos entraram na
+      // frente (`seq`): a resposta e' de outra busca, o `finally` refaz a certa
+      if (ticket !== this.seq || this.pending) return;
       this.lastResponse = res;
       this.render(res);
     } catch (err) {
-      this.statusBar.textContent = `erro na busca: ${(err as Error).message}`;
+      if (ticket !== this.seq || this.pending) return;
+      this.statusBar.innerHTML = '';
+      this.statusBar.append(
+        el('span', { class: 'ml-status-error' }, `erro na busca: ${(err as Error).message}`),
+        el('button', { class: 'ml-btn ml-btn-sm', onclick: () => void this.run() }, 'tentar de novo'),
+      );
     } finally {
       this.loading = false;
       this.grid.classList.remove('is-loading');
@@ -693,17 +892,38 @@ export class Catalog {
   }
 
   /** Listagem dos favoritos, montada do proprio armazenamento local. */
+  private clearFilters(): void {
+    this.filters = emptyFilters();
+    this.syncToolbar();
+    this.rebuildDrawer();
+    this.renderProviders();
+    void this.run();
+  }
+
+  /** Grade vazia sem explicacao parecia bug: diz o que houve e oferece a saida. */
+  private emptyState(text: string, action?: { label: string; onclick: () => void }): HTMLElement {
+    return el(
+      'div',
+      { class: 'ml-empty', role: 'status' },
+      el('p', {}, text),
+      action ? el('button', { class: 'ml-btn ml-btn-sm', onclick: action.onclick }, action.label) : null,
+    );
+  }
+
   private renderFavorites(): void {
     const list = favorites().filter((f) => this.isActiveType(f.provider));
     this.statusBar.innerHTML = '';
     this.statusBar.append(
-      el('span', {}, list.length ? `${list.length} favorito(s)` : 'nenhum favorito ainda'),
+      el('span', {}, list.length ? plural(list.length, 'favorito') : 'nenhum favorito ainda'),
     );
 
     this.grid.innerHTML = '';
     if (!list.length) {
       this.grid.append(
-        el('p', { class: 'ml-empty' }, 'Marque a estrela em qualquer titulo para ele aparecer aqui.'),
+        this.emptyState('nenhum favorito ainda — toque na ★ de uma obra para ela aparecer aqui.', {
+          label: 'ver o catalogo',
+          onclick: () => this.favBtn?.click(),
+        }),
       );
       return;
     }
@@ -721,15 +941,17 @@ export class Catalog {
       .join(' · ');
     this.statusBar.innerHTML = '';
     this.statusBar.append(
-      el('span', {}, `${res.items.length} resultados — ${counts}`),
+      // por fonte fica no title e some no celular: quebrava em duas linhas
+      el('span', { title: counts }, plural(res.items.length, 'resultado'), el('span', { class: 'ml-status-detail' }, ` — ${counts}`)),
       ...res.errors.map((e) => el('span', { class: 'ml-status-error' }, `${e.provider}: ${e.message}`)),
     );
 
     this.grid.innerHTML = '';
-    const recent = !this.filters.q && this.filters.page === 1
-      ? recentReads().filter((r) => this.isActiveType(r.provider))
-      : [];
-    if (!this.filters.q && this.filters.page === 1) {
+    // "continuar lendo"/marcadores/favoritos so' na home de verdade: com qualquer
+    // filtro ativo eles empurravam o resultado para baixo da dobra
+    const home = this.filters.page === 1 && this.isDefaultFilters();
+    const recent = home ? recentReads((r) => this.isActiveType(r.provider)) : [];
+    if (home) {
       if (recent.length) {
         this.grid.append(el('h2', { class: 'ml-section' }, 'Continuar lendo'));
         const row = el('div', { class: 'ml-row' });
@@ -739,6 +961,7 @@ export class Catalog {
               'button',
               {
                 class: 'ml-resume',
+                title: `${r.title} — ${r.chapterLabel}, pagina ${r.page + 1}`,
                 onclick: () => this.handlers.onResume(r.provider, r.seriesId),
               },
               this.storedCover(r.provider, r.seriesId, r.cover),
@@ -799,6 +1022,36 @@ export class Catalog {
       }
     }
 
+    if (!res.items.length) {
+      const selected = this.activeProviders().length;
+      if (res.errors.length && res.errors.length >= selected) {
+        this.grid.append(
+          this.emptyState('todas as fontes falharam — pode ser rede ou o site fora do ar.', {
+            label: 'tentar de novo',
+            onclick: () => void this.run(),
+          }),
+        );
+      } else if (this.filters.page > 1) {
+        this.grid.append(
+          this.emptyState('esta pagina esta vazia.', {
+            label: 'voltar ao inicio',
+            onclick: () => {
+              this.filters.page = 1;
+              void this.run();
+            },
+          }),
+        );
+      } else {
+        const q = this.filters.q.trim();
+        this.grid.append(
+          this.emptyState(
+            q ? `nada encontrado para "${q}" — tente outra fonte ou limpe os filtros.` : 'nada encontrado com estes filtros.',
+            this.isDefaultFilters() ? undefined : { label: 'limpar filtros', onclick: () => this.clearFilters() },
+          ),
+        );
+      }
+    }
+
     const cards = el('div', { class: 'ml-cards' });
     for (const item of res.items) cards.append(this.card(item));
     this.grid.append(cards);
@@ -825,6 +1078,8 @@ export class Catalog {
           'button',
           {
             class: 'ml-btn',
+            // a busca nao devolve total e madara/mangapill nao respeitam `limit`:
+            // so' da' para desabilitar quando a pagina veio vazia
             disabled: res.items.length === 0,
             onclick: () => {
               this.filters.page++;
@@ -874,16 +1129,22 @@ export class Catalog {
     let active = 0;
     const current = (): { provider: string; id: string; title: string } => sources[active]!;
 
+    const favOn = isFavorite(current().provider, current().id);
     const fav = el(
       'button',
       {
-        class: `ml-fav ${isFavorite(current().provider, current().id) ? 'is-on' : ''}`,
-        title: 'favoritar',
+        class: `ml-fav ${favOn ? 'is-on' : ''}`,
+        title: favOn ? 'desfavoritar' : 'favoritar',
+        'aria-label': favOn ? 'desfavoritar' : 'favoritar',
+        'aria-pressed': String(favOn),
         onclick: (e: Event) => {
           e.stopPropagation();
           const src = current();
           const on = toggleFavorite({ provider: src.provider, id: src.id, title: item.title, cover: item.cover });
-          (e.currentTarget as HTMLElement).classList.toggle('is-on', on);
+          sync();
+          toast(on ? `★ ${item.title} nos favoritos` : `☆ ${item.title} removido dos favoritos`);
+          // na listagem de favoritos o card desfavoritado tem que sumir na hora
+          if (this.showFavorites) this.renderFavorites();
         },
       },
       '★',
@@ -898,6 +1159,7 @@ export class Catalog {
         'button',
         {
           class: `ml-tab ${i === active ? 'is-on' : ''}`,
+          'aria-pressed': String(i === active),
           // o titulo exato daquele site: e' o que explica por que os dois casaram
           title: src.title,
           onclick: (e: Event) => {
@@ -913,11 +1175,18 @@ export class Catalog {
     const sync = (): void => {
       const src = current();
       badge.textContent = src.provider;
-      fav.classList.toggle('is-on', isFavorite(src.provider, src.id));
+      const on = isFavorite(src.provider, src.id);
+      fav.classList.toggle('is-on', on);
+      fav.title = on ? 'desfavoritar' : 'favoritar';
+      fav.setAttribute('aria-label', fav.title);
+      fav.setAttribute('aria-pressed', String(on));
       const read = readCount(src.provider, src.id);
-      readFlag.textContent = read ? `${read} lidos` : '';
+      readFlag.textContent = read ? plural(read, 'lido') : '';
       readFlag.hidden = !read;
-      tabs.forEach((t, i) => t.classList.toggle('is-on', i === active));
+      tabs.forEach((t, i) => {
+        t.classList.toggle('is-on', i === active);
+        t.setAttribute('aria-pressed', String(i === active));
+      });
     };
     sync();
 
@@ -948,7 +1217,9 @@ export class Catalog {
     cover.append(
       fav,
       badge,
-      ...(item.rating ? [el('span', { class: 'ml-rating' }, `★ ${item.rating}`)] : []),
+      ...(item.rating
+        ? [el('span', { class: 'ml-rating' }, `★ ${item.rating.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}`)]
+        : []),
       readFlag,
       // titulo tambem sobre a capa: nao some quando a grade fica apertada
       el('div', { class: 'ml-cover-title' }, item.title),
@@ -962,7 +1233,11 @@ export class Catalog {
         title: [item.title, ...alt].join('\n'),
         onclick: open,
         onkeydown: (e: KeyboardEvent) => {
-          if (e.key === 'Enter') open();
+          // `article` nao e' botao: Espaco rolaria a pagina em vez de abrir
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            open();
+          }
         },
       },
       cover,
@@ -973,7 +1248,7 @@ export class Catalog {
         { class: 'ml-meta' },
         item.year ? el('span', {}, String(item.year)) : null,
         item.status ? el('span', {}, STATUS_LABEL[item.status] ?? item.status) : null,
-        item.type ? el('span', {}, item.type) : null,
+        item.type ? el('span', {}, TYPE_LABEL[item.type] ?? item.type) : null,
       ),
       // uma unica origem nao vira aba: seria ruido em quase todo card
       sources.length > 1 ? el('div', { class: 'ml-tabs' }, ...tabs) : null,
@@ -992,7 +1267,7 @@ export class Catalog {
 
     this.aiDrawer = el(
       'aside',
-      { class: 'ml-drawer ml-ai-drawer' },
+      { class: 'ml-drawer ml-ai-drawer', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Provedores de IA' },
       el(
         'div',
         { class: 'ml-drawer-head' },
@@ -1001,8 +1276,9 @@ export class Catalog {
           'button',
           {
             class: 'ml-btn ml-btn-ghost',
-            onclick: () => this.openAiDrawer(false),
+            onclick: () => void this.openAiDrawer(false),
             title: 'Fechar painel',
+            'aria-label': 'Fechar painel de IA',
           },
           '✕',
         ),
@@ -1016,6 +1292,8 @@ export class Catalog {
     this.aiDrawer.classList.toggle('is-open', open);
     this.aiBackdrop.classList.toggle('is-open', open);
     this.aiBackdrop.hidden = !open;
+    if (open) this.focusInto(this.aiDrawer);
+    else this.restoreFocus();
     if (open) {
       const container = this.aiDrawer.querySelector('#ai-drawer-content');
       if (container) container.innerHTML = '<div class="ml-loading-note">Carregando provedores de IA...</div>';
@@ -1057,7 +1335,7 @@ export class Catalog {
             },
           },
           `${icon} ${p.name}`,
-          isActiveDefault ? el('span', { class: 'ml-ai-active-badge' }, 'Padrão') : '',
+          isActiveDefault ? el('span', { class: 'ml-ai-active-badge' }, 'Padrao') : '',
         );
       }),
     );
@@ -1067,21 +1345,32 @@ export class Catalog {
     const activeToggle = el(
       'div',
       { class: 'ml-ai-status-row' },
-      el('span', { class: 'ml-ai-subhead' }, `Configuração: ${provConfig.name}`),
+      el('span', { class: 'ml-ai-subhead' }, `Configuracao: ${provConfig.name}`),
       el(
         'button',
         {
           class: `ml-btn ml-btn-sm ${isCurrentActive ? 'is-on' : ''}`,
-          onclick: () => {
-            if (this.aiData) {
-              this.aiData.active = this.selectedAiProvider;
-              store.settings.aiProvider = this.selectedAiProvider;
+          'aria-pressed': String(isCurrentActive),
+          disabled: isCurrentActive,
+          // grava no servidor na hora: so' mudar em memoria deixava a tela dizendo
+          // "ativo" enquanto o servidor seguia no provedor antigo
+          onclick: async (e: Event) => {
+            const btn = e.currentTarget as HTMLButtonElement;
+            btn.disabled = true;
+            btn.textContent = '⏳ ativando...';
+            try {
+              this.aiData = await saveAiConfig({ active: this.selectedAiProvider });
+              store.settings.aiProvider = this.aiData.active;
               persist();
+              toast(`${provConfig.name} agora e o provedor ativo`);
+            } catch (err) {
+              toast(`Erro ao ativar provedor: ${(err as Error).message}`, 'error');
+            } finally {
               this.renderAiDrawer();
             }
           },
         },
-        isCurrentActive ? '✓ Provedor Ativo' : 'Definir como Ativo',
+        isCurrentActive ? '✓ provedor ativo' : 'usar este provedor',
       ),
     );
 
@@ -1133,9 +1422,12 @@ export class Catalog {
       'button',
       {
         class: 'ml-btn ml-btn-sm',
-        title: 'Consultar endpoint para listar modelos instalados/disponíveis',
+        // o servidor consulta o endpoint com a config gravada: nao tem como listar
+        // sem salvar URL/chave antes — o rotulo avisa em vez de esconder isso
+        title: 'Salva URL e chave, depois consulta o endpoint para listar os modelos',
         onclick: async () => {
-          fetchModelsBtn.textContent = '⏳ Buscando...';
+          fetchModelsBtn.disabled = true;
+          fetchModelsBtn.textContent = '⏳ buscando...';
           try {
             await saveAiConfig({
               provider: this.selectedAiProvider,
@@ -1144,7 +1436,7 @@ export class Catalog {
             });
             const res = await getAiModels(this.selectedAiProvider);
             if (res.ok && res.models?.length) {
-              modelSelect.innerHTML = '<option value="">-- Selecionar modelo disponível --</option>';
+              modelSelect.innerHTML = '<option value="">selecione um modelo</option>';
               for (const m of res.models) {
                 const opt = document.createElement('option');
                 opt.value = m;
@@ -1153,18 +1445,19 @@ export class Catalog {
                 modelSelect.appendChild(opt);
               }
               modelSelect.style.display = 'block';
-              toast(`${res.models.length} modelos encontrados!`);
+              toast(plural(res.models.length, 'modelo encontrado', 'modelos encontrados'));
             } else {
               toast('Nenhum modelo retornado pelo endpoint', 'error');
             }
           } catch (err) {
             toast(`Erro ao buscar modelos: ${(err as Error).message}`, 'error');
           } finally {
-            fetchModelsBtn.textContent = '🔄 Buscar Modelos';
+            fetchModelsBtn.disabled = false;
+            fetchModelsBtn.textContent = '🔄 buscar modelos (salva antes)';
           }
         },
       },
-      '🔄 Buscar Modelos',
+      '🔄 buscar modelos (salva antes)',
     );
 
     const visionModelInput = el('input', {
@@ -1180,11 +1473,13 @@ export class Catalog {
       'button',
       {
         class: 'ml-btn ml-btn-sm',
+        title: 'Salva a configuracao deste provedor e testa o endpoint',
         onclick: async () => {
-          testBtn.textContent = '⏳ Testando conexão...';
+          testBtn.disabled = true;
+          testBtn.textContent = '⏳ testando conexao...';
           testResultEl.hidden = false;
           testResultEl.className = 'ml-ai-test-result ml-ai-testing';
-          testResultEl.textContent = 'Enviando requisição ao endpoint...';
+          testResultEl.textContent = 'enviando requisicao ao endpoint...';
           try {
             await saveAiConfig({
               provider: this.selectedAiProvider,
@@ -1198,22 +1493,25 @@ export class Catalog {
             const elapsed = Math.round(performance.now() - start);
             if (health.ok) {
               testResultEl.className = 'ml-ai-test-result ml-ai-success';
-              testResultEl.textContent = `🟢 Conexão OK (${elapsed}ms)! Modelo: ${health.model} · ${
-                health.models?.length ?? 0
-              } modelos encontrados.`;
+              testResultEl.textContent = `🟢 conexao OK (${elapsed}ms). Modelo: ${health.model} · ${plural(
+                health.models?.length ?? 0,
+                'modelo encontrado',
+                'modelos encontrados',
+              )}.`;
             } else {
               testResultEl.className = 'ml-ai-test-result ml-ai-error';
-              testResultEl.textContent = `🔴 Falha: ${health.error ?? 'sem resposta'}`;
+              testResultEl.textContent = `🔴 falha: ${health.error ?? 'sem resposta'}`;
             }
           } catch (err) {
             testResultEl.className = 'ml-ai-test-result ml-ai-error';
-            testResultEl.textContent = `🔴 Erro: ${(err as Error).message}`;
+            testResultEl.textContent = `🔴 erro: ${(err as Error).message}`;
           } finally {
-            testBtn.textContent = '⚡ Testar Conexão';
+            testBtn.disabled = false;
+            testBtn.textContent = '⚡ testar conexao (salva antes)';
           }
         },
       },
-      '⚡ Testar Conexão',
+      '⚡ testar conexao (salva antes)',
     );
 
     const saveBtn = el(
@@ -1222,7 +1520,8 @@ export class Catalog {
         class: 'ml-btn ml-btn-action-primary',
         style: 'width: 100%; margin-top: 8px;',
         onclick: async () => {
-          saveBtn.textContent = '⏳ Salvando...';
+          saveBtn.disabled = true;
+          saveBtn.textContent = '⏳ salvando...';
           try {
             const updated = await saveAiConfig({
               active: this.aiData?.active,
@@ -1237,16 +1536,17 @@ export class Catalog {
               store.settings.aiProvider = this.aiData.active;
               persist();
             }
-            toast('Configurações de IA salvas com sucesso!');
+            toast('configuracoes de IA salvas');
             this.renderAiDrawer();
           } catch (err) {
             toast(`Erro ao salvar: ${(err as Error).message}`, 'error');
           } finally {
-            saveBtn.textContent = '💾 Salvar Configurações';
+            saveBtn.disabled = false;
+            saveBtn.textContent = '💾 salvar';
           }
         },
       },
-      '💾 Salvar Configurações',
+      '💾 salvar',
     );
 
     // Monta o container
@@ -1257,37 +1557,37 @@ export class Catalog {
       el(
         'div',
         { class: 'ml-field' },
-        el('label', {}, 'Endpoint Base URL:'),
+        el('label', {}, 'URL base do endpoint'),
         baseUrlInput,
         el(
           'small',
           { class: 'ml-field-hint' },
           provConfig.id === 'ollama'
-            ? 'Padrão Ollama local: http://127.0.0.1:11434/v1'
+            ? 'Padrao Ollama local: http://127.0.0.1:11434/v1'
             : provConfig.id === 'openrouter'
-            ? 'Padrão OpenRouter: https://openrouter.ai/api/v1'
-            : 'Qualquer API compatível com OpenAI (ex: vLLM, LMStudio, FastChat)',
+            ? 'Padrao OpenRouter: https://openrouter.ai/api/v1'
+            : 'Qualquer API compativel com OpenAI (ex: vLLM, LMStudio, FastChat)',
         ),
       ),
       // API Key / Token
       el(
         'div',
         { class: 'ml-field' },
-        el('label', {}, 'Chave de API / Token:'),
+        el('label', {}, 'Chave de API (token)'),
         el('div', { class: 'ml-input-with-btn' }, apiKeyInput, toggleKeyVisibilityBtn),
         el(
           'small',
           { class: 'ml-field-hint' },
           provConfig.id === 'openrouter'
-            ? 'Necessário token da sua conta em openrouter.ai'
-            : 'Opcional para servidores locais sem autenticação',
+            ? 'Precisa do token da sua conta em openrouter.ai'
+            : 'Opcional para servidores locais sem autenticacao',
         ),
       ),
       // Modelo Principal
       el(
         'div',
         { class: 'ml-field' },
-        el('label', {}, 'Modelo Principal (Tradução e Chat):'),
+        el('label', {}, 'Modelo principal (traducao e chat)'),
         el('div', { class: 'ml-input-with-btn' }, modelInput, fetchModelsBtn),
         modelSelect,
       ),
@@ -1295,9 +1595,9 @@ export class Catalog {
       el(
         'div',
         { class: 'ml-field' },
-        el('label', {}, 'Modelo de Visão Computacional (Opcional):'),
+        el('label', {}, 'Modelo de visao (opcional)'),
         visionModelInput,
-        el('small', { class: 'ml-field-hint' }, 'Usado pelo botão [🤖 Visão] no leitor (ex: llava, qwen2-vl)'),
+        el('small', { class: 'ml-field-hint' }, 'Usado pelo botao "Visao" do leitor (ex: llava, qwen2-vl)'),
       ),
       // Botões de Teste e Salvar
       el('div', { class: 'ml-ai-actions' }, testBtn, testResultEl, saveBtn),

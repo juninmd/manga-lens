@@ -140,3 +140,33 @@ describe('searchAll: separacao por tipo de conteudo', () => {
     expect((await searchAll(['mang', 'quad'], {})).items).toHaveLength(2);
   });
 });
+
+describe('searchAll: provider lento', () => {
+  test('estoura o prazo e vira aviso, sem segurar os outros', async () => {
+    const { config } = await import('../src/server/providers/../config.ts');
+    const original = config.searchTimeoutMs;
+    config.searchTimeoutMs = 60;
+    try {
+      providers.push({
+        id: 'lento',
+        name: 'lento',
+        kind: 'online',
+        contentType: 'manga',
+        supports: ['q'],
+        search: () => new Promise(() => undefined),
+        series: async () => {
+          throw new Error('nao usado');
+        },
+        pages: async () => [],
+      } satisfies Provider);
+      fake('rapido', [card({ provider: 'rapido', title: 'Bleach' })]);
+      const started = Date.now();
+      const res = await searchAll(['lento', 'rapido'], {});
+      expect(Date.now() - started).toBeLessThan(2000);
+      expect(res.items).toHaveLength(1);
+      expect(res.errors).toEqual([{ provider: 'lento', message: 'tempo esgotado (0s)' }]);
+    } finally {
+      config.searchTimeoutMs = original;
+    }
+  });
+});

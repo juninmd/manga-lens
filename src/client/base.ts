@@ -30,3 +30,24 @@ export async function resolveApiBase(): Promise<string> {
 }
 
 export const api = (path: string): string => apiBase + path;
+
+/**
+ * O sidecar pode demorar a escutar (binario Bun + init dos providers): o
+ * primeiro fetch do catalogo caia em "servidor indisponivel" e abas vazias.
+ * Espera ate' `maxMs` pelo /api/providers; resolve true quando respondeu.
+ */
+export async function waitForApi(maxMs = 12_000, onTick?: (elapsedMs: number) => void): Promise<boolean> {
+  const start = performance.now();
+  for (;;) {
+    const elapsed = performance.now() - start;
+    onTick?.(elapsed);
+    try {
+      const res = await fetch(api('/api/providers'), { signal: AbortSignal.timeout(1000) });
+      if (res.ok) return true;
+    } catch {
+      /* ainda subindo */
+    }
+    if (performance.now() - start > maxMs) return false;
+    await new Promise((r) => setTimeout(r, 400));
+  }
+}

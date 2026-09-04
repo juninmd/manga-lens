@@ -22,6 +22,8 @@ export const config = {
   port: num('PORT', 7788),
   cacheDir: env('CACHE_DIR', '.cache'),
   cacheTtlMs: num('CACHE_TTL_MS', 30 * 60 * 1000),
+  /** prazo total da busca agregada: provider que nao responder vira aviso */
+  searchTimeoutMs: num('SEARCH_TIMEOUT_MS', 10_000),
   ai: {
     provider: normalizeProvider(env('AI_PROVIDER'), 'ollama'),
     baseUrl: env('AI_BASE_URL', 'http://127.0.0.1:11434/v1').replace(/\/+$/, ''),
@@ -148,6 +150,22 @@ function loadPersistedAiConfig(): void {
         openrouter?: Partial<typeof config.ai.openrouter>;
         openaiCompatible?: Partial<typeof config.ai.openaiCompatible>;
       };
+      // tres fontes de verdade (env, arquivo, cliente) sem aviso confundiam: o
+      // usuario editava o .env e nada mudava
+      const envProvider = env('AI_PROVIDER');
+      const envModel = env('AI_MODEL');
+      // so' avisa quando o arquivo de fato diverge do .env: com AI_MODEL setado o
+      // aviso saia em todo boot, mesmo sem o painel ter salvo modelo algum
+      const savedModels = [data.ollama?.model, data.openrouter?.model, data.openaiCompatible?.model];
+      const modelDiverges = Boolean(envModel) && savedModels.some((m) => m && m !== envModel);
+      const providerDiverges = Boolean(
+        envProvider && data.active && normalizeProvider(data.active) !== normalizeProvider(envProvider),
+      );
+      if (providerDiverges || modelDiverges) {
+        console.warn(
+          '[config] ai-config.json sobrescreve AI_PROVIDER/AI_MODEL do .env (edite pelo painel de IA ou apague .cache/ai-config.json)',
+        );
+      }
       if (data.active) config.ai.provider = normalizeProvider(data.active);
       if (data.ollama) Object.assign(config.ai.ollama, data.ollama);
       if (data.openrouter) Object.assign(config.ai.openrouter, data.openrouter);

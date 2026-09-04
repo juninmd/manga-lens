@@ -5,6 +5,8 @@ import {
   getEngines,
   getPages,
   getTargets,
+  humanizeError,
+  saveAiConfig,
   visionTranslate,
   type ChapterRef,
   type PageRef,
@@ -15,19 +17,66 @@ import {
 import { el, langLabel, toast } from './ui.ts';
 import {
   hasBookmark,
+  isFavorite,
   markChapterRead,
   persist,
+  resetSettings,
   saveProgress,
   store,
   toggleBookmark,
+  toggleFavorite,
   type AiProviderName,
   type FitMode,
   type LetterFont,
   type ReadingMode,
   type TranslateEngine,
+  type TranslateMode,
 } from './state.ts';
-import { Viewer } from './viewer.ts';
-import { langFor, paintPage, recognizePage, translateBlocks, type OcrBlock } from './ocr.ts';
+import { MAX_SCALE, Viewer } from './viewer.ts';
+import {
+  TESS_LANG_OPTIONS,
+  disposeOcr,
+  effectiveOcrLang,
+  isAbortError,
+  langFor,
+  paintPage,
+  recognizePage,
+  translateBlocks,
+  type OcrBlock,
+} from './ocr.ts';
+
+/**
+ * Pagina que nao esta' no palco nao tem <img>: carrega uma so' para o OCR.
+ * `crossOrigin` e' obrigatorio, senao o canvas fica "tainted" e o OCR nao le.
+ */
+function loadPageImage(url: string, signal: AbortSignal, timeoutMs = 20_000): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.decoding = 'async';
+    // host que aceita a conexao e nunca responde travaria a fila com `busy` para sempre
+    const timer = window.setTimeout(() => finish(new Error('imagem demorou demais')), timeoutMs);
+    const onAbort = (): void => finish(new DOMException('OCR cancelado', 'AbortError'));
+    const finish = (err: Error | null): void => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', onAbort);
+      if (err) {
+        // `src = ''` dispara outro `error`: sem soltar os handlers virava loop infinito
+        img.onload = null;
+        img.onerror = null;
+        img.src = '';
+        reject(err);
+      } else resolve(img);
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    img.onload = () => finish(img.naturalWidth > 0 ? null : new Error('imagem vazia'));
+    img.onerror = () => finish(new Error('imagem nao carregou'));
+    img.src = url;
+  });
+}
+
+/** "1 pagina" / "3 paginas" — ui.ts ganha o mesmo helper em outra frente; local ate' la' */
+const plural = (n: number, s: string, p = `${s}s`): string => `${n} ${n === 1 ? s : p}`;
 
 /**
  * Espera a imagem do sheet ficar utilizavel. Ouvir so' `load` era uma armadilha:
@@ -52,6 +101,17 @@ function imageReady(img: HTMLImageElement, timeoutMs = 20_000): Promise<boolean>
   });
 }
 
+/**
+ * "🪄 Traduzir" vira icone + <span class="ml-btn-label">Traduzir</span>: em tela
+ * estreita o CSS esconde so' o texto. Como display:none tira o texto do nome
+ * acessivel, o rotulo inteiro vai para aria-label.
+ */
+function iconLabel(text: string): { children: (string | HTMLElement)[]; aria: Record<string, string> } {
+  const m = /^(\S+)\s+(.+)$/.exec(text);
+  if (!m) return { children: [text], aria: {} };
+  return { children: [`${m[1]} `, el('span', { class: 'ml-btn-label' }, m[2]!)], aria: { 'aria-label': text } };
+}
+
 const MODES: [ReadingMode, string][] = [
   ['single', 'pagina'],
   ['double', 'dupla'],
@@ -63,8 +123,26 @@ const FITS: [FitMode, string][] = [
   ['height', 'altura'],
 ];
 
+/** motor/idioma fixados no inicio da execucao — trocar no meio nao mistura carimbos */
+interface RunCtx {
+  mode: TranslateMode;
+  engine: TranslateEngine;
+  provider: string;
+  /** idioma de destino fixado no inicio: trocar no meio nao pode carimbar espanhol como pt-BR */
+  target: string;
+  stamp: string;
+  modeLabel: string;
+  signal: AbortSignal;
+}
+
+interface RunStats {
+  translated: number;
+  failedBalloons: number;
+  failed: string[];
+}
+
 export class Reader {
-  private host = el('section', { class: 'ml-reader' });
+  private host = el('section', { class: 'ml-reader', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Leitor', tabindex: '-1' });
   private stage = el('div', { class: 'ml-stage' });
   private stageLoading = el(
     'div',
@@ -75,11 +153,18 @@ export class Reader {
   private viewer: Viewer;
   private film = el('div', { class: 'ml-film' });
   private zoomLabel = el('span', { class: 'ml-zoom-label' }, '100%');
-  private zoomRange = el('input', { class: 'ml-range', type: 'range', min: '5', max: '600', value: '100' });
-  private pageLabel = el('span', { class: 'ml-page-label' }, '');
+  private zoomRange = el('input', {
+    class: 'ml-range',
+    type: 'range',
+    min: '5',
+    max: String(MAX_SCALE * 100),
+    value: '100',
+    'aria-label': 'Zoom',
+  });
+  private pageLabel = el('span', { class: 'ml-page-label', role: 'status', 'aria-live': 'polite' }, '');
   private chat = el('aside', { class: 'ml-chat' });
   private chatLog = el('div', { class: 'ml-chat-log' });
-  private ocrStatus = el('span', { class: 'ml-ocr-status' }, '');
+  private ocrStatus = el('span', { class: 'ml-ocr-status', role: 'status', 'aria-live': 'polite' }, '');
   private aiDot = el('span', { class: 'ml-dot' });
   private aiLabel = el('span', {}, 'IA: verificando...');
   private tooltipEl = el('div', { class: 'ml-balloon-tooltip', hidden: true });
@@ -87,7 +172,19 @@ export class Reader {
   private popoverEl = el('div', { class: 'ml-popover', hidden: true });
   private popoverBackdrop = el('div', { class: 'ml-popover-backdrop', hidden: true });
   private popoverOpen = false;
+  /** tela estreita ou baixa (celular deitado): a barra vira "voltar / titulo / traduzir / mais" e o resto vai para o popover */
+  private compactQuery = window.matchMedia('(max-width: 640px), (max-height: 500px)');
   private aiTimer?: number;
+  /**
+   * Geracao do `open()`: dois cliques em "cap »" disparam dois getPages e a
+   * resposta mais lenta chegava por ultimo, colocando as paginas do capitulo
+   * errado no palco (e o OCR gravava cache sob a chave do novo).
+   */
+  private openGen = 0;
+  private loadingChapter = false;
+  /** quem tinha o foco antes de abrir: devolvido ao fechar */
+  private prevFocus: HTMLElement | null = null;
+  private bookmarkBtn?: HTMLElement;
 
   private detail?: SeriesDetail;
   private chapter?: ChapterRef;
@@ -102,7 +199,29 @@ export class Reader {
    * envelhece. Com o carimbo, trocar de idioma so' retraduz.
    */
   private translatedAs = new Map<string, string>();
+  /**
+   * Carimbo da ultima execucao. Com IA offline a execucao cai no motor web e
+   * carimba `ocr|auto|...`; a repintura comparava com o carimbo da preferencia
+   * (`ai|...`) e escondia a traducao recem-feita.
+   */
+  private activeStamp?: string;
   private busy = false;
+  /** cartao de fim de obra: uma vez por pagina, nao um toast por tecla */
+  private endCard?: HTMLElement;
+  private helpEl?: HTMLElement;
+  private helpReturnFocus?: HTMLElement;
+  private chatAbort?: AbortController;
+  /** cancela o OCR/traducao em voo: virar a pagina ou fechar nao espera o Tesseract terminar */
+  private ocrAbort?: AbortController;
+  /** 'page' = OCR da pagina (virar aborta); 'chapter' = traducao do capitulo (segue em fundo) */
+  private runScope: 'page' | 'chapter' = 'page';
+  /** capitulos cobertos pela execucao atual (o aberto + o proximo, adiantado) e paginas que faltam */
+  private runChapters: string[] = [];
+  private runPending = 0;
+  /** tooltip fixado por toque (touch nao tem hover) */
+  private tooltipPinned = false;
+  private aiOk = false;
+  private aiError = '';
   private paintHandle = 0;
   private history: { role: 'user' | 'assistant'; content: string }[] = [];
 
@@ -110,14 +229,28 @@ export class Reader {
   private targets: TargetLangInfo[] = [{ id: 'pt-BR', name: 'Portugues (Brasil)' }];
   private aiProviders: { id: string; name: string; baseUrl: string; model: string; hasKey: boolean }[] = [];
 
+  /**
+   * Troca de capitulo feita de dentro do leitor (cap », fim de capitulo, popover):
+   * quem cuida da hash e' o app — sem isto reload/Back reabriam o capitulo antigo.
+   */
+  onChapterChange?: (detail: SeriesDetail, chapter: ChapterRef) => void;
+
   constructor(private onExit: () => void) {
     this.viewer = new Viewer({
       onPageChange: (p) => this.onPageChange(p),
-      onTransform: ({ scale }) => {
+      onTransform: ({ scale, fit }) => {
         this.zoomLabel.textContent = `${Math.round(scale * 100)}%`;
         this.zoomRange.value = String(Math.round(scale * 100));
         this.hideTooltip();
+        // zoom pela roda vira 'free' e a tira forca 'width': a barra segue o viewer, nao a preferencia
+        for (const b of this.host.querySelectorAll<HTMLElement>('[data-fit]')) {
+          const on = b.dataset.fit === fit;
+          b.classList.toggle('is-on', on);
+          b.setAttribute('aria-pressed', String(on));
+        }
       },
+      onNavigate: (dir) => this.turn(dir),
+      onTap: (x, y) => this.onStageTap(x, y),
       onSheetsChange: () => {
         this.paintOverlays();
         this.hideTooltip();
@@ -126,10 +259,17 @@ export class Reader {
     this.build();
     document.body.append(this.host);
     document.addEventListener('keydown', this.onKey);
+    // girar o celular troca o layout da barra: reconstroi em vez de esperar o proximo clique
+    this.compactQuery.addEventListener('change', () => {
+      if (this.host.classList.contains('is-open')) this.refreshBars();
+      this.syncChatToViewport();
+    });
     this.popoverBackdrop.addEventListener('click', () => this.togglePopover(false));
     (window as unknown as { __mangaLens?: unknown }).__mangaLens = {
       translatedKeys: (): string[] => [...this.ocrCache.keys()],
       blocksFor: (key: string): OcrBlock[] => this.ocrCache.get(key) ?? [],
+      queuedChapters: (): string[] => this.runChapters,
+      queueSize: (): number => this.runPending,
     };
     void Promise.all([
       getEngines().catch(() => []),
@@ -140,11 +280,16 @@ export class Reader {
       if (targets.length) this.targets = targets;
       if (provData.providers?.length) {
         this.aiProviders = provData.providers;
-        if (!store.settings.aiProvider && provData.active) {
+        // o servidor e' a fonte da verdade: o padrao 'ollama' do store mostrava
+        // "IA offline" enquanto o openrouter ativo no servidor estava saudavel
+        if (provData.active && provData.active !== store.settings.aiProvider) {
           store.settings.aiProvider = provData.active;
+          persist();
         }
       }
       this.refreshBars();
+      // o checkAi do open() pode ter rodado antes do provider certo chegar
+      if (this.host.classList.contains('is-open')) void this.checkAi();
     });
   }
 
@@ -168,7 +313,7 @@ export class Reader {
         'div',
         { class: 'ml-chat-head' },
         el('strong', {}, 'Assistente de leitura'),
-        el('button', { class: 'ml-btn ml-btn-ghost', onclick: () => this.chat.classList.remove('is-open') }, '✕'),
+        el('button', { class: 'ml-btn ml-btn-ghost', 'aria-label': 'Fechar assistente', onclick: () => this.closeChat() }, '✕'),
       ),
       this.chatLog,
       this.buildChatInput(),
@@ -176,12 +321,30 @@ export class Reader {
   }
 
   private onStagePointerMove = (e: PointerEvent): void => {
+    // no touch todo movimento e' arrasto; o tooltip fixado por toque nao pode sumir com ele
+    if (this.tooltipPinned || e.pointerType !== 'mouse') return;
     this.checkBalloonHover(e.clientX, e.clientY);
   };
 
   private onStagePointerLeave = (): void => {
-    this.hideTooltip();
+    if (!this.tooltipPinned) this.hideTooltip();
   };
+
+  /**
+   * Touch nao tem hover: um toque em cima do balao fixa o tooltip com o texto
+   * original; outro toque em qualquer lugar fecha. Devolve true quando consumiu
+   * o toque, para o viewer nao virar a pagina por cima.
+   */
+  private onStageTap(clientX: number, clientY: number): boolean {
+    if (this.tooltipPinned) {
+      this.hideTooltip();
+      return true;
+    }
+    const hit = this.findBlockAt(clientX, clientY);
+    if (!hit) return false;
+    this.showTooltip(hit.block, clientX, clientY, hit.sheet, true);
+    return this.tooltipPinned;
+  }
 
   private checkBalloonHover(clientX: number, clientY: number): void {
     if (this.viewer.isDragging()) {
@@ -223,12 +386,15 @@ export class Reader {
     return null;
   }
 
-  private showTooltip(block: OcrBlock, clientX: number, clientY: number, sheet: { el: HTMLDivElement }): void {
+  private showTooltip(block: OcrBlock, clientX: number, clientY: number, sheet: { el: HTMLDivElement }, pin = false): void {
     const origText = block.text?.trim();
     if (!origText) {
       this.hideTooltip();
       return;
     }
+    this.tooltipPinned = pin;
+    // fixado precisa receber o clique do ✕; o de hover fica transparente ao mouse
+    this.tooltipEl.style.pointerEvents = pin ? 'auto' : '';
 
     this.highlightBox.style.left = `${block.x}px`;
     this.highlightBox.style.top = `${block.y}px`;
@@ -245,6 +411,9 @@ export class Reader {
       { class: 'ml-tooltip-header' },
       el('span', { class: 'ml-tooltip-tag' }, 'Texto original'),
       block.confidence ? el('span', { class: 'ml-tooltip-confidence' }, `${Math.round(block.confidence)}% conf.`) : el('span', {}),
+      pin
+        ? el('button', { class: 'ml-btn ml-btn-ghost ml-btn-sm', 'aria-label': 'fechar', onclick: () => this.hideTooltip() }, '✕')
+        : null,
     );
     const origEl = el('div', { class: 'ml-tooltip-original' }, origText);
     this.tooltipEl.append(header, origEl);
@@ -253,7 +422,7 @@ export class Reader {
       const transEl = el(
         'div',
         { class: 'ml-tooltip-translated' },
-        el('span', { class: 'ml-tooltip-subtag' }, 'Tradução:'),
+        el('span', { class: 'ml-tooltip-subtag' }, 'Traducao:'),
         block.pt.trim(),
       );
       this.tooltipEl.append(transEl);
@@ -282,12 +451,19 @@ export class Reader {
   }
 
   private hideTooltip(): void {
+    this.tooltipPinned = false;
+    this.tooltipEl.style.pointerEvents = '';
     this.tooltipEl.hidden = true;
     this.highlightBox.hidden = true;
   }
 
-  private toggle(label: string, on: boolean, onclick: () => void, title?: string): HTMLElement {
-    return el('button', { class: `ml-btn ml-btn-sm ${on ? 'is-on' : ''}`, title: title ?? label, onclick }, label);
+  private toggle(label: string, on: boolean, onclick: () => void, title?: string, extra: Record<string, string> = {}): HTMLElement {
+    const { children, aria } = iconLabel(label);
+    return el(
+      'button',
+      { class: `ml-btn ml-btn-sm ${on ? 'is-on' : ''}`, title: title ?? label, 'aria-pressed': String(on), ...aria, onclick, ...extra },
+      ...children,
+    );
   }
 
   private togglePopover(open?: boolean): void {
@@ -303,115 +479,308 @@ export class Reader {
     }
   }
 
-  private buildTopBar(): HTMLElement {
-    const s = store.settings;
-    const detectedLang = this.chapter?.lang ?? this.detail?.origin;
-    const originName = detectedLang ? langLabel(detectedLang) : 'Auto';
-    const originBadge = el('span', { class: 'ml-lang-badge', title: `Idioma original detectado: ${originName}` }, `Origem: ${originName}`);
+  private get compact(): boolean {
+    return this.compactQuery.matches;
+  }
 
+  /** Modo, capa, ajuste e sentido: na barra (desktop) ou no popover (mobile). */
+  private readingControls(): [HTMLElement, HTMLElement | null, HTMLElement, HTMLElement] {
+    const s = store.settings;
     const modes = el(
       'div',
       { class: 'ml-group' },
       ...MODES.map(([m, label]) =>
-        this.toggle(label, s.mode === m, () => {
-          s.mode = m;
-          persist();
-          this.viewer.setMode(m);
-          this.refreshBars();
-        }),
+        this.toggle(
+          label,
+          s.mode === m,
+          () => {
+            s.mode = m;
+            persist();
+            this.viewer.setMode(m);
+            // a tira forca 'width' no viewer: ao sair dela a preferencia do usuario volta
+            this.viewer.applyFit(s.fit);
+            this.refreshBars();
+          },
+          m === 'strip' ? 'Tira: roda rola, Ctrl+roda da zoom' : `${label}: roda da zoom, Shift+roda ou toque na lateral vira a pagina`,
+        ),
       ),
     );
     const fits = el(
       'div',
       { class: 'ml-group' },
       ...FITS.map(([f, label]) =>
-        this.toggle(label, s.fit === f, () => {
-          s.fit = f;
-          persist();
-          this.viewer.applyFit(f);
-          this.refreshBars();
-        }),
+        this.toggle(
+          label,
+          this.viewer.fit === f,
+          () => {
+            s.fit = f;
+            persist();
+            this.viewer.applyFit(f);
+            this.refreshBars();
+          },
+          undefined,
+          { 'data-fit': f },
+        ),
       ),
-      this.toggle('1:1', false, () => this.viewer.setZoom(1)),
+      this.toggle('1:1', false, () => this.viewer.setZoom(1), 'Tamanho real (tecla 1)'),
     );
+    // capa sozinha na primeira folha: so' faz sentido na dupla
+    const coverBtn =
+      s.mode === 'double'
+        ? this.toggle(
+            '↔ capa',
+            this.viewer.coverOffset === 1,
+            () => this.toggleCoverOffset(),
+            'Deslocar a dupla em uma pagina, deixando a capa sozinha (Shift+D)',
+            { 'aria-label': 'Deslocar dupla em uma pagina' },
+          )
+        : null;
     const rtlBtn = this.toggle('RTL', this.rtl, () => {
       this.rtl = !this.rtl;
       s.rtl = this.rtl;
       persist();
       this.viewer.setRtl(this.rtl);
       this.refreshBars();
-    }, 'Sentido de leitura japonês (direita para esquerda)');
+    }, 'Sentido de leitura japones (direita para esquerda)');
+    return [modes, coverBtn, fits, rtlBtn];
+  }
 
+  private translateButton(): HTMLElement {
+    return el('button', {
+      class: 'ml-btn ml-btn-sm ml-btn-action-primary',
+      disabled: this.busy,
+      onclick: () => void this.runTranslate(),
+      title: this.busy ? 'traducao em andamento — use cancelar' : 'Traduzir o capitulo inteiro, a partir desta pagina (tecla R)',
+      ...iconLabel('🪄 Traduzir').aria,
+    }, ...iconLabel('🪄 Traduzir').children);
+  }
+
+  /** OCR/cancelar e Original. */
+  private ocrControls(): HTMLElement[] {
+    const s = store.settings;
+    return [
+      // enquanto roda, o botao de OCR vira o unico jeito de abortar sem virar a pagina
+      this.busy
+        ? el('button', {
+            class: 'ml-btn ml-btn-sm is-on',
+            'aria-label': 'Cancelar OCR',
+            onclick: () => this.ocrAbort?.abort(),
+            title: 'Cancelar o OCR/traducao em andamento',
+          }, ...iconLabel('✖ cancelar').children)
+        : el('button', {
+            class: 'ml-btn ml-btn-sm',
+            onclick: () => void this.runOcrOnly(),
+            title: 'Reconhecer texto (OCR) so nas paginas visiveis, sem traduzir (tecla O)',
+            ...iconLabel('🔍 OCR').aria,
+          }, ...iconLabel('🔍 OCR').children),
+      this.toggle(
+        s.showOriginal ? '👁️ original (ligado)' : '👁️ Original',
+        s.showOriginal,
+        () => {
+          s.showOriginal = !s.showOriginal;
+          persist();
+          this.refreshBars();
+          this.paintOverlays();
+        },
+        'Alternar entre a pagina original e os baloes traduzidos (tecla T)',
+      ),
+    ];
+  }
+
+  private optionsButton(label = '⚙️ Opcoes'): HTMLElement {
+    return el('button', {
+      id: 'ml-btn-options',
+      class: `ml-btn ml-btn-sm ${this.popoverOpen ? 'is-on' : ''}`,
+      onclick: (e: MouseEvent) => {
+        e.stopPropagation();
+        this.togglePopover();
+      },
+      title: 'Configuracoes de traducao (modo, provedor, idiomas e letra)',
+      ...iconLabel(label).aria,
+    }, ...iconLabel(label).children);
+  }
+
+  /** Visao, Explicar, marcador e tela cheia. */
+  private toolControls(): HTMLElement[] {
+    return [
+      el('button', {
+        class: 'ml-btn ml-btn-sm',
+        onclick: () => void this.visionRead(),
+        title: 'IA descreve a pagina inteira (modelo de visao)',
+        ...iconLabel('🤖 Visao').aria,
+      }, ...iconLabel('🤖 Visao').children),
+      el('button', {
+        class: 'ml-btn ml-btn-sm',
+        onclick: () => (this.chat.classList.contains('is-open') ? this.closeChat() : this.openChat()),
+        title: 'Assistente de leitura',
+        ...iconLabel('💬 Explicar').aria,
+      }, ...iconLabel('💬 Explicar').children),
+      (this.bookmarkBtn = this.bookmarkButton()),
+      // iPhone nao tem requestFullscreen: botao inerte confunde mais que a ausencia
+      document.fullscreenEnabled
+        ? el('button', {
+            class: 'ml-btn ml-btn-sm',
+            onclick: () => void this.toggleFullscreen(),
+            title: 'Alternar tela cheia (tecla F)',
+            'aria-label': 'Alternar tela cheia',
+          }, '⛶')
+        : null,
+    ].filter((n): n is HTMLElement => n !== null);
+  }
+
+  // ---------- assistente (painel) ----------
+
+  private openChat(): void {
+    this.chat.classList.add('is-open');
+    this.syncChatToViewport();
+    window.visualViewport?.addEventListener('resize', this.syncChatToViewport);
+  }
+
+  private closeChat(): void {
+    this.chat.classList.remove('is-open');
+    this.chat.style.height = '';
+    window.visualViewport?.removeEventListener('resize', this.syncChatToViewport);
+  }
+
+  /** teclado virtual (iOS) nao encolhe o layout: o campo do chat ficava atras dele */
+  private syncChatToViewport = (): void => {
+    const vv = window.visualViewport;
+    // girar para paisagem larga com o chat aberto deixava a altura em px do retrato
+    if (!this.compact) {
+      this.chat.style.height = '';
+      return;
+    }
+    if (!vv || !this.chat.classList.contains('is-open')) return;
+    this.chat.style.height = `${Math.round(vv.height)}px`;
+  };
+
+  // ---------- atalhos (ajuda) ----------
+
+  private toggleHelp(open?: boolean): void {
+    const isOpen = Boolean(this.helpEl);
+    const want = open ?? !isOpen;
+    if (want === isOpen) return;
+    if (!want) {
+      this.helpEl?.remove();
+      this.helpEl = undefined;
+      // fechar com o ✕ focado mandava o foco para o body (Tab recomecava do documento)
+      const back = this.helpReturnFocus;
+      this.helpReturnFocus = undefined;
+      if (back?.isConnected) back.focus();
+      else this.host.focus();
+      return;
+    }
+    this.helpReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+    const rows: [string, string][] = [
+      ['← → ↑ ↓ / espaco', 'virar pagina (setas seguem o sentido RTL)'],
+      ['R', 'traduzir o capitulo'],
+      ['O', 'so OCR nas paginas visiveis, sem traduzir'],
+      ['T', 'mostrar/esconder o original'],
+      ['F', 'tela cheia'],
+      ['0 / 1', 'ajustar a pagina / tamanho real'],
+      ['+ / −', 'zoom'],
+      ['Shift+D', 'deslocar a dupla (capa sozinha)'],
+      ['?', 'esta lista'],
+      ['Esc', 'fechar painel / sair do leitor'],
+    ];
+    this.helpEl = el(
+      'div',
+      { class: 'ml-help', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Atalhos de teclado' },
+      el(
+        'div',
+        { class: 'ml-popover-head' },
+        el('span', { class: 'ml-popover-title' }, 'Atalhos de teclado'),
+        el('button', { class: 'ml-btn ml-btn-ghost ml-btn-sm', 'aria-label': 'fechar', onclick: () => this.toggleHelp(false) }, '✕'),
+      ),
+      el('dl', {}, ...rows.flatMap(([k, v]) => [el('dt', {}, el('kbd', {}, k)), el('dd', {}, v)])),
+    );
+    this.host.append(this.helpEl);
+    this.helpEl.querySelector<HTMLElement>('button')?.focus();
+  }
+
+  /** volta modo, ajuste, motor, idiomas e fonte ao padrao — sem isto so' limpando o localStorage */
+  private restoreDefaults(): void {
+    if (!confirm('Restaurar as configuracoes de leitura e traducao para o padrao?')) return;
+    // o provedor de IA vem do servidor (fonte da verdade): o padrao 'ollama' do
+    // store nao pode voltar por cima dele
+    const aiProvider = store.settings.aiProvider;
+    const ocrLangBefore = store.settings.ocrLang;
+    resetSettings();
+    store.settings.aiProvider = aiProvider;
+    persist();
+    if (store.settings.ocrLang !== ocrLangBefore) {
+      // o texto reconhecido muda com o modelo: o cache inteiro envelhece
+      this.ocrAbort?.abort();
+      this.ocrCache.clear();
+      this.translatedAs.clear();
+    }
+    this.viewer.setMode(store.settings.mode);
+    this.viewer.applyFit(store.settings.fit);
+    this.rtl = this.rtlFor(this.detail);
+    this.viewer.setRtl(this.rtl);
+    this.invalidateTranslations();
+    this.refreshBars();
+    if (this.popoverOpen) this.buildPopover();
+    toast('configuracoes restauradas');
+  }
+
+  private originBadge(): HTMLElement {
+    const detectedLang = this.chapter?.lang ?? this.detail?.origin;
+    const originName = detectedLang ? langLabel(detectedLang) : 'Auto';
+    return el('span', { class: 'ml-lang-badge', title: `Idioma original do scan (define o OCR): ${originName}` }, `Origem: ${originName}`);
+  }
+
+  private buildTopBar(): HTMLElement {
+    const back = el(
+      'button',
+      { class: 'ml-btn ml-btn-ghost', onclick: () => this.close(), title: 'Voltar ao catalogo', ...iconLabel('‹ voltar').aria },
+      ...iconLabel('‹ voltar').children,
+    );
+    const title = el('div', { class: 'ml-reader-title', id: 'reader-title' });
+
+    // Celular: cinco linhas de botoes deixavam um terco da tela para a pagina.
+    // Fica so' o essencial; o resto mora no popover, montado pelos mesmos construtores.
+    if (this.compact) {
+      return el(
+        'header',
+        { class: 'ml-reader-top is-compact' },
+        back,
+        title,
+        this.pageLabel,
+        // ocupado, o cancelar entra no lugar do Traduzir: no celular ele so' existia dentro do "mais"
+        this.busy ? this.ocrControls()[0]! : this.translateButton(),
+        this.optionsButton('⋯ mais'),
+      );
+    }
+
+    const [modes, coverBtn, fits, rtlBtn] = this.readingControls();
     return el(
       'header',
       { class: 'ml-reader-top' },
       // Esquerda: Navegação e Informações
-      el(
-        'div',
-        { class: 'ml-top-left' },
-        el('button', { class: 'ml-btn ml-btn-ghost', onclick: () => this.close(), title: 'Voltar ao catálogo' }, '‹ voltar'),
-        el('div', { class: 'ml-reader-title', id: 'reader-title' }),
-        originBadge,
-        this.pageLabel,
-      ),
+      el('div', { class: 'ml-top-left' }, back, title, this.originBadge(), this.pageLabel),
       // Centro: Modos de Leitura/Ajuste + Ações de Tradução
-      el(
-        'div',
-        { class: 'ml-top-center' },
-        modes,
-        fits,
-        rtlBtn,
-        el('button', {
-          class: 'ml-btn ml-btn-sm ml-btn-action-primary',
-          onclick: () => void this.runTranslate(),
-          title: 'Traduzir os balões da página atual (Atalho: tecla R)',
-        }, '🪄 Traduzir'),
-        el('button', {
-          class: 'ml-btn ml-btn-sm',
-          onclick: () => void this.runOcrOnly(),
-          title: 'Executar reconhecimento OCR apenas (Atalho: tecla O)',
-        }, '🔍 OCR'),
-        this.toggle(
-          s.showOriginal ? '👁️ Original: Ligado' : '👁️ Original',
-          s.showOriginal,
-          () => {
-            s.showOriginal = !s.showOriginal;
-            persist();
-            this.refreshBars();
-            this.paintOverlays();
-          },
-          'Alternar entre exibir o mangá original limpo ou balões traduzidos (Atalho: tecla T)',
-        ),
-      ),
+      el('div', { class: 'ml-top-center' }, modes, coverBtn, fits, rtlBtn, this.translateButton(), ...this.ocrControls()),
       // Direita: Configurações, Assistente e Ferramentas
-      el(
-        'div',
-        { class: 'ml-top-right' },
-        el('button', {
-          id: 'ml-btn-options',
-          class: `ml-btn ml-btn-sm ${this.popoverOpen ? 'is-on' : ''}`,
-          onclick: (e: MouseEvent) => {
-            e.stopPropagation();
-            this.togglePopover();
-          },
-          title: 'Configurações de Tradução (Modo IA, OCR, Provedores, Idiomas e Fontes)',
-        }, '⚙️ Opções'),
-        el('button', {
-          class: 'ml-btn ml-btn-sm',
-          onclick: () => void this.visionRead(),
-          title: 'IA analisa e descreve a página inteira com visão computacional',
-        }, '🤖 Visão'),
-        el('button', {
-          class: 'ml-btn ml-btn-sm',
-          onclick: () => this.chat.classList.toggle('is-open'),
-          title: 'Assistente e explicador de mangá',
-        }, '💬 Explicar'),
-        this.bookmarkButton(),
-        el('button', {
-          class: 'ml-btn ml-btn-sm',
-          onclick: () => void this.toggleFullscreen(),
-          title: 'Alternar tela cheia',
-        }, '⛶'),
+      el('div', { class: 'ml-top-right' }, this.optionsButton(), ...this.toolControls()),
+    );
+  }
+
+  /** Secao "Leitura" do popover no mobile: o que saiu da barra. */
+  private readingSection(): HTMLElement {
+    const [modes, coverBtn, fits, rtlBtn] = this.readingControls();
+    const row = (...items: (HTMLElement | null)[]): HTMLElement => el('div', { class: 'ml-popover-row' }, ...items);
+    return el(
+      'div',
+      { class: 'ml-popover-section' },
+      el('span', { class: 'ml-popover-label' }, 'Leitura'),
+      row(modes, coverBtn),
+      row(fits, rtlBtn),
+      row(...this.ocrControls(), this.originBadge()),
+      row(...this.toolControls()),
+      row(
+        el('button', { class: 'ml-btn ml-btn-sm', onclick: () => this.prevChapter(), 'aria-label': 'Capitulo anterior' }, '« capitulo anterior'),
+        el('button', { class: 'ml-btn ml-btn-sm', onclick: () => this.nextChapter(), 'aria-label': 'Proximo capitulo' }, 'proximo capitulo »'),
       ),
     );
   }
@@ -423,14 +792,14 @@ export class Reader {
     const head = el(
       'div',
       { class: 'ml-popover-head' },
-      el('span', { class: 'ml-popover-title' }, 'Configurações de Tradução'),
+      el('span', { class: 'ml-popover-title' }, 'Configuracoes de traducao'),
       el('button', {
         class: 'ml-btn ml-btn-ghost ml-btn-sm',
         onclick: (e: MouseEvent) => {
           e.stopPropagation();
           this.togglePopover(false);
         },
-        title: 'Fechar opções',
+        title: 'Fechar opcoes',
       }, '✕'),
     );
 
@@ -438,7 +807,7 @@ export class Reader {
     const modeSection = el(
       'div',
       { class: 'ml-popover-section' },
-      el('span', { class: 'ml-popover-label' }, 'Modo de Tradução'),
+      el('span', { class: 'ml-popover-label' }, 'Modo de traducao'),
       el(
         'div',
         { class: 'ml-segmented' },
@@ -451,7 +820,7 @@ export class Reader {
             this.invalidateTranslations();
             this.buildPopover();
           },
-        }, '✨ IA (Contextual)'),
+        }, '✨ IA (contexto)'),
         el('button', {
           class: `ml-segmented-btn ${!isAi ? 'is-active' : ''}`,
           onclick: (e: MouseEvent) => {
@@ -468,25 +837,70 @@ export class Reader {
     const providerSection = el(
       'div',
       { class: 'ml-popover-section' },
-      el('span', { class: 'ml-popover-label' }, isAi ? 'Provedor de IA' : 'Motor de Tradução'),
+      el('span', { class: 'ml-popover-label' }, isAi ? 'Provedor de IA' : 'Motor de traducao'),
       isAi ? this.providerSelect() : this.engineSelect(),
     );
 
     const targetSection = el(
       'div',
       { class: 'ml-popover-section' },
-      el('span', { class: 'ml-popover-label' }, 'Traduzir Para'),
+      el('span', { class: 'ml-popover-label' }, 'Traduzir para'),
       this.targetSelect(),
     );
 
     const fontSection = el(
       'div',
       { class: 'ml-popover-section' },
-      el('span', { class: 'ml-popover-label' }, 'Estilo da Fonte no Balão'),
+      el('span', { class: 'ml-popover-label' }, 'Letra dos baloes'),
       this.fontSelect(),
     );
 
-    this.popoverEl.append(head, modeSection, providerSection, targetSection, fontSection);
+    const ocrLangSection = el(
+      'div',
+      { class: 'ml-popover-section' },
+      el('span', { class: 'ml-popover-label' }, 'Idioma do OCR'),
+      this.ocrLangSelect(),
+    );
+
+    const foot = el(
+      'div',
+      { class: 'ml-popover-foot' },
+      el('button', { class: 'ml-btn ml-btn-sm ml-btn-ghost', onclick: () => this.toggleHelp(true), title: 'Lista de atalhos (tecla ?)' }, '⌨ atalhos'),
+      el('button', { class: 'ml-btn ml-btn-sm ml-btn-ghost', onclick: () => this.restoreDefaults() }, 'restaurar padroes'),
+    );
+
+    this.popoverEl.append(head);
+    if (this.compact) this.popoverEl.append(this.readingSection());
+    this.popoverEl.append(modeSection, providerSection, targetSection, ocrLangSection, fontSection, foot);
+  }
+
+  /**
+   * Idioma do scan para o Tesseract. O 'auto' segue o idioma que a fonte declara
+   * para o capitulo — e a fonte erra: scan em ingles marcado como "unknown" cai
+   * no modelo japones e sai lixo. Aqui o usuario corrige.
+   */
+  private ocrLangSelect(): HTMLElement {
+    return el(
+      'select',
+      {
+        class: 'ml-select ml-select-sm',
+        title: 'modelo de reconhecimento usado no OCR',
+        'aria-label': 'Idioma do OCR',
+        onchange: (e: Event) => {
+          store.settings.ocrLang = (e.target as HTMLSelectElement).value;
+          persist();
+          // o texto reconhecido muda com o modelo: o cache inteiro envelhece
+          this.ocrAbort?.abort();
+          this.ocrCache.clear();
+          this.translatedAs.clear();
+          this.paintOverlays();
+          this.ocrStatus.textContent = 'idioma do OCR alterado — pressione O ou R';
+        },
+      },
+      ...TESS_LANG_OPTIONS.map((o) =>
+        el('option', { value: o.code, selected: o.code === store.settings.ocrLang }, o.label),
+      ),
+    );
   }
 
   /** Idioma de chegada: vale para os tres motores; trocar reletreira o capitulo. */
@@ -515,7 +929,7 @@ export class Reader {
       'select',
       {
         class: 'ml-select ml-select-sm',
-        title: 'motor de tradução dos balões (modo OCR tradicional)',
+        title: 'motor de traducao dos baloes (modo Tradutor Web)',
         onchange: (e: Event) => {
           store.settings.engine = (e.target as HTMLSelectElement).value as TranslateEngine;
           persist();
@@ -531,15 +945,15 @@ export class Reader {
 
   private fontSelect(): HTMLElement {
     const fonts: [LetterFont, string, string][] = [
-      ['comic', 'Balão HQ (Quadrinhos)', 'Fonte estilo revista em quadrinhos / mangá'],
+      ['comic', 'Balao de HQ', 'Fonte estilo quadrinhos / manga'],
       ['sans', 'Moderna (Limpa)', 'Fonte limpa e moderna sem serifa'],
-      ['serif', 'Clássica (Livro)', 'Fonte clássica estilo livro impresso'],
+      ['serif', 'Classica (livro)', 'Fonte classica de livro impresso'],
     ];
     return el(
       'select',
       {
         class: 'ml-select ml-select-sm',
-        title: 'estilo da fonte para os balões traduzidos',
+        title: 'letra dos baloes traduzidos',
         onchange: (e: Event) => {
           store.settings.font = (e.target as HTMLSelectElement).value as LetterFont;
           persist();
@@ -560,10 +974,14 @@ export class Reader {
         class: 'ml-select ml-select-sm',
         title: 'provedor de IA (modo IA)',
         onchange: (e: Event) => {
-          store.settings.aiProvider = (e.target as HTMLSelectElement).value as AiProviderName;
+          const active = (e.target as HTMLSelectElement).value as AiProviderName;
+          store.settings.aiProvider = active;
           persist();
           this.invalidateTranslations();
-          this.checkAi();
+          // trocar so' no cliente deixava servidor e leitor discordando do provedor
+          void saveAiConfig({ active })
+            .catch((err) => toast(`nao consegui ativar o provedor no servidor: ${humanizeError(err)}`, 'error'))
+            .finally(() => void this.checkAi());
         },
       },
       ...this.aiProviders.map((p) =>
@@ -580,6 +998,7 @@ export class Reader {
       {
         class: `ml-btn ml-btn-sm ${marked ? 'is-on' : ''}`,
         title: 'marcar esta pagina',
+        'aria-pressed': String(marked),
         onclick: () => {
           if (!this.detail || !this.chapter) return;
           const on = toggleBookmark({
@@ -592,11 +1011,21 @@ export class Reader {
             cover: this.detail.cover,
           });
           toast(on ? 'pagina marcada' : 'marcador removido');
-          this.refreshBars();
+          this.refreshBookmark();
         },
       },
       marked ? '🔖 marcado' : '🔖 marcar',
     );
+  }
+
+  /** virar a pagina deixava o botao com o estado da pagina anterior: clicar numa ja' marcada removia o marcador */
+  private refreshBookmark(): void {
+    if (!this.bookmarkBtn?.isConnected) return;
+    const next = this.bookmarkButton();
+    const hadFocus = document.activeElement === this.bookmarkBtn;
+    this.bookmarkBtn.replaceWith(next);
+    this.bookmarkBtn = next;
+    if (hadFocus) next.focus();
   }
 
   /**
@@ -628,48 +1057,60 @@ export class Reader {
     );
   }
 
-  /** Reflete na barra o que a fila esta' fazendo agora. */
+  /** No Tradutor Web a IA e' irrelevante: o "IA: offline" vermelho so' assustava. */
   private syncStatus(): void {
-    // no-op: mantido para compatibilidade
+    const item = this.aiLabel.parentElement;
+    if (item) item.hidden = store.settings.translateMode !== 'ai';
   }
 
   /** Estado do endpoint de IA — so' importa quando o motor cai nela. */
-  private async checkAi(): Promise<void> {
+  private async checkAi(): Promise<{ ok: boolean; error: string }> {
     try {
       const h = await aiHealth(store.settings.aiProvider);
       this.aiDot.classList.toggle('is-on', Boolean(h.ok));
       const provPrefix = h.provider ? `[${h.provider}] ` : '';
       this.aiLabel.textContent = h.ok ? `IA: ${provPrefix}${h.model}` : `IA: ${provPrefix}offline`;
       this.aiLabel.title = h.ok ? `${h.baseUrl} — ${h.models?.length ?? 0} modelos` : (h.error ?? '');
-    } catch {
+      this.aiOk = Boolean(h.ok);
+      this.aiError = h.error ?? 'sem resposta';
+    } catch (err) {
       this.aiDot.classList.remove('is-on');
       this.aiLabel.textContent = 'IA: offline';
+      this.aiOk = false;
+      this.aiError = humanizeError(err);
     }
+    return { ok: this.aiOk, error: this.aiError };
   }
 
   private buildBottomBar(): HTMLElement {
+    const prevBtn = el('button', { class: 'ml-btn ml-btn-ghost', onclick: () => this.turn(-1), title: 'Pagina anterior', 'aria-label': 'Pagina anterior' }, '‹');
+    const nextBtn = el('button', { class: 'ml-btn ml-btn-ghost', onclick: () => this.turn(1), title: 'Proxima pagina', 'aria-label': 'Proxima pagina' }, '›');
+    // celular: uma linha so' — setas nas bordas, filme no meio; capitulo troca pelo popover ou no fim da folha
+    if (this.compact) {
+      return el('footer', { class: 'ml-reader-bottom is-compact' }, prevBtn, this.film, nextBtn);
+    }
     return el(
       'footer',
       { class: 'ml-reader-bottom' },
       el(
         'div',
         { class: 'ml-bottom-nav' },
-        el('button', { class: 'ml-btn ml-btn-ghost', onclick: () => this.prevChapter(), title: 'Capítulo anterior' }, '« cap'),
-        el('button', { class: 'ml-btn ml-btn-ghost', onclick: () => this.viewer.prev(), title: 'Página anterior' }, '‹'),
+        el('button', { class: 'ml-btn ml-btn-ghost', onclick: () => this.prevChapter(), title: 'Capitulo anterior', 'aria-label': 'Capitulo anterior' }, '« cap'),
+        prevBtn,
       ),
       this.film,
       el(
         'div',
         { class: 'ml-bottom-nav' },
-        el('button', { class: 'ml-btn ml-btn-ghost', onclick: () => this.viewer.next(), title: 'Próxima página' }, '›'),
-        el('button', { class: 'ml-btn ml-btn-ghost', onclick: () => this.nextChapter(), title: 'Próximo capítulo' }, 'cap »'),
+        nextBtn,
+        el('button', { class: 'ml-btn ml-btn-ghost', onclick: () => this.nextChapter(), title: 'Proximo capitulo', 'aria-label': 'Proximo capitulo' }, 'cap »'),
       ),
       el(
         'div',
         { class: 'ml-zoom' },
-        el('button', { class: 'ml-btn ml-btn-ghost', onclick: () => this.viewer.setZoom(this.viewer.zoom / 1.25) }, '−'),
+        el('button', { class: 'ml-btn ml-btn-ghost', title: 'Diminuir zoom (tecla -)', 'aria-label': 'Diminuir zoom', onclick: () => this.viewer.setZoom(this.viewer.zoom / 1.25) }, '−'),
         this.zoomRange,
-        el('button', { class: 'ml-btn ml-btn-ghost', onclick: () => this.viewer.setZoom(this.viewer.zoom * 1.25) }, '+'),
+        el('button', { class: 'ml-btn ml-btn-ghost', title: 'Aumentar zoom (tecla +)', 'aria-label': 'Aumentar zoom', onclick: () => this.viewer.setZoom(this.viewer.zoom * 1.25) }, '+'),
         this.zoomLabel,
       ),
     );
@@ -711,7 +1152,30 @@ export class Reader {
       const after = next.querySelectorAll<HTMLElement>('button, select');
       after[focused]?.focus();
     }
-    this.host.querySelector('#reader-title')!.textContent = this.titleText();
+    const bottom = this.host.querySelector('.ml-reader-bottom');
+    const wantCompact = this.compact;
+    if (bottom && bottom.classList.contains('is-compact') !== wantCompact) bottom.replaceWith(this.buildBottomBar());
+    // no mobile os toggles vivem no popover: sem remontar, "dupla" continuaria apagado depois do clique.
+    // Mas nao por baixo de um <select> aberto: o fim do OCR fechava o dropdown na mao do usuario.
+    // No touch o botao tocado fica com o foco, entao so' campos de edicao seguram a remontagem.
+    if (this.popoverOpen) {
+      const active = document.activeElement as HTMLElement | null;
+      const inside = active && this.popoverEl.contains(active);
+      const editing = inside && /^(SELECT|INPUT|TEXTAREA)$/.test(active.tagName);
+      if (!editing) {
+        const key = inside ? (active.getAttribute('aria-label') ?? active.textContent ?? '') : '';
+        this.buildPopover();
+        if (inside && key) {
+          const again = [...this.popoverEl.querySelectorAll<HTMLElement>('button')].find(
+            (b) => (b.getAttribute('aria-label') ?? b.textContent ?? '') === key,
+          );
+          again?.focus({ preventScroll: true });
+        }
+      }
+    }
+    const title = this.host.querySelector<HTMLElement>('#reader-title')!;
+    title.textContent = this.titleText();
+    title.title = this.titleText();
   }
 
   // ---------- ciclo de leitura ----------
@@ -737,7 +1201,22 @@ export class Reader {
   }
 
   async open(detail: SeriesDetail, chapter: ChapterRef, startPage = 0): Promise<void> {
+    const gen = ++this.openGen;
+    this.loadingChapter = true;
     const sameSeries = this.detail?.provider === detail.provider && this.detail?.id === detail.id;
+    if (!this.host.classList.contains('is-open')) {
+      this.prevFocus = document.activeElement as HTMLElement | null;
+      // o catalogo fica atras do leitor em tela cheia mas continuava na ordem do Tab
+      document.querySelector('.ml-main')?.setAttribute('inert', '');
+      this.togglePopover(false);
+      this.closeChat();
+    }
+    this.hideEndCard();
+    // resposta do chat do capitulo anterior nao pode cair no historico do novo
+    this.chatAbort?.abort();
+    // OCR de pagina morre com a troca; a traducao do capitulo continua se o
+    // destino e' um dos capitulos que ela cobre (o atual ou o adiantado)
+    if (!sameSeries || this.runScope === 'page' || !this.runChapters.includes(chapter.id)) this.ocrAbort?.abort();
     this.detail = detail;
     this.chapter = chapter;
     if (!sameSeries) {
@@ -750,6 +1229,7 @@ export class Reader {
     this.chatLog.innerHTML = '';
     this.host.classList.add('is-open');
     document.body.classList.add('is-reading');
+    this.host.focus({ preventScroll: true });
     this.refreshBars();
     this.syncStatus();
     // o endpoint pode cair no meio da leitura: reconsulta enquanto o leitor vive
@@ -762,30 +1242,55 @@ export class Reader {
 
     try {
       const { pages } = await getPages(chapter.provider, chapter.id);
+      if (gen !== this.openGen) return;
       if (!pages.length) throw new Error('capitulo sem paginas');
       this.pages = pages;
-      this.viewer.setPages(pages, startPage);
+      // -1 = "ultima pagina" (voltar um capitulo). Capitulo ja' terminado e' tratado
+      // por quem chama (main.ts): aqui um marcador na ultima pagina tem de abrir nela.
+      if (startPage < 0) startPage = pages.length - 1;
+      // ajuste antes das paginas: aplicar depois zerava a rolagem da tira e perdia o startPage
       this.viewer.applyFit(store.settings.fit);
+      this.viewer.setPages(pages, startPage);
       this.buildFilm();
       this.paintOverlays();
     } catch (err) {
+      if (gen !== this.openGen) return;
       // `this.chapter` ja' aponta para o capitulo novo: deixar as paginas do
       // anterior no palco faria o OCR gravar pagina velha sob a chave do novo
       this.pages = [];
       this.viewer.setPages([], 0);
       this.film.innerHTML = '';
       this.pageLabel.textContent = 'falhou';
-      toast(`capitulo nao abriu: ${(err as Error).message}`, 'error');
+      toast(`capitulo nao abriu: ${humanizeError(err)}`, 'error');
     } finally {
-      this.stageLoading.classList.remove('is-visible');
+      // a chamada antiga nao pode apagar o spinner da nova
+      if (gen === this.openGen) {
+        this.loadingChapter = false;
+        this.stageLoading.classList.remove('is-visible');
+      }
     }
   }
 
   close(): void {
     this.hideTooltip();
+    this.hideEndCard();
+    this.toggleHelp(false);
+    this.ocrAbort?.abort();
+    this.chatAbort?.abort();
     clearInterval(this.aiTimer);
+    this.openGen++;
+    this.loadingChapter = false;
+    this.stageLoading.classList.remove('is-visible');
+    // popover/chat abertos reapareciam no proximo capitulo
+    this.togglePopover(false);
+    this.closeChat();
     this.host.classList.remove('is-open');
     document.body.classList.remove('is-reading');
+    document.querySelector('.ml-main')?.removeAttribute('inert');
+    this.prevFocus?.focus?.();
+    this.prevFocus = null;
+    // workers do Tesseract (WASM + modelos) ficavam residentes depois de sair do leitor
+    void disposeOcr().catch(() => undefined);
     this.onExit();
   }
 
@@ -796,7 +1301,8 @@ export class Reader {
         el(
           'button',
           { class: 'ml-thumb', dataset: { page: String(i) }, onclick: () => this.viewer.goToPage(i) },
-          el('img', { src: p.url, loading: 'lazy', alt: `pagina ${i + 1}` }),
+          // mesmo CORS do sheet: resposta cacheada sem cabecalhos deixava o canvas do OCR tainted
+          el('img', { src: p.url, loading: 'lazy', decoding: 'async', crossorigin: 'anonymous', alt: `pagina ${i + 1}` }),
           el('span', {}, String(i + 1)),
         ),
       );
@@ -808,9 +1314,14 @@ export class Reader {
     // abaixo daria verdadeiro em 0 >= -1 e marcaria como lido o que nunca abriu
     if (!this.pages.length) return;
     this.hideTooltip();
+    this.hideEndCard();
+    // OCR da pagina que ficou para tras nao precisa terminar; a traducao do
+    // capitulo continua em fundo e pinta a pagina nova quando chegar nela
+    if (this.runScope === 'page') this.ocrAbort?.abort();
     this.pageLabel.textContent = `${page + 1} / ${this.pages.length}`;
     for (const t of this.film.children) t.classList.toggle('is-current', t.getAttribute('data-page') === String(page));
     this.film.querySelector('.is-current')?.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+    this.refreshBookmark();
     if (this.detail && this.chapter) {
       saveProgress({
         provider: this.detail.provider,
@@ -826,7 +1337,14 @@ export class Reader {
       // e' a primeira da folha; a ultima folha [8,9] de 10 paginas nunca marcava.
       const lastShown = Math.max(page, ...this.viewer.visibleSheets().map((s) => s.page));
       if (lastShown >= this.pages.length - 1) {
-        markChapterRead(this.detail.provider, this.detail.id, this.chapter.id);
+        const { provider, id } = this.detail;
+        const chapterId = this.chapter.id;
+        if (this.pages.length > 1) markChapterRead(provider, id, chapterId);
+        else {
+          // capitulo de uma pagina era marcado lido so' de abrir, antes da imagem existir
+          const img = this.viewer.visibleSheets()[0]?.img;
+          if (img) void imageReady(img).then((ok) => ok && this.chapter?.id === chapterId && markChapterRead(provider, id, chapterId));
+        }
       }
     }
     this.paintOverlays();
@@ -846,8 +1364,16 @@ export class Reader {
   }
 
   private repaintNow(): void {
+    // os dois carimbos valem: o fallback web num capitulo nao pode esconder a
+    // traducao por IA ja' feita em outro capitulo da mesma obra
+    const stamps = new Set([this.stamp(), this.activeStamp ?? this.stamp()]);
     for (const sheet of this.viewer.visibleSheets()) {
-      const blocks = this.ocrCache.get(this.pageKey(sheet.page));
+      const key = this.pageKey(sheet.page);
+      let blocks = this.ocrCache.get(key);
+      // traducao feita com outro motor/idioma nao e' repintada: melhor o balao
+      // original que um texto no idioma errado passando por atual
+      const made = this.translatedAs.get(key);
+      if (blocks?.length && (made === undefined || !stamps.has(made))) blocks = blocks.map((b) => ({ ...b, pt: undefined }));
       const width = sheet.img.naturalWidth || 1;
       const height = sheet.img.naturalHeight || 1;
       paintPage(sheet.ocr, blocks ?? [], {
@@ -878,114 +1404,295 @@ export class Reader {
    * o cache continua servindo de entrada e so' a chamada ao tradutor se repete.
    */
   private invalidateTranslations(): void {
-    this.translatedAs.clear();
+    // o carimbo fica: `repaintNow` compara com o atual e esconde a traducao velha
+    this.activeStamp = undefined;
     this.paintOverlays();
+    this.syncStatus();
+    if (this.translatedAs.size) this.ocrStatus.textContent = 'traducao desatualizada — pressione R';
   }
 
-  /** Executa OCR apenas na página atual, sem traduzir. */
+  /** Controlador novo por execucao; o anterior (se houver) e' abortado. */
+  private startRun(scope: 'page' | 'chapter' = 'page'): AbortSignal {
+    this.ocrAbort?.abort();
+    this.ocrAbort = new AbortController();
+    this.runScope = scope;
+    this.runChapters = [];
+    this.runPending = 0;
+    this.busy = true;
+    this.refreshBars();
+    return this.ocrAbort.signal;
+  }
+
+  private endRun(): void {
+    this.busy = false;
+    // lista stale fazia `open()` achar que o proximo capitulo ainda estava coberto
+    this.runChapters = [];
+    this.runPending = 0;
+    this.refreshBars();
+  }
+
+  private throwIfAborted(signal: AbortSignal): void {
+    if (signal.aborted) throw new DOMException('OCR cancelado', 'AbortError');
+  }
+
+  /** Reconhece uma folha (ou reaproveita o cache) e devolve os blocos. */
+  private async recognizeSheet(
+    sheet: { page: number; img: HTMLImageElement },
+    signal: AbortSignal,
+    chapter: ChapterRef | undefined = this.chapter,
+    tag = '',
+  ): Promise<OcrBlock[]> {
+    const key = this.pageKey(sheet.page, chapter?.id);
+    const cached = this.ocrCache.get(key);
+    if (cached) return cached;
+    const lang = langFor(chapter?.lang, this.detail?.origin, store.settings.ocrLang);
+    // mostra o modelo que vai rodar, nao o rotulo que a fonte declarou
+    const langDisplay = effectiveOcrLang(lang);
+    const prefix = tag ? `${tag} ` : '';
+    this.ocrStatus.textContent = `${prefix}OCR pag. ${sheet.page + 1} (${langDisplay})...`;
+    const blocks = await recognizePage(
+      sheet.img,
+      lang,
+      (p) => {
+        this.ocrStatus.textContent = `${prefix}pag. ${sheet.page + 1}: ${p.stage} ${Math.round(p.ratio * 100)}%`;
+      },
+      signal,
+    );
+    this.throwIfAborted(signal);
+    this.ocrCache.set(key, blocks);
+    this.trimCache();
+    return blocks;
+  }
+
+  private setStatus(text: string, error = false): void {
+    this.ocrStatus.textContent = text;
+    this.ocrStatus.classList.toggle('ml-status-error', error);
+  }
+
+  /** Executa OCR apenas nas paginas visiveis, sem traduzir. */
   private async runOcrOnly(): Promise<void> {
     if (this.busy) return;
     const targets = this.viewer.visibleSheets();
     if (!targets.length) return;
-    this.busy = true;
+    const signal = this.startRun();
 
     try {
       let totalBalloons = 0;
+      const failed: string[] = [];
       for (const sheet of targets) {
         try {
           if (!(await imageReady(sheet.img))) {
-            this.ocrStatus.textContent = `pag. ${sheet.page + 1} nao carregou`;
+            failed.push(`pag. ${sheet.page + 1} nao carregou`);
             continue;
           }
-          const key = this.pageKey(sheet.page);
-          const detectedLang = this.chapter?.lang ?? this.detail?.origin;
-          const langDisplay = detectedLang ? langLabel(detectedLang) : 'auto';
-          const lang = langFor(this.chapter?.lang, this.detail?.origin, store.settings.ocrLang);
-          this.ocrStatus.textContent = `OCR pag. ${sheet.page + 1} (${langDisplay})...`;
-          const blocks = await recognizePage(sheet.img, lang, (p) => {
-            this.ocrStatus.textContent = `pag. ${sheet.page + 1}: ${p.stage} ${Math.round(p.ratio * 100)}%`;
-          });
-          this.ocrCache.set(key, blocks);
-          this.trimCache();
+          const blocks = await this.recognizeSheet(sheet, signal);
           totalBalloons += blocks.length;
           this.paintOverlays();
         } catch (err) {
-          toast(`OCR falhou: ${(err as Error).message}`, 'error');
+          if (isAbortError(err)) return this.setStatus('OCR cancelado');
+          const msg = humanizeError(err);
+          failed.push(`OCR falhou na pag. ${sheet.page + 1}: ${msg}`);
+          toast(`OCR falhou: ${msg}`, 'error');
         }
       }
-      this.ocrStatus.textContent = totalBalloons
-        ? `OCR: ${totalBalloons} balão(ões) detectado(s)`
-        : 'sem texto detectado nesta página';
+      // o toast some em segundos; o que fica na barra nao pode dizer "sem texto" quando na verdade falhou
+      if (failed.length) this.setStatus(failed.join(' · '), true);
+      else this.setStatus(totalBalloons ? `OCR: ${plural(totalBalloons, 'balao detectado', 'baloes detectados')}` : 'sem texto nesta pagina');
     } finally {
-      this.busy = false;
+      this.endRun();
     }
   }
 
-  /** Traduz os balões da página atual (executa OCR antes se ainda não tiver sido feito). */
+  /**
+   * Traduz o capitulo inteiro: primeiro as folhas visiveis (o usuario ve o
+   * resultado logo), depois as paginas seguintes ate' o fim e por ultimo as
+   * anteriores. Virar a pagina nao interrompe; trocar de capitulo ou fechar sim.
+   */
   private async runTranslate(): Promise<void> {
     if (this.busy) return;
-    const targets = this.viewer.visibleSheets();
-    if (!targets.length) return;
-    this.busy = true;
-    if (store.settings.translateMode === 'ai') void this.checkAi();
+    const visible = this.viewer.visibleSheets();
+    const chapter = this.chapter;
+    if (!visible.length || !this.pages.length || !chapter) return;
+    const signal = this.startRun('chapter');
+    this.runChapters = [chapter.id];
+    this.runPending = this.pages.length;
+    const total = this.pages.length;
 
     try {
-      let translatedBalloons = 0;
-      for (const sheet of targets) {
-        try {
-          if (!(await imageReady(sheet.img))) {
-            this.ocrStatus.textContent = `pag. ${sheet.page + 1} nao carregou`;
-            continue;
+      // IA fora do ar: descobrir isso so' depois do OCR (a parte cara) era o pior momento
+      let mode = store.settings.translateMode;
+      let engine = store.settings.engine;
+      if (mode === 'ai') {
+        const h = await this.checkAi();
+        if (signal.aborted) return this.setStatus('OCR cancelado');
+        if (!h.ok) {
+          if (!confirm(`IA offline (${h.error}). Usar o Tradutor Web (Google/MyMemory) so desta vez?`)) {
+            return this.setStatus('IA offline — traducao cancelada', true);
           }
-          const key = this.pageKey(sheet.page);
-          let blocks = this.ocrCache.get(key);
-          if (!blocks) {
-            const detectedLang = this.chapter?.lang ?? this.detail?.origin;
-            const langDisplay = detectedLang ? langLabel(detectedLang) : 'auto';
-            const lang = langFor(this.chapter?.lang, this.detail?.origin, store.settings.ocrLang);
-            this.ocrStatus.textContent = `OCR pag. ${sheet.page + 1} (${langDisplay})...`;
-            blocks = await recognizePage(sheet.img, lang, (p) => {
-              this.ocrStatus.textContent = `pag. ${sheet.page + 1}: ${p.stage} ${Math.round(p.ratio * 100)}%`;
-            });
-            this.ocrCache.set(key, blocks);
-            this.trimCache();
-          }
-          if (!blocks.length) {
-            this.translatedAs.set(key, this.stamp());
-            continue;
-          }
-
-          const mode = store.settings.translateMode;
-          const modeLabel = mode === 'ai' ? `IA (${store.settings.aiProvider})` : `motor (${store.settings.engine})`;
-          this.ocrStatus.textContent = `pag. ${sheet.page + 1}: traduzindo ${blocks.length} balões via ${modeLabel}...`;
-          const stamp = this.stamp();
-          const activeEngine = mode === 'ai' ? 'llm' : store.settings.engine;
-          const translated = await translateBlocks(blocks, {
-            sourceLang: this.chapter?.lang ?? this.detail?.origin,
-            series: this.detail?.title,
-            chapter: this.chapter?.number,
-            engine: activeEngine,
-            target: store.settings.targetLang,
-            provider: mode === 'ai' ? store.settings.aiProvider : undefined,
-          });
-          this.ocrCache.set(key, translated);
-          this.trimCache();
-          this.translatedAs.set(key, stamp);
-          translatedBalloons += translated.length;
-          this.paintOverlays();
-        } catch (err) {
-          toast(`Tradução falhou: ${(err as Error).message}`, 'error');
+          // so' nesta execucao; a preferencia do usuario continua sendo IA
+          mode = 'ocr';
+          engine = 'auto';
         }
       }
-      this.ocrStatus.textContent = translatedBalloons
-        ? `Traduzido: ${translatedBalloons} balão(ões)`
-        : 'sem balões para traduzir';
+      const provider = mode === 'ai' ? store.settings.aiProvider : engine;
+      const target = store.settings.targetLang;
+      const ctx: RunCtx = {
+        mode,
+        engine,
+        provider,
+        target,
+        stamp: `${mode}|${provider}|${target}`,
+        modeLabel: mode === 'ai' ? `IA (${provider})` : `motor (${provider})`,
+        signal,
+      };
+      this.activeStamp = ctx.stamp;
+      const stats: RunStats = { translated: 0, failedBalloons: 0, failed: [] };
+
+      // ordem: visiveis, depois da atual ate' o fim, depois do inicio ate' a atual
+      const first = Math.min(...visible.map((s) => s.page));
+      const order: number[] = visible.map((s) => s.page);
+      for (let p = first + 1; p < total; p++) if (!order.includes(p)) order.push(p);
+      for (let p = 0; p < first; p++) if (!order.includes(p)) order.push(p);
+      const visibleImg = new Map(visible.map((s) => [s.page, s.img]));
+
+      const completed = await this.translatePages(chapter, this.pages, order, visibleImg, ctx, stats, (n) => `[${n}/${total}]`);
+      if (!completed) return;
+
+      // adianta UM capitulo: quando o leitor passar para ele, os baloes ja' saem do cache
+      const list = this.siblingChapters();
+      const next = list[list.findIndex((c) => c.id === chapter.id) + 1];
+      let ahead = 0;
+      if (next) {
+        try {
+          const { pages } = await getPages(next.provider, next.id);
+          this.throwIfAborted(signal);
+          this.runChapters = [chapter.id, next.id];
+          this.runPending = pages.length;
+          const label = next.number ? `cap. ${next.number}` : 'proximo capitulo';
+          const order2 = pages.map((_, i) => i);
+          const ok = await this.translatePages(next, pages, order2, new Map(), ctx, stats, (n) => `adiantando ${label}: [${n}/${pages.length}]`, true);
+          // cancelar aqui nao desfaz o capitulo atual, que ja' esta' pronto
+          if (!ok) return this.setStatus('capitulo traduzido; adiantamento do proximo cancelado');
+          ahead = pages.length;
+        } catch (err) {
+          if (isAbortError(err)) return this.setStatus('capitulo traduzido; adiantamento do proximo cancelado');
+          // adiantar e' bonus: falha aqui nao suja o resultado do capitulo atual
+        }
+      }
+
+      const aheadNote = ahead ? ` · proximo capitulo adiantado (${plural(ahead, 'pagina')})` : '';
+      if (stats.failed.length) {
+        const shown = stats.failed.slice(0, 3).join(' · ');
+        this.setStatus(`traducao falhou em ${plural(stats.failed.length, 'pagina')}: ${shown}${stats.failed.length > 3 ? ' ...' : ''}`, true);
+      } else if (stats.failedBalloons) {
+        this.setStatus(
+          `capitulo: ${stats.translated} de ${plural(stats.translated + stats.failedBalloons, 'balao', 'baloes')} traduzidos; ${plural(stats.failedBalloons, 'falhou', 'falharam')} — pressione R para tentar de novo`,
+          true,
+        );
+      } else {
+        this.setStatus(
+          (stats.translated ? `capitulo traduzido: ${plural(stats.translated, 'balao', 'baloes')} em ${plural(total, 'pagina')}` : 'sem baloes para traduzir') + aheadNote,
+        );
+      }
     } finally {
-      this.busy = false;
+      this.endRun();
     }
   }
 
-  private static readonly CACHE_LIMIT = 3000;
+  /**
+   * OCR + traducao de uma lista de paginas de um capitulo (aberto ou nao).
+   * Devolve false quando cancelado — o status ja' foi escrito.
+   */
+  private async translatePages(
+    chapter: ChapterRef,
+    pages: PageRef[],
+    order: number[],
+    visibleImg: Map<number, HTMLImageElement>,
+    ctx: RunCtx,
+    stats: RunStats,
+    progress: (n: number) => string,
+    ahead = false,
+  ): Promise<boolean> {
+    let done = 0;
+    const pageTag = (page: number): string => (chapter.id === this.chapter?.id ? `pag. ${page + 1}` : `cap. ${chapter.number ?? '?'} pag. ${page + 1}`);
+    for (const page of order) {
+      const key = this.pageKey(page, chapter.id);
+      const tag = progress(done + 1);
+      try {
+        // ja' traduzida com este motor/idioma e sem lote vazio: nem carrega a imagem
+        const cached = this.ocrCache.get(key);
+        if (cached && this.translatedAs.get(key) === ctx.stamp && cached.every((b) => b.pt?.trim())) {
+          stats.translated += cached.length;
+          continue;
+        }
+        let img = visibleImg.get(page);
+        if (img) {
+          if (!(await imageReady(img))) {
+            stats.failed.push(`${pageTag(page)} nao carregou`);
+            continue;
+          }
+        } else if (!cached) {
+          this.setStatus(`${tag} carregando pag. ${page + 1}...`);
+          img = await loadPageImage(pages[page]!.url, ctx.signal);
+        }
+        this.throwIfAborted(ctx.signal);
+        const blocks = cached ?? (await this.recognizeSheet({ page, img: img! }, ctx.signal, chapter, tag));
+        if (!blocks.length) {
+          this.translatedAs.set(key, ctx.stamp);
+          continue;
+        }
+        // ja' traduzida com este motor/idioma: so' refaz o que voltou vazio
+        const pending = this.translatedAs.get(key) === ctx.stamp ? blocks.filter((b) => !b.pt?.trim()) : blocks;
+        if (!pending.length) {
+          stats.translated += blocks.length;
+          continue;
+        }
+
+        this.setStatus(`${tag} pag. ${page + 1}: traduzindo ${plural(pending.length, 'balao', 'baloes')} via ${ctx.modeLabel}...`);
+        const translated = await translateBlocks(pending, {
+          sourceLang: chapter.lang ?? this.detail?.origin,
+          series: this.detail?.title,
+          chapter: chapter.number,
+          engine: ctx.mode === 'ai' ? 'llm' : ctx.engine,
+          target: ctx.target,
+          provider: ctx.mode === 'ai' ? ctx.provider : undefined,
+        });
+        // a chamada nao e' abortavel; o resultado de um capitulo que ja' ficou para tras e' descartado
+        this.throwIfAborted(ctx.signal);
+        const byId = new Map(translated.map((b) => [b.id, b.pt]));
+        const merged = blocks.map((b) => (byId.has(b.id) ? { ...b, pt: byId.get(b.id) } : b));
+        this.ocrCache.set(key, merged);
+        this.trimCache();
+        this.translatedAs.set(key, ctx.stamp);
+        // lote que o servidor nao conseguiu traduzir volta com `pt` vazio: nao e' sucesso
+        const ok = merged.filter((b) => b.pt?.trim()).length;
+        stats.translated += ok;
+        stats.failedBalloons += merged.length - ok;
+        this.paintOverlays();
+      } catch (err) {
+        if (isAbortError(err)) {
+          if (!ahead) this.setStatus(`traducao cancelada (${done} de ${plural(pages.length, 'pagina')})`);
+          return false;
+        }
+        const msg = humanizeError(err);
+        stats.failed.push(`${pageTag(page)}: ${msg}`);
+        // um erro por pagina inundaria a tela em capitulo longo: toast so' no primeiro
+        if (stats.failed.length === 1) toast(`Traducao falhou: ${msg}`, 'error');
+      } finally {
+        done++;
+        this.runPending = pages.length - done;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Cada pagina guarda mascaras e, para texto solto, um canvas de fundo
+   * reconstruido (`bgCanvas`) — que e' relido a cada repintura, entao nao da'
+   * para descartar depois de pintar. Em 3000 paginas isso passava de centenas
+   * de MB numa sessao longa; 200 cobre varios capitulos de ida e volta.
+   */
+  private static readonly CACHE_LIMIT = 200;
 
   private trimCache(): void {
     while (this.ocrCache.size > Reader.CACHE_LIMIT) {
@@ -1000,7 +1707,7 @@ export class Reader {
   private async visionRead(): Promise<void> {
     const sheet = this.viewer.visibleSheets()[0];
     if (!sheet) return;
-    this.chat.classList.add('is-open');
+    this.openChat();
     const bubble = this.pushMessage('assistant', 'lendo a pagina com o modelo de visao...');
     try {
       // sem a imagem decodificada o canvas sai 0x0 e o modelo recebe "data:," vazio
@@ -1023,7 +1730,7 @@ export class Reader {
         ? balloons.map((b, i) => `${i + 1}. ${b.pt}\n   (${b.original})`).join('\n')
         : 'o modelo nao encontrou texto na pagina';
     } catch (err) {
-      bubble.textContent = `falhou: ${(err as Error).message}`;
+      bubble.textContent = `falhou: ${humanizeError(err)}`;
     }
   }
 
@@ -1037,7 +1744,7 @@ export class Reader {
   }
 
   private async ask(question: string): Promise<void> {
-    this.chat.classList.add('is-open');
+    this.openChat();
     this.pushMessage('user', question);
     const bubble = this.pushMessage('assistant', '');
     const pageText = this.viewer
@@ -1046,25 +1753,40 @@ export class Reader {
       .map((b) => b.pt || b.text)
       .filter(Boolean);
 
+    // resposta longa sem como parar (ate' 120s de servidor): botao de parar por pergunta
+    this.chatAbort?.abort();
+    const abort = new AbortController();
+    this.chatAbort = abort;
+    const stop = el('button', { class: 'ml-btn ml-btn-ghost ml-btn-sm ml-chat-stop', 'aria-label': 'parar resposta', onclick: () => abort.abort() }, '■ parar');
+    bubble.parentElement?.append(stop);
+
+    let full = '';
     try {
-      let full = '';
-      for await (const chunk of explain({
-        series: this.detail?.title,
-        description: this.detail?.description,
-        chapter: this.chapter?.number,
-        pageText,
-        question,
-        history: this.history.slice(-6),
-        provider: store.settings.aiProvider,
-      })) {
+      for await (const chunk of explain(
+        {
+          series: this.detail?.title,
+          description: this.detail?.description,
+          chapter: this.chapter?.number,
+          pageText,
+          question,
+          history: this.history.slice(-6),
+          provider: store.settings.aiProvider,
+        },
+        abort.signal,
+      )) {
         full += chunk;
         bubble.textContent = full;
         this.chatLog.scrollTop = this.chatLog.scrollHeight;
       }
       this.history.push({ role: 'user', content: question }, { role: 'assistant', content: full });
-      if (!full.trim()) bubble.textContent = '(o modelo devolveu vazio — confira AI_MODEL e AI_MAX_TOKENS)';
+      if (!full.trim()) bubble.textContent = '(o modelo devolveu vazio — confira o modelo e o limite de tokens no painel de IA)';
     } catch (err) {
-      bubble.textContent = `falhou: ${(err as Error).message}`;
+      // o que ja' chegou vale: apagar a resposta parcial era pior que o erro
+      const why = isAbortError(err) ? '' : `: ${humanizeError(err)}`;
+      bubble.textContent = full ? `${full}\n\n(interrompido${why})` : `falhou${why || ': interrompido'}`;
+    } finally {
+      stop.remove();
+      if (this.chatAbort === abort) this.chatAbort = undefined;
     }
   }
 
@@ -1076,11 +1798,79 @@ export class Reader {
   }
 
   private stepChapter(delta: number): void {
+    if (this.loadingChapter) return;
     const list = this.siblingChapters();
     const i = list.findIndex((c) => c.id === this.chapter?.id);
     const next = list[i + delta];
-    if (!next || !this.detail) return toast('nao ha capitulo nessa direcao');
-    void this.open(this.detail, next, 0);
+    if (!next || !this.detail) {
+      if (delta > 0) this.showEndCard();
+      else toast('inicio da obra');
+      return;
+    }
+    // trocar pelo popover (mobile) deixava o painel cobrindo a pagina nova
+    this.togglePopover(false);
+    // voltar um capitulo quer a ultima pagina dele, nao a primeira
+    this.onChapterChange?.(this.detail, next);
+    void this.open(this.detail, next, delta < 0 ? -1 : 0);
+  }
+
+  /**
+   * Fim da obra: um toast por tecla ("nao ha proximo") nao dizia o que fazer.
+   * O cartao aparece uma vez por pagina e oferece voltar/favoritar.
+   */
+  private showEndCard(): void {
+    if (this.endCard || !this.detail) return;
+    const d = this.detail;
+    const lang = this.chapter?.lang;
+    const mine = this.siblingChapters().length;
+    const others = new Map<string, number>();
+    for (const c of d.chapters) {
+      if (c.lang === lang) continue;
+      const k = c.lang ?? '';
+      others.set(k, (others.get(k) ?? 0) + 1);
+    }
+    const more = [...others].filter(([, n]) => n > mine).map(([l, n]) => `${plural(n - mine, 'capitulo')} a mais em ${langLabel(l || 'unknown')}`);
+    const favBtn = (): HTMLElement => {
+      const on = isFavorite(d.provider, d.id);
+      return el(
+        'button',
+        {
+          class: `ml-btn ml-btn-sm ${on ? 'is-on' : ''}`,
+          'aria-pressed': String(on),
+          onclick: (e: Event) => {
+            toggleFavorite({ provider: d.provider, id: d.id, title: d.title, cover: d.cover });
+            (e.currentTarget as HTMLElement).replaceWith(favBtn());
+          },
+        },
+        on ? '★ favoritado' : '☆ favoritar para acompanhar',
+      );
+    };
+    this.endCard = el(
+      'div',
+      { class: 'ml-end-card', role: 'status' },
+      el('button', { class: 'ml-btn ml-btn-ghost ml-btn-sm ml-end-close', 'aria-label': 'fechar', onclick: () => this.hideEndCard() }, '✕'),
+      el('strong', {}, `Voce chegou ao ultimo capitulo disponivel${lang ? ` (${langLabel(lang)})` : ''}`),
+      more.length ? el('p', {}, more.join(' · ')) : null,
+      el(
+        'div',
+        { class: 'ml-end-actions' },
+        el('button', { class: 'ml-btn ml-btn-sm ml-btn-primary', onclick: () => this.close() }, 'voltar a obra'),
+        favBtn(),
+      ),
+    );
+    this.stage.append(this.endCard);
+  }
+
+  private hideEndCard(): void {
+    this.endCard?.remove();
+    this.endCard = undefined;
+  }
+
+  /** vira a pagina; no fim/inicio do capitulo passa para o vizinho em vez de nao fazer nada */
+  private turn(dir: 1 | -1): void {
+    if (!this.pages.length) return;
+    const moved = dir > 0 ? this.viewer.next() : this.viewer.prev();
+    if (!moved) this.stepChapter(dir);
   }
 
   private nextChapter(): void {
@@ -1090,33 +1880,54 @@ export class Reader {
     this.stepChapter(-1);
   }
 
+  /** capa sozinha na primeira folha da dupla; vale so' nesta sessao */
+  private toggleCoverOffset(): void {
+    this.viewer.setCoverOffset(this.viewer.coverOffset === 1 ? 0 : 1);
+    this.refreshBars();
+  }
+
   private async toggleFullscreen(): Promise<void> {
+    // iPhone: `requestFullscreen` e' undefined e chamar lancaria antes do .catch
+    if (!document.fullscreenEnabled) return;
     if (document.fullscreenElement) await document.exitFullscreen();
     else await this.host.requestFullscreen().catch(() => undefined);
   }
 
   private onKey = (e: KeyboardEvent): void => {
     if (!this.host.classList.contains('is-open')) return;
+    // Esc vale ate' com o foco num select/textarea (fechar o popover ou o chat de dentro deles)
+    if (e.key === 'Escape') {
+      if (this.popoverOpen) this.togglePopover(false);
+      else if (this.helpEl) this.toggleHelp(false);
+      else if (this.chat.classList.contains('is-open')) this.closeChat();
+      else if (this.endCard) this.hideEndCard();
+      else if (document.fullscreenElement) void document.exitFullscreen();
+      else this.close();
+      return;
+    }
     // <select> das opcoes: seta troca a opcao E virava a pagina, letras disparavam OCR
     const target = e.target as HTMLElement | null;
     if (/^(TEXTAREA|INPUT|SELECT)$/.test(target?.tagName ?? '') || target?.isContentEditable) return;
+    // Ctrl+R recarregava E traduzia, Ctrl+T abria aba E alternava o original
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
     const rtl = this.rtl;
     switch (e.key) {
+      case '?':
+        this.toggleHelp();
+        break;
       case 'ArrowRight':
-        if (rtl) this.viewer.prev();
-        else this.viewer.next();
+        this.turn(rtl ? -1 : 1);
         break;
       case 'ArrowLeft':
-        if (rtl) this.viewer.next();
-        else this.viewer.prev();
+        this.turn(rtl ? 1 : -1);
         break;
       case 'ArrowDown':
       case ' ':
         e.preventDefault();
-        this.viewer.next();
+        this.turn(1);
         break;
       case 'ArrowUp':
-        this.viewer.prev();
+        this.turn(-1);
         break;
       case '+':
       case '=':
@@ -1133,11 +1944,13 @@ export class Reader {
         break;
       case 'o':
       case 'O':
-        void this.runOcrOnly();
+        if (this.busy) toast('aguarde, traducao em andamento (botao cancelar para abortar)');
+        else void this.runOcrOnly();
         break;
       case 'r':
       case 'R':
-        void this.runTranslate();
+        if (this.busy) toast('aguarde, traducao em andamento (botao cancelar para abortar)');
+        else void this.runTranslate();
         break;
       case 't':
       case 'T':
@@ -1146,12 +1959,13 @@ export class Reader {
         this.refreshBars();
         this.paintOverlays();
         break;
-      case 'f':
-        void this.toggleFullscreen();
+      case 'D':
+        if (!e.shiftKey || store.settings.mode !== 'double') return;
+        this.toggleCoverOffset();
         break;
-      case 'Escape':
-        if (document.fullscreenElement) void document.exitFullscreen();
-        else this.close();
+      case 'f':
+      case 'F':
+        void this.toggleFullscreen();
         break;
       default:
         return;
