@@ -10,12 +10,111 @@
   --ok: #3ddc97;
   --bad: #ff5c5c;
   --stage: #101216;
+  --stage-2: #0c0e11;
+  /* barras do leitor: sempre escuras, como o palco */
+  --bar: #14171d;
+  --bar-glass: rgb(20 23 29 / 98%);
+  --bg-hover: #232a33;
+  --line-strong: #37404c;
+  --hover-veil: rgb(255 255 255 / 4%);
+  /* texto sobre fundo laranja (botao primario) — igual nos dois temas */
+  --on-accent: #16130f;
+  --accent-soft: #ffd9c7;
+  --accent-2-soft: #d6ecff;
+  --fg-strong: #fff;
+  --fg-desc: #c3ccd8;
+  --fg-read: #8b95a3;
+  --ok-text: #6ee7b7;
+  --bad-text: #fca5a5;
   --radius: 10px;
+  --z-drawer: 40;
+  --z-reader: 60;
+  --z-chat: 70;
+  --z-popover: 80;
+  --z-badge: 85;
+  --z-toast: 90;
+  color-scheme: dark light;
+}
+
+/*
+ * Tema claro segue o sistema. O leitor (palco, barras, popover, tooltip) fica
+ * escuro nos dois temas: pagina de manga le melhor sobre fundo escuro e o canvas
+ * do OCR assume isso — por isso `.ml-reader` re-declara a paleta escura abaixo.
+ */
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f5f6f8;
+    --bg-2: #ffffff;
+    --bg-3: #eceff3;
+    --line: #d5dae2;
+    --fg: #16191f;
+    --fg-dim: #5b6673;
+    --accent-2: #1a73c8;
+    --ok: #157a4f;
+    --bad: #c62828;
+    --bg-hover: #e2e6ec;
+    --line-strong: #b9c1cc;
+    --hover-veil: rgb(0 0 0 / 5%);
+    --accent-soft: #9a3412;
+    --accent-2-soft: #0b4a8a;
+    /* laranja escuro para texto sobre fundo claro (#ff7a45 da so 2,4:1) */
+    --accent-text: #b3400f;
+    --accent-2-on-bg: color-mix(in srgb, var(--accent-2) 12%, var(--bg-2));
+    --fg-strong: #0d0f13;
+    --fg-desc: #3b4654;
+    --fg-read: #6b7684;
+    --ok-text: #046c4e;
+    --bad-text: #b91c1c;
+  }
+}
+
+.ml-reader {
+  --bg: #0d0f13;
+  --bg-2: #14171d;
+  --bg-3: #1c2128;
+  --line: #262c35;
+  --fg: #e8ecf2;
+  --fg-dim: #9aa5b4;
+  --accent-2: #4aa8ff;
+  --ok: #3ddc97;
+  --bad: #ff5c5c;
+  --bg-hover: #232a33;
+  --line-strong: #37404c;
+  --hover-veil: rgb(255 255 255 / 4%);
+  --accent-soft: #ffd9c7;
+  --accent-2-soft: #d6ecff;
+  --fg-strong: #fff;
+  --fg-desc: #c3ccd8;
+  --fg-read: #8b95a3;
+  --ok-text: #6ee7b7;
+  --bad-text: #fca5a5;
   color-scheme: dark;
+}
+
+[inert] {
+  pointer-events: none;
+}
+
+/* desktop: tela de espera enquanto o sidecar sobe */
+.ml-splash {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-toast);
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 14px;
+  background: var(--bg);
+  color: var(--fg-dim);
 }
 
 * {
   box-sizing: border-box;
+}
+
+/* puxar para baixo no meio da leitura recarregava a pagina (Chrome Android) */
+html {
+  overscroll-behavior-y: none;
 }
 
 html,
@@ -58,6 +157,7 @@ textarea:focus-visible {
 
 .ml-btn {
   background: var(--bg-3);
+  color: inherit;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 7px 12px;
@@ -66,15 +166,15 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 .ml-btn:hover:not(:disabled) {
-  background: #232a33;
-  border-color: #37404c;
+  background: var(--bg-hover);
+  border-color: var(--line-strong);
 }
 .ml-btn:active:not(:disabled) {
   transform: translateY(1px);
 }
 .ml-btn:disabled {
   opacity: 0.4;
-  cursor: default;
+  cursor: not-allowed;
 }
 .ml-btn-sm {
   padding: 5px 9px;
@@ -86,28 +186,42 @@ textarea:focus-visible {
 .ml-btn-primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #16130f;
+  color: var(--on-accent);
   font-weight: 600;
 }
 .ml-btn.is-on {
   background: color-mix(in srgb, var(--accent) 22%, var(--bg-3));
   border-color: var(--accent);
-  color: #ffd9c7;
+  color: var(--accent-soft);
 }
 
 .ml-input,
 .ml-select,
 .ml-search {
   background: var(--bg-2);
+  color: inherit;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 8px 11px;
-  outline: none;
 }
 .ml-input:focus,
 .ml-select:focus,
 .ml-search:focus {
   border-color: var(--accent-2);
+}
+
+/* metade dos controles "botao" so' reagia ao clique: no desktop parecia inerte */
+.ml-chip:hover,
+.ml-tab:hover,
+.ml-fav:hover,
+.ml-thumb:hover,
+.ml-resume:hover,
+.ml-chapter-check:hover,
+.ml-chapter-upto:hover,
+.ml-typetab:hover,
+.ml-ai-tab:hover,
+.ml-segmented-btn:hover {
+  filter: brightness(1.18);
 }
 
 .ml-chips {
@@ -135,7 +249,7 @@ textarea:focus-visible {
 .ml-chip.is-on {
   background: color-mix(in srgb, var(--accent-2) 20%, var(--bg-3));
   border-color: var(--accent-2);
-  color: #d6ecff;
+  color: var(--accent-2-soft);
 }
 
 /* ---------- catalogo ---------- */
@@ -197,7 +311,7 @@ textarea:focus-visible {
   color: var(--fg);
 }
 .ml-typetab-manga.is-on {
-  color: var(--accent);
+  color: var(--accent-text, var(--accent));
   border-color: var(--accent);
 }
 .ml-typetab-hq.is-on {
@@ -291,7 +405,7 @@ textarea:focus-visible {
   color: #06231a;
   border-radius: 6px;
   padding: 2px 6px;
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 700;
 }
 .ml-cover {
@@ -335,7 +449,7 @@ textarea:focus-visible {
   background: rgb(0 0 0 / 65%);
   border-radius: 6px;
   padding: 2px 6px;
-  font-size: 10.5px;
+  font-size: 11px;
   color: #cfd8e3;
 }
 .ml-rating {
@@ -345,7 +459,7 @@ textarea:focus-visible {
   background: rgb(0 0 0 / 65%);
   border-radius: 6px;
   padding: 2px 6px;
-  font-size: 10.5px;
+  font-size: 11px;
   color: #ffd88a;
 }
 .ml-fav {
@@ -377,7 +491,7 @@ textarea:focus-visible {
   margin-top: 6px;
 }
 .ml-tags span {
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--fg-dim);
   background: var(--bg-2);
   border: 1px solid var(--line);
@@ -390,6 +504,46 @@ textarea:focus-visible {
   gap: 12px;
   overflow-x: auto;
   padding-bottom: 6px;
+}
+
+/* scrollbar classica do Windows (17px) comia um quarto do filme de miniaturas */
+.ml-film,
+.ml-row,
+.ml-chapters,
+.ml-desc,
+.ml-drawer-body,
+.ml-chat-log,
+.ml-chips-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+.ml-film::-webkit-scrollbar,
+.ml-row::-webkit-scrollbar,
+.ml-chapters::-webkit-scrollbar,
+.ml-desc::-webkit-scrollbar,
+.ml-drawer-body::-webkit-scrollbar,
+.ml-chat-log::-webkit-scrollbar,
+.ml-chips-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.ml-film::-webkit-scrollbar-thumb,
+.ml-row::-webkit-scrollbar-thumb,
+.ml-chapters::-webkit-scrollbar-thumb,
+.ml-desc::-webkit-scrollbar-thumb,
+.ml-drawer-body::-webkit-scrollbar-thumb,
+.ml-chat-log::-webkit-scrollbar-thumb,
+.ml-chips-scroll::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 3px;
+}
+/* fim da lista nao pode rolar o catalogo por baixo nem puxar o pull-to-refresh */
+.ml-drawer-body,
+.ml-series,
+.ml-chat-log,
+.ml-chapters,
+.ml-ai-drawer-body {
+  overscroll-behavior: contain;
 }
 .ml-resume {
   flex: 0 0 132px;
@@ -437,9 +591,10 @@ textarea:focus-visible {
   border-right: 1px solid var(--line);
   transform: translateX(-102%);
   transition: transform 0.22s ease;
-  z-index: 40;
+  z-index: var(--z-drawer);
   display: flex;
   flex-direction: column;
+  padding-bottom: env(safe-area-inset-bottom);
 }
 .ml-drawer.is-open {
   transform: none;
@@ -463,9 +618,16 @@ textarea:focus-visible {
 }
 
 .ml-empty {
+  grid-column: 1 / -1;
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  max-width: 420px;
+  margin: 0 auto;
   padding: 28px 4px;
   color: var(--fg-dim);
   font-size: 13.5px;
+  text-align: center;
 }
 
 /* ---------- Drawer e Backdrop de Configuração de IA ---------- */
@@ -474,7 +636,7 @@ textarea:focus-visible {
   border-right: none;
   border-left: 1px solid var(--line);
   transform: translateX(102%);
-  z-index: 60;
+  z-index: var(--z-drawer);
   width: min(460px, 94vw);
 }
 .ml-ai-drawer.is-open {
@@ -482,14 +644,16 @@ textarea:focus-visible {
   box-shadow: -24px 0 60px rgb(0 0 0 / 60%);
 }
 
-.ml-ai-backdrop {
+.ml-ai-backdrop,
+.ml-drawer-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 55;
+  z-index: calc(var(--z-drawer) - 1);
   background: rgba(0, 0, 0, 0.45);
   display: none;
 }
-.ml-ai-backdrop.is-open {
+.ml-ai-backdrop.is-open,
+.ml-drawer-backdrop.is-open {
   display: block;
 }
 
@@ -526,15 +690,15 @@ textarea:focus-visible {
 }
 .ml-ai-tab:hover {
   color: var(--fg);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--hover-veil);
 }
 .ml-ai-tab.is-selected {
   background: var(--bg-3);
-  color: #fff;
+  color: var(--fg-strong);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
 }
 .ml-ai-active-badge {
-  font-size: 9.5px;
+  font-size: 11px;
   padding: 1px 5px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--accent) 30%, transparent);
@@ -590,18 +754,18 @@ textarea:focus-visible {
 .ml-ai-success {
   background: rgba(62, 167, 106, 0.15);
   border: 1px solid rgba(62, 167, 106, 0.4);
-  color: #6ee7b7;
+  color: var(--ok-text);
 }
 .ml-ai-error {
   background: rgba(239, 68, 68, 0.15);
   border: 1px solid rgba(239, 68, 68, 0.4);
-  color: #fca5a5;
+  color: var(--bad-text);
 }
 
 .ml-btn-ai-config {
-  background: color-mix(in srgb, var(--accent-2) 12%, var(--bg-3));
+  background: var(--accent-2-on-bg, color-mix(in srgb, var(--accent-2) 12%, var(--bg-3)));
   border-color: color-mix(in srgb, var(--accent-2) 40%, var(--line));
-  color: #d6ecff;
+  color: var(--accent-2-soft);
   font-weight: 600;
 }
 .ml-btn-ai-config:hover {
@@ -671,7 +835,7 @@ textarea:focus-visible {
 }
 .ml-series-close:hover {
   border-color: var(--accent-2);
-  color: #d6ecff;
+  color: var(--accent-2-soft);
 }
 .ml-empty-note {
   display: grid;
@@ -699,7 +863,7 @@ textarea:focus-visible {
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 2px 8px;
-  font-size: 10.5px;
+  font-size: 12px;
   line-height: 1.6;
   cursor: pointer;
   color: var(--fg-dim);
@@ -707,7 +871,7 @@ textarea:focus-visible {
 .ml-tab.is-on {
   background: color-mix(in srgb, var(--accent-2) 22%, var(--bg-3));
   border-color: var(--accent-2);
-  color: #d6ecff;
+  color: var(--accent-2-soft);
 }
 
 /* ---------- modal de fontes ---------- */
@@ -767,7 +931,7 @@ textarea:focus-visible {
 .ml-source.is-on {
   background: color-mix(in srgb, var(--accent-2) 16%, var(--bg-3));
   border-color: var(--accent-2);
-  color: #d6ecff;
+  color: var(--accent-2-soft);
 }
 .ml-source-mark {
   flex: 0 0 18px;
@@ -813,7 +977,7 @@ textarea:focus-visible {
   transition: transform 0.22s ease;
   z-index: 45;
   overflow-y: auto;
-  padding: 18px;
+  padding: 18px 18px calc(18px + env(safe-area-inset-bottom));
   display: grid;
   gap: 14px;
   align-content: start;
@@ -831,6 +995,17 @@ textarea:focus-visible {
   width: 170px;
   border-radius: var(--radius);
   object-fit: cover;
+}
+/* foco programatico ao abrir: o anel fazia o titulo parecer um campo de texto */
+.ml-series-head h2:focus {
+  outline: none;
+}
+.ml-source-tag {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--bg-3);
+  color: var(--fg-dim);
 }
 .ml-series-head h2 {
   margin: 0 0 8px;
@@ -850,7 +1025,7 @@ textarea:focus-visible {
   text-decoration: none;
 }
 .ml-desc {
-  color: #c3ccd8;
+  color: var(--fg-desc);
   white-space: pre-wrap;
   max-height: 220px;
   overflow: auto;
@@ -877,7 +1052,7 @@ textarea:focus-visible {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .ml-chapter.is-read .ml-chapter-open {
-  opacity: 0.45;
+  color: var(--fg-read);
 }
 .ml-chapter-open {
   display: grid;
@@ -931,7 +1106,7 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 .ml-chapter small {
-  color: #6f7987;
+  color: var(--fg-dim);
 }
 .ml-loading {
   display: flex;
@@ -973,6 +1148,16 @@ textarea:focus-visible {
   transition: opacity 0.15s ease;
 }
 @media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .ml-btn-action-primary:hover:not(:disabled) {
+    transform: none;
+  }
   .ml-spinner {
     animation: none;
     border-top-color: color-mix(in srgb, var(--accent) 25%, transparent);
@@ -990,7 +1175,10 @@ textarea:focus-visible {
   position: fixed;
   inset: 0;
   background: var(--stage);
-  z-index: 60;
+  /* os tokens escuros sao redefinidos acima, mas `color` herdado do body ja' veio
+     resolvido no tema claro: texto escuro sobre barra escura, botoes invisiveis */
+  color: var(--fg);
+  z-index: var(--z-reader);
   display: none;
   grid-template-rows: auto 1fr auto;
   /* sem isso a barra de cima estica a grade e vaza da janela */
@@ -1005,7 +1193,7 @@ textarea:focus-visible {
   justify-content: space-between;
   gap: 8px;
   padding: 6px 12px;
-  background: #14171d;
+  background: var(--bar);
   border-bottom: 1px solid var(--line);
   flex-wrap: wrap;
   min-width: 0;
@@ -1054,7 +1242,7 @@ textarea:focus-visible {
 .ml-btn-action-primary {
   background: linear-gradient(135deg, #ff7a45, #ff531d);
   border: 1px solid #ff7a45;
-  color: #fff;
+  color: var(--on-accent);
   font-weight: 700;
   box-shadow: 0 2px 10px rgba(255, 122, 69, 0.3);
 }
@@ -1068,7 +1256,7 @@ textarea:focus-visible {
 .ml-popover-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 80;
+  z-index: var(--z-popover);
   background: rgba(0, 0, 0, 0.4);
   cursor: pointer;
   display: none;
@@ -1083,7 +1271,7 @@ textarea:focus-visible {
   top: 48px;
   right: 12px;
   width: 360px;
-  background: rgba(20, 23, 29, 0.98);
+  background: var(--bar-glass);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--line);
@@ -1092,7 +1280,7 @@ textarea:focus-visible {
   padding: 16px;
   display: none;
   gap: 14px;
-  z-index: 85;
+  z-index: calc(var(--z-popover) + 5);
 }
 .ml-popover.is-open {
   display: grid;
@@ -1101,6 +1289,98 @@ textarea:focus-visible {
 .ml-popover[hidden],
 .ml-popover-backdrop[hidden] {
   display: none !important;
+}
+.ml-popover-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+/* fim da obra: cartao no palco em vez de um toast por tecla */
+.ml-end-card {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(380px, calc(100% - 32px));
+  display: grid;
+  gap: 12px;
+  padding: 18px 18px 16px;
+  background: var(--bar-glass);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgb(0 0 0 / 70%);
+  color: var(--fg);
+  text-align: center;
+  z-index: 5;
+  animation: ml-fade-in 0.15s ease-out;
+}
+.ml-end-card p {
+  margin: 0;
+  color: var(--fg-dim);
+  font-size: 12.5px;
+}
+.ml-end-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+}
+.ml-end-actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* atalhos de teclado (tecla ?) */
+.ml-help {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(420px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  background: var(--bar-glass);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgb(0 0 0 / 80%);
+  color: var(--fg);
+  z-index: calc(var(--z-popover) + 6);
+  animation: ml-fade-in 0.15s ease-out;
+}
+.ml-help dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 14px;
+  margin: 0;
+  font-size: 13px;
+}
+.ml-help dt,
+.ml-help dd {
+  margin: 0;
+}
+.ml-help dd {
+  color: var(--fg-dim);
+}
+.ml-help kbd {
+  font: 12px/1 ui-monospace, Consolas, monospace;
+  padding: 3px 6px;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: var(--bg-3);
+  white-space: nowrap;
+}
+
+.ml-chat-stop {
+  align-self: flex-start;
+  margin-top: 4px;
 }
 .ml-popover-head {
   display: flex;
@@ -1148,7 +1428,7 @@ textarea:focus-visible {
 }
 .ml-segmented-btn.is-active {
   background: var(--bg-3);
-  color: #fff;
+  color: var(--fg-strong);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
 }
 
@@ -1157,8 +1437,8 @@ textarea:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 6px 12px;
-  background: #14171d;
+  padding: 6px 12px calc(6px + env(safe-area-inset-bottom));
+  background: var(--bar);
   border-top: 1px solid var(--line);
   flex-wrap: nowrap;
   min-width: 0;
@@ -1208,7 +1488,7 @@ textarea:focus-visible {
 .ml-stage {
   position: relative;
   overflow: hidden;
-  background: repeating-conic-gradient(#101216 0 25%, #0c0e11 0 50%) 50% / 26px 26px;
+  background: repeating-conic-gradient(var(--stage) 0 25%, var(--stage-2) 0 50%) 50% / 26px 26px;
   cursor: grab;
   touch-action: none;
   user-select: none;
@@ -1263,6 +1543,21 @@ textarea:focus-visible {
 }
 .ml-sheet.is-broken {
   background: #2a1414;
+  display: grid;
+  place-items: center;
+}
+.ml-sheet-retry {
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px 14px;
+  color: var(--fg);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ml-sheet-retry:hover {
+  background: var(--bg-hover);
+  border-color: var(--line-strong);
 }
 /* pagina fora da janela de retencao no modo tira: sem src, memoria liberada */
 .ml-sheet.is-unloaded img {
@@ -1285,7 +1580,10 @@ textarea:focus-visible {
   background: rgb(0 0 0 / 55%);
   border: 1px solid var(--line);
   border-radius: 6px;
-  cursor: crosshair;
+  cursor: grab;
+}
+.ml-nav:active {
+  cursor: grabbing;
 }
 .ml-nav-box {
   position: absolute;
@@ -1323,7 +1621,7 @@ textarea:focus-visible {
   left: 0;
   right: 0;
   bottom: 0;
-  font-size: 9px;
+  font-size: 11px;
   background: rgb(0 0 0 / 65%);
 }
 .ml-thumb.is-current {
@@ -1361,7 +1659,7 @@ textarea:focus-visible {
   transition: transform 0.2s ease;
   display: grid;
   grid-template-rows: auto 1fr auto;
-  z-index: 70;
+  z-index: var(--z-chat);
 }
 .ml-chat.is-open {
   transform: none;
@@ -1408,7 +1706,6 @@ textarea:focus-visible {
   border-radius: var(--radius);
   padding: 8px 10px;
   resize: vertical;
-  outline: none;
 }
 
 /* ---------- avisos ---------- */
@@ -1416,9 +1713,14 @@ textarea:focus-visible {
 .ml-ai-badge {
   position: fixed;
   right: 14px;
-  bottom: 14px;
-  z-index: 70;
+  bottom: calc(14px + env(safe-area-inset-bottom));
+  max-width: 60vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  z-index: var(--z-badge);
   background: var(--bg-3);
+  cursor: pointer;
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 6px 13px;
@@ -1430,7 +1732,7 @@ textarea:focus-visible {
   color: var(--bad);
 }
 .ml-ai-badge.is-quiet {
-  opacity: 0.35;
+  opacity: 0.6;
 }
 .ml-ai-badge:hover {
   opacity: 1;
@@ -1440,15 +1742,25 @@ textarea:focus-visible {
 .ml-reader.is-open ~ .ml-ai-badge {
   display: none;
 }
+body.is-reading .ml-ai-badge {
+  top: calc(56px + env(safe-area-inset-top));
+  bottom: auto;
+}
+/* no leitor o toast sentava em cima da barra de navegacao inferior */
+body.is-reading #toasts {
+  bottom: auto;
+  top: calc(56px + env(safe-area-inset-top));
+}
 
 #toasts {
   position: fixed;
   left: 50%;
-  bottom: 22px;
+  bottom: calc(22px + env(safe-area-inset-bottom));
   transform: translateX(-50%);
   display: grid;
   gap: 8px;
-  z-index: 90;
+  z-index: var(--z-toast);
+  max-width: min(520px, calc(100vw - 24px));
 }
 .ml-toast {
   background: var(--bg-3);
@@ -1458,6 +1770,23 @@ textarea:focus-visible {
   padding: 9px 14px;
   box-shadow: 0 10px 30px rgb(0 0 0 / 50%);
   transition: opacity 0.5s, transform 0.5s;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.ml-toast-close {
+  flex: 0 0 auto;
+  margin: -4px -6px -4px 0;
+  padding: 2px 6px;
+  background: none;
+  border: none;
+  color: var(--fg-dim);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+.ml-toast-close:hover {
+  color: var(--fg);
 }
 .ml-toast.is-error {
   border-left-color: var(--bad);
@@ -1521,7 +1850,7 @@ textarea:focus-visible {
 }
 
 .ml-tooltip-tag {
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -1529,14 +1858,14 @@ textarea:focus-visible {
 }
 
 .ml-tooltip-confidence {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--fg-dim);
 }
 
 .ml-tooltip-original {
   font-size: 13.5px;
   font-weight: 500;
-  color: #fff;
+  color: var(--fg-strong);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -1546,16 +1875,136 @@ textarea:focus-visible {
   padding-top: 6px;
   border-top: 1px dashed rgba(255, 255, 255, 0.12);
   font-size: 12.5px;
-  color: #d6ecff;
+  color: var(--accent-2-soft);
   white-space: pre-wrap;
   word-break: break-word;
 }
 
 .ml-tooltip-subtag {
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--accent-2);
   margin-right: 4px;
+}
+
+@media (max-width: 640px), (max-height: 500px) {
+  .ml-main {
+    padding: 0 12px 60px;
+  }
+  /* backup/importar sao raros: no celular saem da barra (ficam no desktop) */
+  .ml-toolbar .ml-btn-rare,
+  .ml-status-detail {
+    display: none;
+  }
+  /* rotulo some, icone fica; o alvo de 40px vem do bloco (pointer: coarse) */
+  .ml-toolbar .ml-btn-label,
+  .ml-reader-top .ml-btn-label {
+    display: none;
+  }
+  .ml-toolbar .ml-btn:has(.ml-btn-label),
+  .ml-reader-top .ml-btn:has(.ml-btn-label) {
+    padding-left: 9px;
+    padding-right: 9px;
+  }
+  /* busca numa linha inteira; marca, ordem e icones dividem a seguinte */
+  .ml-toolbar .ml-brand {
+    order: -2;
+  }
+  .ml-toolbar .ml-search {
+    flex: 1 1 100%;
+    order: -1;
+  }
+  .ml-toolbar .ml-select {
+    max-width: 130px;
+  }
+  /* barra compacta: voltar / titulo / pagina / traduzir / mais, numa linha so' */
+  .ml-reader-top {
+    padding: 4px 8px;
+    gap: 6px;
+  }
+  .ml-reader-top.is-compact {
+    flex-wrap: nowrap;
+  }
+  .ml-reader-top.is-compact .ml-reader-title {
+    flex: 1 1 0;
+  }
+  .ml-typetabs {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .ml-reader-bottom {
+    flex-wrap: wrap;
+  }
+  /* setas nas bordas (alcance do polegar), filme ocupa o meio */
+  .ml-reader-bottom.is-compact {
+    flex-wrap: nowrap;
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+  .ml-reader-bottom.is-compact > .ml-btn {
+    flex: 0 0 44px;
+    min-width: 44px;
+    min-height: 44px;
+    font-size: 20px;
+  }
+  .ml-zoom {
+    display: none;
+  }
+  /* popover vira folha inferior: cabe na mao e nao vaza pela lateral */
+  .ml-popover {
+    top: auto;
+    right: 0;
+    left: 0;
+    bottom: 0;
+    width: auto;
+    max-height: 80vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border-radius: 16px 16px 0 0;
+    padding: 14px 14px calc(14px + env(safe-area-inset-bottom));
+  }
+  .ml-popover-row .ml-group {
+    flex-wrap: wrap;
+  }
+}
+
+/* linhas da secao "Leitura" do popover (mobile) */
+.ml-popover-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.ml-popover-row + .ml-popover-row {
+  margin-top: 8px;
+}
+
+/* dedo: alvo minimo de 40px (WCAG 2.5.8) */
+@media (pointer: coarse) {
+  .ml-btn-sm,
+  .ml-chip,
+  .ml-tab,
+  .ml-fav,
+  .ml-series-close,
+  .ml-segmented-btn,
+  .ml-chapter-check,
+  .ml-chapter-upto,
+  .ml-toast-close {
+    min-height: 40px;
+    min-width: 40px;
+  }
+  .ml-fav {
+    width: 40px;
+    height: 40px;
+  }
+}
+
+/* sem hover nao existe "aparece ao passar o mouse" */
+@media (hover: none) {
+  .ml-chapter-upto {
+    opacity: 0.7;
+  }
+  /* o titulo sobre a capa duplicava o h3 logo abaixo em todos os cards */
 }
 
 @media (max-width: 720px) {
@@ -1565,7 +2014,27 @@ textarea:focus-visible {
   .ml-series-head img {
     width: 130px;
   }
+  /* tres filhos (check, abrir, "ate aqui"): com duas colunas o ⤓ caia numa linha so' dele */
   .ml-chapter {
-    grid-template-columns: 90px 1fr;
+    grid-template-columns: 40px 1fr 40px;
   }
+  /* sinopse rolavel virava armadilha de scroll no dedo */
+  .ml-desc {
+    max-height: none;
+    overflow: visible;
+  }
+}
+
+/* iOS da zoom na pagina ao focar campo com fonte < 16px */
+@media (pointer: coarse) {
+  .ml-search,
+  .ml-input,
+  .ml-select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+.ml-chapters-more {
+  height: 1px;
 }

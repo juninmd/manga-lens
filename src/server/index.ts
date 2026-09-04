@@ -82,7 +82,11 @@ app.use('*', async (c, next) => {
 
 app.onError((err, c) => {
   console.error('[erro]', err.message);
-  return c.json({ error: err.message }, 500);
+  // HttpError do provider (404 de serie removida, 429...) precisa manter o status:
+  // virar 500 generico fazia o cliente dizer "fonte fora do ar" para titulo que sumiu
+  const status = err instanceof HttpError && err.status >= 400 && err.status <= 599 ? err.status : 500;
+  // mensagem interna crua chegava no toast sem contexto
+  return c.json({ error: status === 500 ? `falha interna: ${err.message}` : err.message }, status as 500);
 });
 
 app.get('/api/providers', (c) => {
@@ -255,6 +259,12 @@ app.get('/api/local/page', async (c) => {
 });
 
 /** Modelos do Tesseract proxiados e cacheados em disco: primeira pagina paga, o resto e' local. */
+/**
+ * N workers do Tesseract pedem o mesmo modelo ao mesmo tempo no primeiro OCR:
+ * sem isto o servidor baixava (e gravava) o arquivo N vezes.
+ */
+const tessdataInflight = new Map<string, Promise<Uint8Array<ArrayBuffer>>>();
+
 app.get('/api/tessdata/:file', async (c) => {
   const file = c.req.param('file');
   if (!/^[a-z_]{3,24}\.traineddata(\.gz)?$/.test(file)) return c.text('modelo invalido', 400);
@@ -265,11 +275,24 @@ app.get('/api/tessdata/:file', async (c) => {
   if (await cachedFile.exists()) {
     return new Response(cachedFile, { headers: { 'Content-Type': 'application/octet-stream' } });
   }
-  const res = await httpFetch(`https://tessdata.projectnaptha.com/4.0.0/${file}`, { timeoutMs: 120_000 });
-  if (!res.ok) return c.text(`upstream ${res.status}`, 502);
-  const buf = new Uint8Array(await res.arrayBuffer());
-  await Bun.write(path, buf);
-  return new Response(buf, { headers: { 'Content-Type': 'application/octet-stream' } });
+  let pending = tessdataInflight.get(file);
+  if (!pending) {
+    pending = (async () => {
+      const res = await httpFetch(`https://tessdata.projectnaptha.com/4.0.0/${file}`, { timeoutMs: 120_000 });
+      if (!res.ok) throw new Error(`upstream ${res.status}`);
+      const buf = new Uint8Array(await res.arrayBuffer()) as Uint8Array<ArrayBuffer>;
+      await Bun.write(path, buf);
+      return buf;
+    })();
+    tessdataInflight.set(file, pending);
+    void pending.finally(() => tessdataInflight.delete(file)).catch(() => undefined);
+  }
+  try {
+    const buf = await pending;
+    return new Response(buf, { headers: { 'Content-Type': 'application/octet-stream' } });
+  } catch (err) {
+    return c.text((err as Error).message, 502);
+  }
 });
 
 app.get('/api/ai/health', async (c) => {
@@ -358,15 +381,20 @@ app.post('/api/ai/translate', async (c) => {
     try {
       return c.json({ translations: await runEngine(engine, body), engine });
     } catch (err) {
-      problems.push(`${engine}: ${(err as Error).message}`);
+      // translators.ts ja' prefixa com o motor ("google: limite..."): nao duplicar
+      const msg = (err as Error).message;
+      problems.push(msg.startsWith(`${engine}:`) ? msg : `${engine}: ${msg}`);
     }
   }
-  return c.json({ error: `nenhum tradutor respondeu — ${problems.join(' | ')}` }, 502);
+  return c.json(
+    { error: `nenhum tradutor respondeu (limite ou rede). Tente de novo em 1 min. Detalhes: ${problems.join(' | ')}` },
+    502,
+  );
 });
 
 app.post('/api/ai/vision', async (c) => {
   const body = (await c.req.json()) as Parameters<typeof visionTranslate>[0];
-  if (!body?.imageDataUrl?.startsWith('data:image/')) return c.json({ error: 'imageDataUrl invalido' }, 400);
+  if (!body?.imageDataUrl?.startsWith('data:image/')) return c.json({ error: 'imagem da pagina invalida — recarregue a pagina e tente de novo' }, 400);
   return c.json({ balloons: await visionTranslate(body) });
 });
 

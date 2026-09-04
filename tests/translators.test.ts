@@ -100,7 +100,23 @@ describe('translateWithEngine', () => {
     stubTranslator(() => new Response('', { status: 429 }));
     expect(
       translateWithEngine('google', [{ id: 0, text: 'ALGUMA COISA' }], 'en'),
-    ).rejects.toThrow('google indisponivel');
+    ).rejects.toThrow('google: limite de requisicoes (429)');
+  });
+
+  test('429 vira mensagem curta e acionavel, sem a URL (que levava o texto do balao)', async () => {
+    stubTranslator(() => new Response('', { status: 429 }));
+    const err = await translateWithEngine('google', [{ id: 0, text: 'TEXTO SECRETO' }], 'en').catch((e: Error) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe('google: limite de requisicoes (429) — aguarde ~1 min ou use o motor Automatico');
+    expect((err as Error).message).not.toContain('TEXTO');
+    expect((err as Error).message).not.toContain('http');
+  });
+
+  test('mymemory: 403 de cota vira aviso de cota esgotada', async () => {
+    stubTranslator(() => new Response(JSON.stringify({ responseStatus: 403, responseData: { translatedText: '' } })));
+    await expect(translateWithEngine('mymemory', [{ id: 0, text: 'AA' }], 'en')).rejects.toThrow(
+      'mymemory: cota esgotada',
+    );
   });
 
   test('bloco solto perdido nao derruba a pagina inteira', async () => {
@@ -134,7 +150,7 @@ describe('translateWithEngine', () => {
 
   test('mymemory: responseStatus de erro conta como falha do motor', async () => {
     stubTranslator(() => new Response(JSON.stringify({ responseStatus: 429, responseData: { translatedText: '' } })));
-    expect(translateWithEngine('mymemory', [{ id: 0, text: 'AA' }], 'en')).rejects.toThrow('mymemory indisponivel');
+    expect(translateWithEngine('mymemory', [{ id: 0, text: 'AA' }], 'en')).rejects.toThrow('mymemory: cota esgotada');
   });
 
   test('mymemory: origem auto vira en no par de idiomas', async () => {

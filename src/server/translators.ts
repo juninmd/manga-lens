@@ -1,4 +1,4 @@
-import { httpFetch } from './http.ts';
+import { HttpError, httpFetch } from './http.ts';
 
 export type Engine = 'auto' | 'llm' | 'google' | 'mymemory';
 
@@ -84,7 +84,7 @@ async function googleTranslate(text: string, source: string, target: string): Pr
     `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${source}&tl=${target}&dt=t&q=` +
     encodeURIComponent(text);
   const res = await httpFetch(url, { accept: 'application/json', timeoutMs: 15_000, retries: 3 });
-  if (!res.ok) throw new Error(`google HTTP ${res.status}`);
+  if (!res.ok) throw new HttpError(`google HTTP ${res.status}`, res.status);
   // formato: [[["traduzido","original",...],...],...]
   const data = (await res.json()) as unknown[];
   const segments = (data[0] ?? []) as [string, ...unknown[]][];
@@ -94,17 +94,32 @@ async function googleTranslate(text: string, source: string, target: string): Pr
     .trim();
 }
 
+/**
+ * O que o usuario le no toast. Sem URL (a query levava o texto do balao) e com
+ * a acao possivel: 429 do Google passa em ~1 min; cota do MyMemory nao volta hoje.
+ */
+function engineErrorMessage(engine: string, err: unknown): string {
+  const status = err instanceof HttpError ? err.status : undefined;
+  if (engine === 'mymemory' && (status === 403 || status === 429 || /quota|limit/i.test(String((err as Error).message)))) {
+    return 'mymemory: cota esgotada — use Google ou IA';
+  }
+  if (status === 429) return `${engine}: limite de requisicoes (429) — aguarde ~1 min ou use o motor Automatico`;
+  if (status !== undefined) return `${engine} indisponivel (HTTP ${status})`;
+  return `${engine} indisponivel: ${(err as Error).message}`;
+}
+
 async function myMemoryTranslate(text: string, source: string, target: string): Promise<string> {
   const pair = `${source === 'auto' ? 'en' : source}|${target}`;
   const url = `https://api.mymemory.translated.net/get?langpair=${encodeURIComponent(pair)}&q=${encodeURIComponent(text)}`;
   const res = await httpFetch(url, { accept: 'application/json', timeoutMs: 15_000, retries: 2 });
-  if (!res.ok) throw new Error(`mymemory HTTP ${res.status}`);
+  if (!res.ok) throw new HttpError(`mymemory HTTP ${res.status}`, res.status);
   const data = (await res.json()) as {
     responseStatus?: number | string;
     responseData?: { translatedText?: string };
   };
   const status = Number(data.responseStatus ?? 200);
-  if (status !== 200) throw new Error(`mymemory status ${status}`);
+  // 403/429 (ou texto de cota) = limite diario do MyMemory, nao erro do texto
+  if (status !== 200) throw new HttpError(`mymemory status ${status}`, status);
   return (data.responseData?.translatedText ?? '').trim();
 }
 
@@ -162,8 +177,8 @@ export async function translateWithEngine(
     try {
       return { id: block.id, pt: await translate(text, source, target), attempted: true, failed: false };
     } catch (err) {
-      lastError = (err as Error).message;
-      console.error(`[traducao/${engine}] bloco ${block.id}: ${lastError}`);
+      console.error(`[traducao/${engine}] bloco ${block.id}: ${(err as Error).message}`);
+      lastError = engineErrorMessage(engine, err);
       return { id: block.id, pt: '', attempted: true, failed: true };
     }
   });
@@ -172,6 +187,6 @@ export async function translateWithEngine(
   const failed = results.filter((r) => r.failed).length;
   // um bloco perdido e' aceitavel; o motor inteiro fora do ar precisa virar erro
   // para o modo automatico saber que tem de tentar o proximo
-  if (attempted > 0 && failed === attempted) throw new Error(`${engine} indisponivel: ${lastError}`);
+  if (attempted > 0 && failed === attempted) throw new Error(lastError || `${engine} indisponivel`);
   return results.map((r) => ({ id: r.id, pt: r.pt }));
 }

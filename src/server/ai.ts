@@ -212,7 +212,7 @@ export interface VisionInput {
 export async function visionTranslate(input: VisionInput): Promise<{ original: string; pt: string }[]> {
   const providerName = normalizeProvider(input.provider, config.ai.provider);
   const pConfig = getProviderConfig(providerName);
-  if (!pConfig.visionModel) throw new Error(`AI_VISION_MODEL nao configurado para ${providerName}`);
+  if (!pConfig.visionModel) throw new Error(`modelo de visao nao configurado para ${providerName} — defina em IA > Modelo de visao`);
   const model = getLanguageModel(providerName, pConfig.visionModel);
 
   const mime = input.imageDataUrl.match(/^data:([^;]+);/)?.[1] ?? 'image/jpeg';

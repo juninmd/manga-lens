@@ -1,6 +1,7 @@
 import { createWorker, type Worker } from 'tesseract.js';
 import { translate } from './api.ts';
 import { api } from './base.ts';
+import { langLabel } from './ui.ts';
 
 /** Mascara do balao em coordenadas reduzidas, relativa ao bbox do bloco. */
 export interface BalloonMask {
@@ -55,6 +56,55 @@ const TESS_BY_LANG: Record<string, string> = {
   id: 'ind',
   unknown: 'jpn+jpn_vert+eng',
 };
+
+/** Opcoes para o select "idioma do OCR": codigo do app -> modelo(s) do Tesseract. */
+export const TESS_LANG_OPTIONS: { code: string; label: string }[] = [
+  { code: 'auto', label: 'automatico (pelo capitulo)' },
+  ...Object.entries(TESS_BY_LANG)
+    .filter(([code]) => code !== 'unknown' && code !== 'pt' && code !== 'es-la')
+    .map(([code, tess]) => ({ code: tess, label: langLabel(code) })),
+];
+
+const TESS_MODEL_LABEL: Record<string, string> = {
+  jpn: 'japones',
+  jpn_vert: 'japones vertical',
+  kor: 'coreano',
+  chi_sim: 'chines simplificado',
+  chi_tra: 'chines tradicional',
+  eng: 'ingles',
+  por: 'portugues',
+  spa: 'espanhol',
+  fra: 'frances',
+  ita: 'italiano',
+  deu: 'alemao',
+  rus: 'russo',
+  ind: 'indonesio',
+};
+
+/** Rotulo legivel do modelo efetivamente usado ("jpn+jpn_vert" -> "japones + japones vertical"). */
+export const effectiveOcrLang = (tess: string): string =>
+  tess
+    .split('+')
+    .map((m) => TESS_MODEL_LABEL[m] ?? m)
+    .join(' + ');
+
+/**
+ * O Tesseract reporta o estagio em ingles interno ("loading language
+ * traineddata"); a barra e' em portugues, entao traduz aqui.
+ */
+const TESS_STATUS: [RegExp, string][] = [
+  [/loading tesseract core/i, 'carregando motor de OCR'],
+  [/initializing tesseract/i, 'iniciando motor de OCR'],
+  [/loading language traineddata/i, 'baixando modelo de idioma'],
+  [/initializing api/i, 'preparando idioma'],
+  [/loading image|resolving image/i, 'carregando pagina'],
+  [/recognizing text/i, 'reconhecendo texto'],
+];
+
+const RECOGNIZING = 'reconhecendo texto';
+
+export const tessStageLabel = (status: string): string =>
+  TESS_STATUS.find(([re]) => re.test(status))?.[1] ?? status;
 
 /**
  * O idioma do OCR e' o do SCAN, nao o da obra: Naruto e' japones, mas o capitulo
@@ -133,7 +183,7 @@ function getPool(lang: string): Promise<Worker>[] {
         logger:
           i === 0
             ? (m: { status: string; progress: number }) =>
-                activeProgress?.({ stage: m.status, ratio: m.progress ?? 0 })
+                activeProgress?.({ stage: tessStageLabel(m.status), ratio: m.progress ?? 0 })
             : () => undefined,
       }).catch((err: unknown) => {
         // sidecar ainda subindo ou rede fora: sem isto a promise rejeitada fica
@@ -290,11 +340,31 @@ function erode(mask: Uint8Array, w: number, h: number, rounds: number): Uint8Arr
 const rgb = (r: number, g: number, b: number): string => `rgb(${r | 0}, ${g | 0}, ${b | 0})`;
 
 /**
+ * Devolve a thread ao navegador entre regioes: a deteccao roda por pixel da
+ * pagina inteira e, sem isto, spinner, pan e zoom congelam ate' ela acabar.
+ */
+const yieldToUi = (): Promise<void> =>
+  new Promise((resolve) => {
+    const sched = (globalThis as { scheduler?: { yield?: () => Promise<void> } }).scheduler;
+    if (sched?.yield) void sched.yield().then(resolve);
+    else setTimeout(resolve, 0);
+  });
+
+const abortError = (): DOMException => new DOMException('OCR cancelado', 'AbortError');
+
+const throwIfAborted = (signal?: AbortSignal): void => {
+  if (signal?.aborted) throw abortError();
+};
+
+/**
  * Detecta baloes antes do OCR. A analise de layout do Tesseract se perde na arte
  * do quadrinho e devolve a pagina inteira como um paragrafo so'; achando as
  * manchas brancas fechadas primeiro, cada balao vira uma regiao propria.
  */
-function detectBalloons(img: HTMLImageElement): { regions: Region[]; scale: number } {
+async function detectBalloons(
+  img: HTMLImageElement,
+  signal?: AbortSignal,
+): Promise<{ regions: Region[]; scale: number }> {
   const scale = Math.min(1, DETECT_WIDTH / (img.naturalWidth || DETECT_WIDTH));
   const w = Math.max(Math.round(img.naturalWidth * scale), 1);
   const h = Math.max(Math.round(img.naturalHeight * scale), 1);
@@ -366,7 +436,14 @@ function detectBalloons(img: HTMLImageElement): { regions: Region[]; scale: numb
     seeds.push({ seed: start, x0, y0, x1, y1 });
   }
 
-  for (const s of seeds) {
+  await yieldToUi();
+  throwIfAborted(signal);
+
+  for (const [si, s] of seeds.entries()) {
+    if (si % 4 === 3) {
+      await yieldToUi();
+      throwIfAborted(signal);
+    }
     const bw = s.x1 - s.x0 + 1;
     const bh = s.y1 - s.y0 + 1;
     const comp = new Uint8Array(bw * bh);
@@ -594,9 +671,13 @@ const DIFFUSE_ITERATIONS = 16;
  * testar sem DOM. Muta `data` (RGBA, `w*h*4`) no lugar.
  */
 export function diffusePixels(data: Uint8ClampedArray, w: number, h: number, unknown: Uint8Array, iterations: number): void {
+  // dois buffers fixos: `.map` a cada iteracao alocava um Float32Array novo do
+  // tamanho da caixa, 16 vezes por bloco solto — lixo que travava a thread
+  const cur = new Float32Array(data.length);
   const next = new Float32Array(data.length);
+  cur.set(data as unknown as ArrayLike<number>);
   for (let it = 0; it < iterations; it++) {
-    next.set(data as unknown as ArrayLike<number>);
+    next.set(cur);
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
         const p = y * w + x;
@@ -616,9 +697,9 @@ export function diffusePixels(data: Uint8ClampedArray, w: number, h: number, unk
           if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
           const np = ny * w + nx;
           n++;
-          r += data[np * 4]!;
-          g += data[np * 4 + 1]!;
-          b += data[np * 4 + 2]!;
+          r += cur[np * 4]!;
+          g += cur[np * 4 + 1]!;
+          b += cur[np * 4 + 2]!;
         }
         if (n === 0) continue;
         const i = p * 4;
@@ -628,8 +709,9 @@ export function diffusePixels(data: Uint8ClampedArray, w: number, h: number, unk
         next[i + 3] = 255;
       }
     }
-    data.set(next.map((v) => Math.round(v)));
+    for (let i = 0; i < next.length; i++) cur[i] = Math.round(next[i]!);
   }
+  data.set(cur as unknown as ArrayLike<number>);
 }
 
 /**
@@ -712,16 +794,34 @@ export function isOcrNoise(text: string, confidence: number): boolean {
  * que era o que a antiga saida de emergencia fazia (e que, ao traduzir, pintava
  * a folha inteira de branco por causa do `fillRect` sem mascara).
  */
+const LOOSE_STAGE = 'texto fora de balao';
+/** fracao da barra reservada aos baloes; o resto e' a passada solta */
+const LOOSE_START = 0.8;
+
 async function looseText(
   worker: Worker,
   page: HTMLCanvasElement,
   img: HTMLImageElement,
   balloons: OcrBlock[],
   onProgress?: (p: OcrProgress) => void,
+  signal?: AbortSignal,
 ): Promise<OcrBlock[]> {
-  onProgress?.({ stage: 'texto fora de balao', ratio: 0.95 });
-  await worker.setParameters({ tessedit_pageseg_mode: '3' as never });
-  const { data } = await worker.recognize(page, {}, { blocks: true, text: true });
+  // pagina virada durante os baloes: nao comecar a passada da pagina inteira
+  throwIfAborted(signal);
+  // etapa propria: antes ficava fixa em 95% enquanto o reconhecimento da pagina
+  // inteira (tao longo quanto todos os baloes) rodava — parecia travado
+  onProgress?.({ stage: LOOSE_STAGE, ratio: LOOSE_START });
+  const previous = activeProgress;
+  activeProgress = (p) => {
+    if (p.stage === RECOGNIZING) onProgress?.({ stage: LOOSE_STAGE, ratio: LOOSE_START + (1 - LOOSE_START) * p.ratio });
+  };
+  let data: Awaited<ReturnType<Worker['recognize']>>['data'];
+  try {
+    await worker.setParameters({ tessedit_pageseg_mode: '3' as never });
+    ({ data } = await worker.recognize(page, {}, { blocks: true, text: true }));
+  } finally {
+    activeProgress = previous;
+  }
 
   const out: OcrBlock[] = [];
   for (const block of data.blocks ?? []) {
@@ -764,28 +864,40 @@ async function looseText(
   return out;
 }
 
+/**
+ * `signal` cancela entre etapas (deteccao, cada balao, passada solta): virar a
+ * pagina no meio do OCR nao precisa mais esperar a antiga terminar. Um balao ja'
+ * enviado ao worker termina sozinho; so' o resultado e' descartado.
+ */
 export async function recognizePage(
   img: HTMLImageElement,
   lang: string,
   onProgress?: (p: OcrProgress) => void,
+  signal?: AbortSignal,
 ): Promise<OcrBlock[]> {
   const previous = activeProgress;
   activeProgress = onProgress;
   try {
-    return await recognize(img, lang, onProgress);
+    return await recognize(img, lang, onProgress, signal);
   } finally {
     activeProgress = previous;
   }
 }
 
+export const isAbortError = (err: unknown): boolean => (err as { name?: string } | null)?.name === 'AbortError';
+
 async function recognize(
   img: HTMLImageElement,
   lang: string,
   onProgress?: (p: OcrProgress) => void,
+  signal?: AbortSignal,
 ): Promise<OcrBlock[]> {
+  throwIfAborted(signal);
   const pool = await Promise.all(getPool(lang));
+  throwIfAborted(signal);
   const page = preprocess(img);
-  const { regions, scale } = detectBalloons(img);
+  await yieldToUi();
+  const { regions, scale } = await detectBalloons(img, signal);
 
   // vertical (japones) le melhor em coluna unica; o resto, bloco uniforme
   const vertical = lang.includes('vert');
@@ -802,6 +914,7 @@ async function recognize(
   await Promise.all(
     pool.map(async (worker) => {
       for (;;) {
+        throwIfAborted(signal);
         const i = next++;
         if (i >= regions.length) return;
         const region = regions[i]!;
@@ -809,7 +922,7 @@ async function recognize(
         const box: Box = { x: region.x / scale, y: region.y / scale, w: region.w / scale, h: region.h / scale };
         const { data } = await worker.recognize(crop(page, box, 12), {}, { text: true });
         done++;
-        onProgress?.({ stage: `balao ${done}/${regions.length}`, ratio: done / regions.length });
+        onProgress?.({ stage: `balao ${done}/${regions.length}`, ratio: (LOOSE_START * done) / regions.length });
 
         const rawText = (data.text ?? '').replace(/\s*\n\s*/g, '\n').trim();
         const text = cleanOcrText(rawText);
@@ -831,8 +944,10 @@ async function recognize(
     }),
   );
 
+  throwIfAborted(signal);
   const balloons = found.filter((b): b is OcrBlock => b !== null);
-  const loose = await looseText(pool[0]!, page, img, balloons, onProgress);
+  const loose = await looseText(pool[0]!, page, img, balloons, onProgress, signal);
+  throwIfAborted(signal);
   // id contiguo: a traducao volta casada por id, entao nao pode ter buraco
   return [...balloons, ...loose]
     .sort((a, b) => a.y - b.y || a.x - b.x)
@@ -1069,22 +1184,31 @@ function layoutText(ctx: CanvasRenderingContext2D, text: string, b: OcrBlock, fo
     return best;
   };
 
+  // Abaixo deste corpo (em coordenadas da pagina) a letra ja' nao se le na tela
+  // — 7px numa pagina de 1600px exibida a 800px viram 3,5px. Em vez de espremer
+  // a frase, desenha so' reticencias: o texto continua no tooltip do balao.
+  const ellipsis = (): Layout => {
+    const size = Math.max(MIN_LEGIBLE, Math.min(boxH, 18));
+    ctx.font = `700 ${size}px ${font}`;
+    return finish([{ text: '…', cx, width: ctx.measureText('…').width }], size);
+  };
+
   const plain = search(false);
   // Palavra longa num balao estreito — o caso do portugues — espremeria a frase
   // inteira num corpo minusculo. Cortar com hifen so' compensa quando devolve um
   // texto bem maior; por isso o ganho tem de ser grande, nao qualquer um.
   const cut = plain && plain.size >= MIN_FONT * 2 ? null : search(true);
-  if (cut && (!plain || cut.size >= plain.size * 1.25)) return cut;
-  if (plain) return plain;
+  const best = cut && (!plain || cut.size >= plain.size * 1.25) ? cut : plain;
+  if (best) return best.size >= MIN_LEGIBLE ? best : ellipsis();
 
-  // nem hifenizando coube: usa o menor corpo legivel e aceita transbordar de leve
-  ctx.font = `700 ${MIN_FONT}px ${font}`;
-  const lines = greedyWrap(ctx, words, MIN_FONT, 1, bandOf, true);
-  return lines?.length ? finish(lines, MIN_FONT) : empty;
+  // nem hifenizando coube: nao ha' corpo legivel, marca com reticencias
+  return ellipsis();
 }
 
 const LINE_HEIGHT = 1.14;
 const MIN_FONT = 7;
+/** menor corpo que ainda se le depois do ajuste da pagina a tela */
+const MIN_LEGIBLE = 11;
 const PADDING = 0.12; // fracao da caixa reservada para nao encostar no contorno
 const SHAPE_INSET = 0.94; // a mascara ja' vem erodida; sobra so' o respiro do contorno
 

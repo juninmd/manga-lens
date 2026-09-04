@@ -68,7 +68,8 @@ const DEFAULTS: Store = {
     showOriginal: false,
     invertScroll: false,
     engine: 'auto',
-    translateMode: 'ai',
+    // primeiro uso sem IA configurada: o motor web traduz sem chave nenhuma
+    translateMode: 'ocr',
     targetLang: 'pt-BR',
     font: 'comic',
     aiProvider: 'ollama',
@@ -220,11 +221,35 @@ export const isChapterRead = (provider: string, seriesId: string, chapterId: str
 export const readCount = (provider: string, seriesId: string): number =>
   (store.read[seriesKey(provider, seriesId)] ?? []).length;
 
+/**
+ * "Continuar" num capitulo ja' terminado (marcado lido ou salvo na ultima pagina)
+ * devolve o seguinte no mesmo idioma; senao `undefined` (retoma o proprio).
+ */
+export function nextUnreadChapter<C extends { id: string; lang?: string; pages?: number }>(
+  detail: { provider: string; id: string; chapters: C[] },
+  chapter: C,
+  page: number,
+): C | undefined {
+  const finished =
+    // `pages: 0` (desconhecido) nao pode contar como terminado — mesma regra de resumePage
+    isChapterRead(detail.provider, detail.id, chapter.id) || (chapter.pages ? page >= chapter.pages - 1 : false);
+  if (!finished) return undefined;
+  const same = detail.chapters.filter((c) => (c.lang ?? '') === (chapter.lang ?? ''));
+  const i = same.findIndex((c) => c.id === chapter.id);
+  return i >= 0 ? same[i + 1] : undefined;
+}
+
 export function markChapterRead(provider: string, seriesId: string, chapterId: string, read = true): void {
   markUpTo(provider, seriesId, [chapterId], read);
 }
 
 /** Marca o capitulo e todos os anteriores — como se pega uma serie no meio. */
+/** Volta so' as preferencias (modo, ajuste, motor, idiomas, letra) ao padrao; favoritos e progresso ficam. */
+export function resetSettings(): void {
+  store.settings = structuredClone(DEFAULTS.settings);
+  persist();
+}
+
 export function markUpTo(provider: string, seriesId: string, chapterIds: string[], read = true): void {
   const set = readSet(provider, seriesId);
   for (const id of chapterIds) {
@@ -258,10 +283,32 @@ export const hasBookmark = (provider: string, chapterId: string, page: number): 
 
 export const bookmarks = (): Bookmark[] => [...store.bookmarks].sort((a, b) => b.at - a.at);
 
-export const recentReads = (): Progress[] =>
-  Object.values(store.progress)
-    .sort((a, b) => b.at - a.at)
-    .slice(0, 12);
+/** Mesma obra em duas fontes: chave por titulo, sem pontuacao nem caixa. */
+export const titleKey = (title: string): string =>
+  title
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[^a-z0-9]/g, '');
+
+/**
+ * Progresso mais recente por obra (a mesma obra em dois sites aparecia duas vezes).
+ * Compromisso: duas obras diferentes com o mesmo titulo exato (ex. dois "Monster")
+ * tambem colapsam — raro, e a outra continua acessivel pelo painel/favoritos.
+ */
+export const recentReads = (keep: (p: Progress) => boolean = () => true): Progress[] => {
+  const seen = new Set<string>();
+  const out: Progress[] = [];
+  for (const p of Object.values(store.progress).sort((a, b) => b.at - a.at)) {
+    // filtrar depois do corte em 12 escondia as HQs lidas atras de 12 mangas recentes
+    if (!keep(p)) continue;
+    const key = titleKey(p.title) || seriesKey(p.provider, p.seriesId);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(p);
+    if (out.length >= 12) break;
+  }
+  return out;
+};
 
 // ---------- backup (export/import) ----------
 

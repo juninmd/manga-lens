@@ -81,11 +81,64 @@ function absolutize<T>(value: T): T {
   return value;
 }
 
+/** Erro HTTP com o status separado da mensagem — a UI decide o texto pelo status. */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
+/**
+ * O servidor responde `{ error: "..." }`; mostrar o JSON cru com o status na
+ * frente ("502 {\"error\":...}") no toast so' confunde. Extrai a mensagem e
+ * guarda o status a parte. Rede fora (`TypeError: Failed to fetch`) vira uma
+ * frase em portugues em vez do texto interno do navegador.
+ */
+function errorMessage(status: number, body: string): string {
+  const text = body.trim();
+  if (text.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(text) as { error?: unknown; message?: unknown };
+      const msg = parsed.error ?? parsed.message;
+      if (typeof msg === 'string' && msg) return msg;
+    } catch {
+      /* nao era JSON: cai no texto */
+    }
+  }
+  if (text && !text.startsWith('<')) return text.slice(0, 200);
+  if (status === 404) return 'nao encontrado';
+  if (status >= 500) return 'servidor falhou';
+  return `erro ${status}`;
+}
+
+const isNetworkError = (err: unknown): boolean =>
+  err instanceof TypeError && /fetch|network|load failed/i.test(err.message);
+
+/** Texto curto e legivel para qualquer erro vindo da API (ou da rede). */
+export function humanizeError(err: unknown): string {
+  if (isNetworkError(err)) return 'servidor indisponivel';
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
+export const errorStatus = (err: unknown): number | undefined =>
+  err instanceof ApiError ? err.status : undefined;
+
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(api(url), init);
+  let res: Response;
+  try {
+    res = await fetch(api(url), init);
+  } catch (err) {
+    if (isNetworkError(err)) throw new ApiError('servidor indisponivel', 0);
+    throw err;
+  }
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    throw new Error(`${res.status} ${body.slice(0, 200)}`);
+    throw new ApiError(errorMessage(res.status, body), res.status);
   }
   return absolutize((await res.json()) as T);
 }
@@ -148,10 +201,14 @@ export const saveAiConfig = (data: {
   active: AiProviderName;
   providers: AiProviderInfo[];
 }> =>
-  json('/api/ai/config', {
+  json<{ active: AiProviderName; providers: AiProviderInfo[] }>('/api/ai/config', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
+  }).then((res) => {
+    // badge global e leitor reconsultam a saude sem depender de quem salvou
+    window.dispatchEvent(new CustomEvent('ml:ai-changed'));
+    return res;
   });
 
 export interface TranslateEngineInfo {
@@ -206,13 +263,16 @@ export async function* explain(body: {
   question?: string;
   history?: { role: 'user' | 'assistant'; content: string }[];
   provider?: string;
-}): AsyncGenerator<string> {
+}, signal?: AbortSignal): AsyncGenerator<string> {
   const res = await fetch(api('/api/ai/explain'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal,
   });
-  if (!res.ok || !res.body) throw new Error(`${res.status} ${await res.text().catch(() => '')}`);
+  // mesmo tratamento do json(): a bolha mostrava `500 {"error":...}` cru
+  if (!res.ok) throw new ApiError(errorMessage(res.status, await res.text().catch(() => '')), res.status);
+  if (!res.body) throw new ApiError('resposta vazia da IA', res.status);
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   for (;;) {

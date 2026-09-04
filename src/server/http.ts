@@ -28,6 +28,25 @@ const originFrom = (ref: string | undefined): string | undefined => {
   }
 };
 
+/**
+ * A URL completa fica so' no log: na mensagem (que chega ao usuario via /api/*)
+ * ela carregava a query inteira — inclusive o texto do balao sendo traduzido.
+ */
+function upstreamError(status: number, url: string): HttpError {
+  let host = url;
+  // a query dos tradutores carrega o texto do balao: nem o log deve guarda-la
+  let safeUrl = url;
+  try {
+    const u = new URL(url);
+    host = u.host;
+    safeUrl = u.origin + u.pathname;
+  } catch {
+    /* url relativa ou invalida: fica como esta' */
+  }
+  console.error(`[http] upstream ${status} em ${safeUrl}`);
+  return new HttpError(`upstream ${status} (${host})`, status);
+}
+
 /** fetch com UA de browser, timeout e retry com backoff em 429/5xx. */
 export async function httpFetch(url: string, opts: FetchOpts = {}): Promise<Response> {
   const { referer, accept, timeoutMs = 20_000, retries = 2, redirect = 'follow' } = opts;
@@ -54,7 +73,7 @@ export async function httpFetch(url: string, opts: FetchOpts = {}): Promise<Resp
           await Bun.sleep(400 * 2 ** attempt);
           continue;
         }
-        throw new HttpError(`upstream ${res.status} em ${url}`, res.status);
+        throw upstreamError(res.status, url);
       }
       return res;
     } catch (err) {
@@ -73,12 +92,12 @@ export async function httpFetch(url: string, opts: FetchOpts = {}): Promise<Resp
 
 export async function fetchJson<T>(url: string, opts: FetchOpts = {}): Promise<T> {
   const res = await httpFetch(url, { accept: 'application/json', ...opts });
-  if (!res.ok) throw new HttpError(`upstream ${res.status} em ${url}`, res.status);
+  if (!res.ok) throw upstreamError(res.status, url);
   return (await res.json()) as T;
 }
 
 export async function fetchText(url: string, opts: FetchOpts = {}): Promise<string> {
   const res = await httpFetch(url, { accept: 'text/html,*/*', ...opts });
-  if (!res.ok) throw new HttpError(`upstream ${res.status} em ${url}`, res.status);
+  if (!res.ok) throw upstreamError(res.status, url);
   return await res.text();
 }

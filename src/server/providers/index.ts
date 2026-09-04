@@ -92,7 +92,21 @@ function mergeDuplicates(items: SeriesCard[]): SeriesCard[] {
 /** Busca em N providers em paralelo; provider que cai vira aviso, nao erro fatal. */
 export async function searchAll(ids: string[], filters: SearchFilters): Promise<AggregatedSearch> {
   const chosen = ids.length ? ids.map(getProvider) : enabledProviders(filters.contentType);
-  const settled = await Promise.allSettled(chosen.map((p) => p.search(filters)));
+  // um site fora do ar segurava a busca inteira ate' o timeout+retries dele
+  // (~60s) e o cliente via "servidor indisponivel"; passado o prazo, devolve o
+  // que respondeu e marca o resto como esgotado
+  const deadlineMs = config.searchTimeoutMs;
+  const settled = await Promise.allSettled(
+    chosen.map((p) => {
+      // timer limpo quando o provider responde: sem isso cada busca deixava N
+      // timers de 10s vivos (e segurava o loop nos testes)
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`tempo esgotado (${Math.round(deadlineMs / 1000)}s)`)), deadlineMs);
+      });
+      return Promise.race([p.search(filters).finally(() => clearTimeout(timer)), deadline]);
+    }),
+  );
 
   const items: SeriesCard[] = [];
   const errors: AggregatedSearch['errors'] = [];
