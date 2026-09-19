@@ -115,6 +115,28 @@ try {
   });
   record('canvas do OCR nao fica tainted', canvasOk === 'canvas legivel', canvasOk);
 
+  // detector neural: worker + wasm do bundle, modelo baixado pelo sidecar — a CSP
+  // do WebView2 (worker-src, wasm-unsafe-eval) so' e' provada aqui, nao no chromium
+  const detector = await page.evaluate(async () => {
+    const port = await window.__TAURI__.core.invoke('api_port');
+    const img = document.querySelector('.ml-sheet img');
+    const c = document.createElement('canvas');
+    c.width = 640;
+    c.height = 640;
+    c.getContext('2d').drawImage(img, 0, 0, 640, 640);
+    const rgba = c.getContext('2d').getImageData(0, 0, 640, 640).data.buffer;
+    const worker = new Worker('/detector-worker.js', { type: 'module' });
+    const reply = await new Promise((resolve) => {
+      worker.onmessage = (e) => resolve(e.data);
+      worker.onerror = (e) => resolve({ error: e.message || 'worker falhou' });
+      const modelUrl = `http://127.0.0.1:${port}/api/models/text-detector.onnx`;
+      worker.postMessage({ id: 1, modelUrl, rgba, width: img.naturalWidth, height: img.naturalHeight }, [rgba]);
+    });
+    worker.terminate();
+    return reply.error ? `erro: ${reply.error}` : `${reply.detections.filter((d) => d.score >= 0.5).length} deteccoes`;
+  });
+  record('detector neural roda no WebView2', /^\d+ deteccoes$/.test(detector) && !detector.startsWith('0 '), detector);
+
   await page.screenshot({ path: 'scripts/.desktop.png' });
 } catch (err) {
   record('execucao', false, String(err).slice(0, 250));

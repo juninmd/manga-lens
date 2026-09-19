@@ -1,5 +1,6 @@
 import {
   aiHealth,
+  clearSeriesMemory,
   explain,
   getAiProviders,
   getEngines,
@@ -7,6 +8,7 @@ import {
   getTargets,
   humanizeError,
   saveAiConfig,
+  seriesMemory,
   visionTranslate,
   type ChapterRef,
   type PageRef,
@@ -44,6 +46,7 @@ import {
   translateBlocks,
   type OcrBlock,
 } from './ocr.ts';
+import { numberedPage } from './page-image.ts';
 
 /**
  * Pagina que nao esta' no palco nao tem <img>: carrega uma so' para o OCR.
@@ -227,7 +230,7 @@ export class Reader {
 
   private engines: TranslateEngineInfo[] = [{ id: 'auto', name: 'Automatico (sem IA primeiro)', needsAi: false, note: '' }];
   private targets: TargetLangInfo[] = [{ id: 'pt-BR', name: 'Portugues (Brasil)' }];
-  private aiProviders: { id: string; name: string; baseUrl: string; model: string; hasKey: boolean }[] = [];
+  private aiProviders: { id: string; name: string; baseUrl: string; model: string; visionModel?: string; hasKey: boolean }[] = [];
 
   /**
    * Troca de capitulo feita de dentro do leitor (cap », fim de capitulo, popover):
@@ -860,6 +863,22 @@ export class Reader {
       { class: 'ml-popover-section' },
       el('span', { class: 'ml-popover-label' }, 'Idioma do OCR'),
       this.ocrLangSelect(),
+      this.toggle(
+        s.neuralDetect ? '🎯 Detector neural (ligado)' : '🎯 Detector neural',
+        s.neuralDetect,
+        () => {
+          s.neuralDetect = !s.neuralDetect;
+          persist();
+          // os baloes achados mudam: o OCR em cache envelhece
+          this.ocrAbort?.abort();
+          this.ocrCache.clear();
+          this.translatedAs.clear();
+          this.paintOverlays();
+          this.buildPopover();
+          this.ocrStatus.textContent = 'detector alterado — pressione O ou R';
+        },
+        'Acha baloes e texto solto com um modelo local (11 MB, baixado uma vez). Desligue para voltar a deteccao antiga por manchas brancas',
+      ),
     );
 
     const foot = el(
@@ -871,7 +890,65 @@ export class Reader {
 
     this.popoverEl.append(head);
     if (this.compact) this.popoverEl.append(this.readingSection());
-    this.popoverEl.append(modeSection, providerSection, targetSection, ocrLangSection, fontSection, foot);
+    this.popoverEl.append(modeSection, providerSection, ...(isAi ? [this.contextSection()] : []), targetSection, ocrLangSection, fontSection, foot);
+  }
+
+  /**
+   * Modo IA: a memoria da obra (glossario de nomes/genero + resumo das paginas
+   * anteriores) e a opcao de mandar a pagina numerada ao modelo de visao. Limpar
+   * existe porque um nome ou genero gravado errado se repetiria no resto da obra.
+   */
+  private contextSection(): HTMLElement {
+    const s = store.settings;
+    const series = this.detail?.title;
+    const vision = this.aiProviders.find((p) => p.id === s.aiProvider)?.visionModel;
+    const info = el('span', { class: 'ml-popover-hint', role: 'status' }, series ? 'lendo memoria da obra...' : 'abra uma obra para ver a memoria');
+    const showMemory = (): void => {
+      if (!series) return;
+      void seriesMemory(series, s.targetLang)
+        .then((m) => {
+          info.textContent = `${plural(m.glossary.length, 'nome')} no glossario · ${plural(m.notes.length, 'pagina resumida', 'paginas resumidas')}`;
+        })
+        .catch((err) => {
+          info.textContent = `memoria indisponivel: ${humanizeError(err)}`;
+        });
+    };
+    showMemory();
+    const seesPage = this.toggle(
+      s.aiSeesPage ? '🖼️ IA ve a pagina (ligado)' : '🖼️ IA ve a pagina',
+      s.aiSeesPage,
+      () => {
+        s.aiSeesPage = !s.aiSeesPage;
+        persist();
+        this.invalidateTranslations();
+        this.buildPopover();
+      },
+      vision
+        ? `Manda a pagina reduzida, com os baloes numerados, ao modelo de visao (${vision}): acerta melhor quem fala e o genero, mas gasta mais tokens por pagina`
+        : 'Defina um modelo de visao no provedor de IA para usar esta opcao',
+    );
+    if (!vision) seesPage.setAttribute('disabled', '');
+    return el(
+      'div',
+      { class: 'ml-popover-section' },
+      el('span', { class: 'ml-popover-label' }, 'Contexto da obra'),
+      seesPage,
+      info,
+      el('button', {
+        class: 'ml-btn ml-btn-sm ml-btn-ghost',
+        disabled: !series,
+        title: 'Apaga os nomes e o resumo aprendidos nesta obra (use se a IA gravou um nome ou genero errado)',
+        onclick: () => {
+          if (!series) return;
+          void clearSeriesMemory(series, s.targetLang)
+            .then(() => {
+              toast('memoria da obra apagada');
+              showMemory();
+            })
+            .catch((err) => toast(`nao consegui apagar a memoria: ${humanizeError(err)}`, 'error'));
+        },
+      }, 'limpar memoria da obra'),
+    );
   }
 
   /**
@@ -1457,6 +1534,7 @@ export class Reader {
         this.ocrStatus.textContent = `${prefix}pag. ${sheet.page + 1}: ${p.stage} ${Math.round(p.ratio * 100)}%`;
       },
       signal,
+      { neural: store.settings.neuralDetect },
     );
     this.throwIfAborted(signal);
     this.ocrCache.set(key, blocks);
@@ -1649,10 +1727,14 @@ export class Reader {
         }
 
         this.setStatus(`${tag} pag. ${page + 1}: traduzindo ${plural(pending.length, 'balao', 'baloes')} via ${ctx.modeLabel}...`);
+        const seesPage = ctx.mode === 'ai' && store.settings.aiSeesPage ? img : undefined;
         const translated = await translateBlocks(pending, {
           sourceLang: chapter.lang ?? this.detail?.origin,
           series: this.detail?.title,
           chapter: chapter.number,
+          page,
+          rtl: this.rtl,
+          pageImage: seesPage ? numberedPage(seesPage, pending) : undefined,
           engine: ctx.mode === 'ai' ? 'llm' : ctx.engine,
           target: ctx.target,
           provider: ctx.mode === 'ai' ? ctx.provider : undefined,

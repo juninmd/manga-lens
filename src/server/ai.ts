@@ -2,6 +2,9 @@ import { generateText, streamText, type LanguageModel, type ModelMessage } from 
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { config, getProviderConfig, normalizeProvider, type AiProvider } from './config.ts';
+import { readingOrder, type PageBlock } from './page-text.ts';
+import { contextFor, remember } from './series-memory.ts';
+import { parseReply, systemPrompt, userPrompt } from './translate-prompt.ts';
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -30,6 +33,9 @@ function getProviderInstance(providerName: AiProvider) {
   providers.set(providerName, inst);
   return inst;
 }
+
+/** Modelo pensante do Ollama (qwen3.x, deepseek-r1) gasta o limite raciocinando e devolve texto vazio. */
+const noThinking = (p: AiProvider) => (p === 'ollama' ? { providerOptions: { ollama: { reasoningEffort: 'none' } } } : {});
 
 export function getLanguageModel(providerName: AiProvider, modelId: string): LanguageModel {
   const p = getProviderInstance(providerName);
@@ -141,57 +147,93 @@ const TARGET_NAME: Record<string, string> = {
 };
 
 export interface TranslateInput {
-  blocks: { id: number; text: string }[];
+  blocks: PageBlock[];
   sourceLang?: string;
   series?: string;
   chapter?: string;
+  /** pagina (base 0) dentro do capitulo: posiciona a nota na memoria da obra */
+  page?: number;
+  /** manga le da direita para a esquerda; decide a ordem dos baloes na mesma altura */
+  rtl?: boolean;
+  /** pagina reduzida com o id desenhado em cada balao; so' vai ao modelo de visao */
+  pageImage?: string;
   /** idioma de chegada (pt-BR, en, es...); ausente = portugues do Brasil */
   target?: string;
   provider?: AiProvider | string;
 }
 
+/** Uma pagina cabe num lote so': quebrar em 12 escondia do LLM metade da conversa. */
+const PAGE_BATCH = 24;
+export const PAGE_IMAGE_RE = /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/;
+export const MAX_PAGE_IMAGE = 2_000_000;
+
 /** Traduz balões em lote preservando o id — sem id, nao da' pra ancorar de volta na pagina. */
 export async function translateBlocks(input: TranslateInput): Promise<{ id: number; pt: string }[]> {
   const out: { id: number; pt: string }[] = [];
-  const BATCH = 12;
-  const src = LANG_NAME[input.sourceLang ?? 'unknown'] ?? input.sourceLang;
-  const dst = TARGET_NAME[(input.target ?? 'pt-br').toLowerCase()] ?? 'portugues do Brasil';
+  const target = input.target ?? 'pt-br';
+  const src = LANG_NAME[input.sourceLang ?? 'unknown'] ?? input.sourceLang ?? 'idioma original';
+  const dst = TARGET_NAME[target.toLowerCase()] ?? 'portugues do Brasil';
   const providerName = normalizeProvider(input.provider, config.ai.provider);
-  const modelId = await resolveModel(providerName);
-  const model = getLanguageModel(providerName, modelId);
+  const visionModel = getProviderConfig(providerName).visionModel;
+  const image =
+    visionModel && input.pageImage && input.pageImage.length <= MAX_PAGE_IMAGE && PAGE_IMAGE_RE.test(input.pageImage)
+      ? input.pageImage
+      : undefined;
+  const model = getLanguageModel(providerName, image ? visionModel! : await resolveModel(providerName));
+  const series = input.series?.trim();
+  const chapter = input.chapter ?? '';
+  const memory = series ? await contextFor(series, target, chapter, input.page ?? 0) : { glossary: [], notes: [] };
+  const blocks = readingOrder(input.blocks, input.rtl ?? true);
 
   let batches = 0;
   let failed = 0;
   let lastError = '';
 
-  for (let i = 0; i < input.blocks.length; i += BATCH) {
-    const batch = input.blocks.slice(i, i + BATCH);
+  for (let i = 0; i < blocks.length; i += PAGE_BATCH) {
+    const batch = blocks.slice(i, i + PAGE_BATCH);
+    const neighbours = blocks.length > PAGE_BATCH ? blocks.filter((b) => !batch.includes(b)) : [];
+    const prompt = userPrompt(
+      { series, chapter: input.chapter, page: input.page, sourceName: src, ...memory, neighbours, withImage: Boolean(image) },
+      batch,
+    );
     batches++;
     let raw = '';
     try {
       const result = await generateText({
         model,
-        system:
-          `Voce traduz baloes de manga/HQ para ${dst}. O texto vem de OCR e pode ter ruido, ` +
-          'letras trocadas ou quebras estranhas: corrija o obvio antes de traduzir. Mantenha registro, ' +
-          `girias e onomatopeias naturais em ${dst}. Se um bloco for so ruido, devolva string vazia. ` +
-          'O texto vai ser letreirado dentro do balao original: prefira a formulacao mais curta que ' +
-          'preserve o sentido, sem inventar conteudo. ' +
-          'Responda SOMENTE um array JSON [{"id":number,"pt":string}], sem comentarios.',
-        prompt:
-          `Obra: ${input.series ?? 'desconhecida'}${input.chapter ? ` — capitulo ${input.chapter}` : ''}\n` +
-          `Idioma de origem: ${src}\n\nBlocos:\n${JSON.stringify(batch, null, 0)}`,
+        system: systemPrompt(dst, target),
+        ...(image
+          ? {
+              messages: [
+                {
+                  role: 'user' as const,
+                  content: [
+                    { type: 'text' as const, text: prompt },
+                    { type: 'file' as const, data: image, mediaType: image.slice(5, image.indexOf(';')) },
+                  ],
+                },
+              ],
+            }
+          : { prompt }),
         temperature: 0.2,
-        maxOutputTokens: Math.max(config.ai.maxTokens, batch.length * 160 + 600),
+        maxOutputTokens: Math.max(config.ai.maxTokens, batch.length * 160 + 900),
+        ...noThinking(providerName),
         maxRetries: 0,
         abortSignal: AbortSignal.timeout(config.ai.timeoutMs),
       });
       raw = result.text;
-      out.push(...parseJsonArray<{ id: number; pt: string }>(raw));
+      const reply = parseReply(raw);
+      out.push(...reply.translations);
+      if (series) {
+        await remember(series, target, chapter, input.page ?? -1, {
+          glossary: reply.glossary,
+          note: input.page === undefined ? undefined : reply.note,
+        });
+      }
     } catch (err) {
       failed++;
       lastError = (err as Error).message;
-      console.error(`[traducao/${providerName}] lote ${i / BATCH} falhou: ${lastError}`);
+      console.error(`[traducao/${providerName}] lote ${i / PAGE_BATCH} falhou: ${lastError}`);
       if (raw) console.error(`[traducao/${providerName}] resposta crua: ${raw.slice(0, 300)}`);
       out.push(...batch.map((b) => ({ id: b.id, pt: '' })));
     }
@@ -238,6 +280,7 @@ export async function visionTranslate(input: VisionInput): Promise<{ original: s
       },
     ],
     maxOutputTokens: config.ai.maxTokens,
+    ...noThinking(providerName),
     maxRetries: 0,
     abortSignal: AbortSignal.timeout(config.ai.timeoutMs),
   });
@@ -289,6 +332,7 @@ export async function explainStream(input: ExplainInput): Promise<ReadableStream
     messages,
     temperature: 0.4,
     maxOutputTokens: config.ai.maxTokens,
+    ...noThinking(providerName),
     maxRetries: 0,
     abortSignal: AbortSignal.timeout(config.ai.timeoutMs),
   });

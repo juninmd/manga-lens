@@ -2,6 +2,8 @@ import { createWorker, type Worker } from 'tesseract.js';
 import { translate } from './api.ts';
 import { api } from './base.ts';
 import { langLabel } from './ui.ts';
+import { planTargets, type Detection, type OcrTarget } from './region-plan.ts';
+import { detectText } from './text-detector.ts';
 
 /** Mascara do balao em coordenadas reduzidas, relativa ao bbox do bloco. */
 export interface BalloonMask {
@@ -564,7 +566,12 @@ interface Box {
   h: number;
 }
 
-function crop(source: HTMLCanvasElement, r: Box, pad: number): HTMLCanvasElement {
+/**
+ * `inside` (coordenadas da pagina original) branqueia o que fica fora do balao:
+ * contorno e arte vizinha dentro do recorte viravam letras falsas no OCR
+ * ("g N\) YES?..."), e sem margem branca o Tesseract comia letra de borda.
+ */
+function crop(source: HTMLCanvasElement, r: Box, pad: number, inside?: (x: number, y: number) => boolean): HTMLCanvasElement {
   const x = Math.max(Math.round(r.x * UPSCALE) - pad, 0);
   const y = Math.max(Math.round(r.y * UPSCALE) - pad, 0);
   const w = Math.min(Math.round(r.w * UPSCALE) + pad * 2, source.width - x);
@@ -572,12 +579,31 @@ function crop(source: HTMLCanvasElement, r: Box, pad: number): HTMLCanvasElement
   const out = document.createElement('canvas');
   out.width = w;
   out.height = h;
-  const ctx = out.getContext('2d')!;
+  const ctx = out.getContext('2d', { willReadFrequently: Boolean(inside) })!;
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, w, h);
   ctx.drawImage(source, x, y, w, h, 0, 0, w, h);
+  if (inside) {
+    const px = ctx.getImageData(0, 0, w, h);
+    for (let yy = 0; yy < h; yy++) {
+      for (let xx = 0; xx < w; xx++) {
+        if (inside((x + xx) / UPSCALE, (y + yy) / UPSCALE)) continue;
+        px.data.fill(255, (yy * w + xx) * 4, (yy * w + xx) * 4 + 3);
+      }
+    }
+    ctx.putImageData(px, 0, 0);
+  }
   return out;
 }
+
+/** Ponto (pixels da pagina) dentro da mascara do balao, que vive esticada sobre `block`. */
+const insideMask =
+  (block: Box, mask: BalloonMask) =>
+  (x: number, y: number): boolean => {
+    const mx = Math.floor(((x - block.x) / block.w) * mask.w);
+    const my = Math.floor(((y - block.y) / block.h) * mask.h);
+    return mx >= 0 && my >= 0 && mx < mask.w && my < mask.h && mask.data[my * mask.w + mx] === 1;
+  };
 
 /** Quanto de `box` esta' dentro de `b` — texto que ja' saiu no balao nao repete. */
 function covered(b: OcrBlock, box: Box): boolean {
@@ -874,11 +900,12 @@ export async function recognizePage(
   lang: string,
   onProgress?: (p: OcrProgress) => void,
   signal?: AbortSignal,
+  opts: { neural?: boolean } = {},
 ): Promise<OcrBlock[]> {
   const previous = activeProgress;
   activeProgress = onProgress;
   try {
-    return await recognize(img, lang, onProgress, signal);
+    return await recognize(img, lang, onProgress, signal, opts.neural ?? true);
   } finally {
     activeProgress = previous;
   }
@@ -886,11 +913,38 @@ export async function recognizePage(
 
 export const isAbortError = (err: unknown): boolean => (err as { name?: string } | null)?.name === 'AbortError';
 
+/** Regiao da heuristica como alvo de OCR: o balao inteiro, com a propria mascara. */
+const legacyTarget =
+  (scale: number) =>
+  (r: Region): OcrTarget => {
+    const box = { x: r.x / scale, y: r.y / scale, w: r.w / scale, h: r.h / scale };
+    return { ocr: box, block: box, mask: { w: r.w, h: r.h, data: r.mask }, bg: r.bg, fg: r.fg, free: false };
+  };
+
+let detectorWarned = false;
+
+/**
+ * Detector neural (RT-DETR) quando disponivel; `null` = seguir so' com a
+ * heuristica. Offline, sidecar antigo ou modelo que nao baixou nao podem
+ * impedir o OCR — a pagina sai como saia antes do detector existir.
+ */
+async function neuralDetections(img: HTMLImageElement, onProgress?: (p: OcrProgress) => void): Promise<Detection[] | null> {
+  onProgress?.({ stage: 'detectando texto', ratio: 0.02 });
+  try {
+    return await detectText(img);
+  } catch (err) {
+    if (!detectorWarned) console.warn(`[ocr] detector neural indisponivel, usando a heuristica: ${(err as Error).message}`);
+    detectorWarned = true;
+    return null;
+  }
+}
+
 async function recognize(
   img: HTMLImageElement,
   lang: string,
   onProgress?: (p: OcrProgress) => void,
   signal?: AbortSignal,
+  neural = true,
 ): Promise<OcrBlock[]> {
   throwIfAborted(signal);
   const pool = await Promise.all(getPool(lang));
@@ -898,6 +952,13 @@ async function recognize(
   const page = preprocess(img);
   await yieldToUi();
   const { regions, scale } = await detectBalloons(img, signal);
+  const detections = neural ? await neuralDetections(img, onProgress) : null;
+  throwIfAborted(signal);
+  const targets = detections
+    ? planTargets(detections, regions, scale, { w: img.naturalWidth, h: img.naturalHeight })
+    : regions.map(legacyTarget(scale));
+  // com o detector, texto fora de balao ja' vem como alvo: a passada da pagina inteira sobra
+  const share = detections ? 1 : LOOSE_START;
 
   // vertical (japones) le melhor em coluna unica; o resto, bloco uniforme
   const vertical = lang.includes('vert');
@@ -907,7 +968,7 @@ async function recognize(
 
   // Um balao nao depende do outro: cada worker puxa o proximo da fila e reconhece
   // em paralelo. A ordem de leitura e' preservada pelo indice, nao pela chegada.
-  const found = new Array<OcrBlock | null>(regions.length).fill(null);
+  const found = new Array<OcrBlock | null>(targets.length).fill(null);
   let next = 0;
   let done = 0;
 
@@ -916,13 +977,12 @@ async function recognize(
       for (;;) {
         throwIfAborted(signal);
         const i = next++;
-        if (i >= regions.length) return;
-        const region = regions[i]!;
-        // deteccao trabalha reduzida; o OCR e a composicao usam o tamanho real
-        const box: Box = { x: region.x / scale, y: region.y / scale, w: region.w / scale, h: region.h / scale };
-        const { data } = await worker.recognize(crop(page, box, 12), {}, { text: true });
+        if (i >= targets.length) return;
+        const target = targets[i]!;
+        const inside = target.mask ? insideMask(target.block, target.mask) : undefined;
+        const { data } = await worker.recognize(crop(page, target.ocr, 12, inside), {}, { text: true });
         done++;
-        onProgress?.({ stage: `balao ${done}/${regions.length}`, ratio: (LOOSE_START * done) / regions.length });
+        onProgress?.({ stage: `balao ${done}/${targets.length}`, ratio: (share * done) / targets.length });
 
         const rawText = (data.text ?? '').replace(/\s*\n\s*/g, '\n').trim();
         const text = cleanOcrText(rawText);
@@ -930,23 +990,24 @@ async function recognize(
 
         const letters = text.replace(/[^\p{L}]/gu, '');
         const uppers = text.replace(/[^\p{Lu}]/gu, '');
-        found[i] = {
-          id: 0, // o id definitivo so' sai depois de descartar os vazios
-          text,
-          confidence: data.confidence ?? 0,
-          ...box,
-          mask: { w: region.w, h: region.h, data: region.mask },
-          bg: region.bg,
-          fg: region.fg,
-          upper: letters.length > 0 && uppers.length / letters.length > 0.7,
-        };
+        const upper = letters.length > 0 && uppers.length / letters.length > 0.7;
+        const common = { id: 0, text, confidence: data.confidence ?? 0, ...target.block, upper };
+        if (!target.free) {
+          // o id definitivo so' sai depois de descartar os vazios
+          found[i] = { ...common, mask: target.mask, bg: target.bg, fg: target.fg };
+          continue;
+        }
+        // sem balao: cor lisa quando o fundo e' liso; senao reconstroi por difusao
+        const flat = flatBackground(img, target.block);
+        const sampled = flat ?? sampleColors(img, target.block);
+        found[i] = { ...common, bg: sampled.bg, fg: sampled.fg, bgCanvas: flat ? undefined : diffuseFill(img, target.block) };
       }
     }),
   );
 
   throwIfAborted(signal);
   const balloons = found.filter((b): b is OcrBlock => b !== null);
-  const loose = await looseText(pool[0]!, page, img, balloons, onProgress, signal);
+  const loose = detections ? [] : await looseText(pool[0]!, page, img, balloons, onProgress, signal);
   throwIfAborted(signal);
   // id contiguo: a traducao volta casada por id, entao nao pode ter buraco
   return [...balloons, ...loose]
@@ -963,11 +1024,16 @@ export async function translateBlocks(
     engine?: string;
     target?: string;
     provider?: string;
+    /** pagina (base 0): posiciona a nota na memoria da obra */
+    page?: number;
+    rtl?: boolean;
+    pageImage?: string;
   },
 ): Promise<OcrBlock[]> {
   if (!blocks.length) return blocks;
   const { translations } = await translate({
-    blocks: blocks.map((b) => ({ id: b.id, text: b.text })),
+    // a posicao deixa o servidor montar a ordem de leitura (RTL/LTR) para o LLM
+    blocks: blocks.map((b) => ({ id: b.id, text: b.text, x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.w), h: Math.round(b.h) })),
     ...meta,
   });
   const map = new Map(translations.map((t) => [t.id, t.pt]));

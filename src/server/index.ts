@@ -8,7 +8,20 @@ import { enabledProviders, getProvider, searchAll } from './providers/index.ts';
 import type { SearchFilters, SeriesCard } from './providers/types.ts';
 import { assertInsideLibrary, localPagePaths } from './providers/local.ts';
 import { readZipEntry, readZipIndex } from './zip.ts';
-import { aiHealth, explainStream, getAvailableProviders, invalidateProvider, listModels, translateBlocks, visionTranslate } from './ai.ts';
+import {
+  aiHealth,
+  explainStream,
+  getAvailableProviders,
+  invalidateProvider,
+  listModels,
+  MAX_PAGE_IMAGE,
+  PAGE_IMAGE_RE,
+  translateBlocks,
+  visionTranslate,
+} from './ai.ts';
+import { sanitizeBlocks } from './page-text.ts';
+import { modelBytes } from './models.ts';
+import { forget, memorySummary } from './series-memory.ts';
 import { engines, targets, translateWithEngine, type Engine } from './translators.ts';
 
 const app = new Hono();
@@ -295,6 +308,18 @@ app.get('/api/tessdata/:file', async (c) => {
   }
 });
 
+/** Modelos de visao local (detector de texto), baixados uma vez e conferidos por hash. */
+app.get('/api/models/:name', async (c) => {
+  const name = c.req.param('name').replace(/\.onnx$/, '');
+  try {
+    const bytes = await modelBytes(name);
+    if (!bytes) return c.text('modelo desconhecido', 404);
+    return new Response(bytes, { headers: { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'private, max-age=86400' } });
+  } catch (err) {
+    return c.text(`nao consegui baixar o modelo: ${(err as Error).message}`, 502);
+  }
+});
+
 app.get('/api/ai/health', async (c) => {
   const prov = c.req.query('provider');
   return c.json(await aiHealth(prov ? normalizeProvider(prov) : undefined));
@@ -361,7 +386,18 @@ const runEngine = (engine: Exclude<Engine, 'auto'>, body: TranslateBody): Promis
 
 app.post('/api/ai/translate', async (c) => {
   const body = (await c.req.json()) as TranslateBody;
-  if (!Array.isArray(body?.blocks) || !body.blocks.length) return c.json({ error: 'blocks vazio' }, 400);
+  const blocks = sanitizeBlocks(body?.blocks);
+  if (!blocks) return c.json({ error: 'blocks vazio ou invalido' }, 400);
+  body.blocks = blocks;
+  if (body.pageImage !== undefined && (typeof body.pageImage !== 'string' || body.pageImage.length > MAX_PAGE_IMAGE || !PAGE_IMAGE_RE.test(body.pageImage))) {
+    return c.json({ error: 'imagem da pagina invalida' }, 400);
+  }
+  // viram chave da memoria da obra: mesmo teto das rotas /api/ai/memory
+  const shortText = (v: unknown, max: number): boolean => v === undefined || (typeof v === 'string' && v.length <= max);
+  if (!shortText(body.series, 300) || !shortText(body.target, 20) || !shortText(body.chapter, 40)) {
+    return c.json({ error: 'series, capitulo ou idioma invalido' }, 400);
+  }
+  if (body.page !== undefined && !(Number.isInteger(body.page) && body.page >= 0)) return c.json({ error: 'pagina invalida' }, 400);
   const chosen: Engine = body.engine ?? 'auto';
   if (chosen !== 'auto') {
     try {
@@ -390,6 +426,26 @@ app.post('/api/ai/translate', async (c) => {
     { error: `nenhum tradutor respondeu (limite ou rede). Tente de novo em 1 min. Detalhes: ${problems.join(' | ')}` },
     502,
   );
+});
+
+/** Memoria da obra (glossario + notas): consultavel e apagavel, porque erro de nome gravado se propaga. */
+const memoryKey = (series: unknown, target: unknown): { series: string; target: string } | null =>
+  typeof series === 'string' && series.trim() && series.length <= 300
+    ? { series, target: typeof target === 'string' && target ? target : 'pt-BR' }
+    : null;
+
+app.get('/api/ai/memory', async (c) => {
+  const key = memoryKey(c.req.query('series'), c.req.query('target'));
+  if (!key) return c.json({ error: 'series obrigatorio' }, 400);
+  return c.json(await memorySummary(key.series, key.target));
+});
+
+app.post('/api/ai/memory/clear', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { series?: unknown; target?: unknown } | null;
+  const key = memoryKey(body?.series, body?.target);
+  if (!key) return c.json({ error: 'series obrigatorio' }, 400);
+  await forget(key.series, key.target);
+  return c.json({ ok: true });
 });
 
 app.post('/api/ai/vision', async (c) => {

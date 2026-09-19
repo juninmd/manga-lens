@@ -23,6 +23,10 @@ export interface Settings {
   font: LetterFont;
   /** provider de IA (openrouter, ollama, openaicompatible) */
   aiProvider: AiProviderName;
+  /** modo IA: manda a pagina numerada ao modelo de visao junto do texto (mais tokens por pagina) */
+  aiSeesPage: boolean;
+  /** OCR acha o texto com o detector neural local (RT-DETR); desligado = so' a heuristica de baloes */
+  neuralDetect: boolean;
 }
 
 export interface Bookmark {
@@ -73,6 +77,8 @@ const DEFAULTS: Store = {
     targetLang: 'pt-BR',
     font: 'comic',
     aiProvider: 'ollama',
+    aiSeesPage: false,
+    neuralDetect: true,
   },
   favorites: {},
   progress: {},

@@ -53,14 +53,31 @@ capítulos. O ZIP é lido por um parser próprio, sem dependência externa.
 
 ## OCR e tradução
 
-1. **Detecção de balões** — a análise de layout do Tesseract se perde na arte e
-   devolve a página inteira num parágrafo só. Antes do OCR, o cliente acha as
-   manchas brancas fechadas (componentes conexos), filtra por área, preenchimento,
-   proporção e quantidade de tinta interna, e trata cada uma como uma região.
-2. **Reconhecimento** — cada região é recortada da página pré-processada (2×,
-   cinza, contraste) e reconhecida em PSM 6 (ou PSM 5 para japonês vertical).
-3. **Tradução** — os balões vão em lote para o LLM, que corrige o ruído do OCR e
-   devolve pt-BR ancorado por `id`.
+1. **Detecção de balões** — duas fontes, fundidas:
+   - um **detector neural local** ([RT-DETR-v2 do comic-text-and-bubble-detector](https://huggingface.co/ogkalu/comic-text-and-bubble-detector),
+     Apache-2.0, 11 MB int8) acha balão, texto em balão e **texto solto** (legenda,
+     SFX, balão colorido), treinado em mangá, webtoon, manhua e HQ ocidental. Roda
+     em WASM (`onnxruntime-web`) num Web Worker — a leitura não trava. O modelo é
+     baixado uma vez pelo sidecar, preso num commit e **conferido por SHA-256**;
+   - a heurística de **manchas brancas fechadas** (componentes conexos) dá o
+     formato exato e a cor de cada balão, que o letreiramento precisa.
+
+   Balão com um texto usa a máscara da heurística; balão que a heurística fundiu
+   com o vizinho é **dividido** pelas caixas do modelo; texto sem balão vira região
+   própria. Sem o modelo (offline, ou o toggle **Detector neural** desligado nas
+   opções), a heurística trabalha sozinha, como antes.
+2. **Reconhecimento** — cada texto é recortado da página pré-processada (2×,
+   cinza, contraste), com **tudo o que está fora do balão branqueado** (contorno e
+   arte vizinha viravam letras falsas), e reconhecido em PSM 6 (ou PSM 5 para
+   japonês vertical). Nas páginas com gabarito (`.workflow/5-competitive-quality`):
+   frases achadas 7/17 → 12/17, CER 0,56 → 0,35, 35% mais rápido.
+3. **Tradução** — a **página inteira** vai num pedido só ao LLM, com os balões na
+   **ordem de leitura** (faixas de altura, da direita para a esquerda em mangá). O
+   prompt leva a **memória da obra** — glossário de nomes com gênero e um resumo das
+   últimas páginas *anteriores* (nunca das seguintes) — e regras de nome próprio e
+   gênero neutro quando o original não diz. A resposta devolve a tradução ancorada
+   por `id` e o que aprendeu na página, gravado em `.cache/series-memory`. Lixo de
+   OCR repetido (`●●●●…`) é cortado antes de chegar a qualquer motor.
 4. **Letreiramento** — a tradução é **composta no lugar do texto original**, não
    colada numa caixa branca por cima. Para cada balão o cliente:
    - preenche os **buracos** da mancha detectada (as letras são furos dentro do
@@ -76,6 +93,21 @@ capítulos. O ZIP é lido por um parser próprio, sem dependência externa.
    zoom e o arrasto sem recalcular nada. A fonte do letreiro é selecionável
    (letreiro / sem serifa / serifada) — as fontes clássicas de scanlation (Wild
    Words, CC) são proprietárias e não podem ser embutidas.
+
+### Memória da obra e página para o modelo de visão
+
+No modo **IA**, as opções do leitor mostram a seção **Contexto da obra**:
+
+- quantos nomes e páginas a memória já tem, e **limpar memória da obra** — um nome
+  ou gênero gravado errado se repetiria no resto da obra, então dá para zerar;
+- **IA vê a página** (desligado por padrão): manda junto a página reduzida com o
+  `id` desenhado em cada balão ao **modelo de visão** do provedor. Acerta melhor quem
+  fala e o gênero (no paper de referência, xCOMET 0,758 → 0,776 em JA→EN), mas
+  custa mais tokens por página. Sem modelo de visão configurado, fica desabilitado.
+
+A memória é por obra **e** idioma de chegada, local (`.cache/series-memory`), com
+teto de 80 nomes e 60 notas; o prompt usa só as 5 notas mais recentes antes da
+página atual — contexto longo piora a tradução.
 
 ### Traduzindo os capítulos em sequência
 
@@ -159,7 +191,7 @@ A IA é integrada via **Vercel AI SDK**, permitindo escolher o provider através
 
 | Provider | `AI_PROVIDER` | Descrição |
 |---|---|---|
-| **Ollama** (padrão) | `ollama` | Execução local com modelos como `qwen2.5:7b-instruct` |
+| **Ollama** (padrão) | `ollama` | Execução local com modelos como `qwen2.5:7b-instruct`. Modelos com raciocínio (`qwen3.x`, `deepseek-r1`) rodam com `reasoning_effort: none` — senão gastam o limite de tokens pensando e devolvem resposta vazia |
 | **OpenRouter** | `openrouter` | Gateway em nuvem para dezenas de modelos (Llama 3.3, Claude, GPT, etc.) |
 | **OpenAI-Compatible** | `openaicompatible` | Qualquer endpoint compatível (LM Studio, vLLM, LiteLLM, Groq, etc.) |
 
@@ -246,9 +278,12 @@ node scripts/make-test-cbz.mjs    # cria .testlib com CBZ + pasta para o provide
 
 ## Limites conhecidos
 
-- A detecção de balões é heurística: página colorida ou HQ ocidental com texto
-  fora de balão cai no OCR da página inteira, que rende menos.
-- Regiões brancas grandes e vizinhas podem ser mescladas num balão só.
+- O OCR continua sendo o Tesseract: texto estilizado, japonês horizontal e
+  onomatopeia desenhada ainda saem com erro. Modelos treinados em mangá
+  (`hayai-ocr-v2`, `manga-ocr`) têm ONNX publicado, mas pesam 140+ MB — ver
+  `.workflow/6-ocr-translation-research/research.md`.
+- Sem o detector neural (offline no primeiro uso, ou desligado), página colorida e
+  texto fora de balão voltam a depender da passada de página inteira, que rende menos.
 - MangaPill e Weeb Central são HTML: mudança de layout no site quebra o parser
   (o provider cai sozinho, sem derrubar a busca).
 - Capítulo do MangaDex com `pages: 0` é link externo e fica fora da lista.
