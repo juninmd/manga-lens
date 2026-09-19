@@ -25,6 +25,18 @@ export function collapseRepeats(text: string): string {
     .slice(0, MAX_BLOCK_CHARS);
 }
 
+/** chines e japones nao separam palavras; coreano separa, entao Hangul fica de fora */
+const CJK = '\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}ー、。！？';
+const CJK_BREAK = new RegExp(`([${CJK}])\\s*\\n\\s*(?=[${CJK}])`, 'gu');
+
+/** Linha do OCR e' diagramacao do balao, nao do texto: o LLM a copiava palavra por palavra. */
+const flattenLines = (text: string): string =>
+  text
+    .replace(CJK_BREAK, '$1')
+    .replace(/(\p{L})-\s*\n\s*(?=\p{L})/gu, '$1-')
+    .replace(/\s+/g, ' ')
+    .trim();
+
 /** Valida o corpo vindo da rede; `null` = recusar com 400. */
 export function sanitizeBlocks(raw: unknown): PageBlock[] | null {
   if (!Array.isArray(raw) || !raw.length || raw.length > MAX_BLOCKS) return null;
@@ -35,7 +47,9 @@ export function sanitizeBlocks(raw: unknown): PageBlock[] | null {
     // a traducao volta casada por id: repetido, um balao sobrescreveria o outro
     if (seen.has(item.id as number)) return null;
     seen.add(item.id as number);
-    const block: PageBlock = { id: item.id as number, text: collapseRepeats(item.text) };
+    // corta antes das regex (o corpo vem da rede); a folga deixa o colapso de repeticao encolher o texto
+    const raw = item.text.slice(0, MAX_BLOCK_CHARS * 4);
+    const block: PageBlock = { id: item.id as number, text: collapseRepeats(flattenLines(raw)) };
     if (finite(item.x) && finite(item.y) && finite(item.w) && finite(item.h) && item.w > 0 && item.h > 0) {
       Object.assign(block, { x: item.x, y: item.y, w: item.w, h: item.h });
     }

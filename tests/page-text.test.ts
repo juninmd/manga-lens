@@ -28,6 +28,28 @@ describe('sanitizeBlocks', () => {
     expect(sanitizeBlocks(Array.from({ length: MAX_BLOCKS + 1 }, (_, id) => ({ id, text: 'a' })))).toBeNull();
   });
 
+  test('quebras de linha do OCR viram uma frase so (o LLM espelhava uma palavra por linha)', () => {
+    const out = sanitizeBlocks([
+      { id: 0, text: 'IT\nIS ALL\n  YOUR\r\nFAULT!' },
+      { id: 1, text: 'MADE A THOUSAND DOPPEL-\nGANGERS' },
+    ]);
+    expect(out?.map((b) => b.text)).toEqual(['IT IS ALL YOUR FAULT!', 'MADE A THOUSAND DOPPEL-GANGERS']);
+  });
+
+  test('japones nao tem espaco entre palavras: coluna quebrada se junta sem espaco', () => {
+    expect(sanitizeBlocks([{ id: 0, text: 'うずまき\nナルトだ\n火影に\nなる！' }])?.[0]?.text).toBe('うずまきナルトだ火影になる！');
+    // coreano separa palavras com espaco: a quebra vira espaco, como no latim
+    expect(sanitizeBlocks([{ id: 0, text: '나는\n호카게가' }])?.[0]?.text).toBe('나는 호카게가');
+  });
+
+  test('bloco gigante vindo da rede e cortado antes das regex (custo nao cresce com o corpo)', () => {
+    const huge = 'ab cd ef gh '.repeat(20_000_000 / 12);
+    const t0 = performance.now();
+    const out = sanitizeBlocks([{ id: 0, text: huge }]);
+    expect(performance.now() - t0).toBeLessThan(100);
+    expect(out?.[0]?.text.length).toBeLessThanOrEqual(MAX_BLOCK_CHARS);
+  });
+
   test('mantem caixa valida e descarta caixa quebrada sem recusar o bloco', () => {
     const out = sanitizeBlocks([
       { id: 0, text: 'ok', x: 10, y: 20, w: 30, h: 40 },
