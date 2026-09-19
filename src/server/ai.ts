@@ -1,6 +1,7 @@
 import { generateText, streamText, type LanguageModel, type ModelMessage } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
+import { realign } from './align.ts';
 import { config, getProviderConfig, normalizeProvider, type AiProvider } from './config.ts';
 import { readingOrder, type PageBlock } from './page-text.ts';
 import { contextFor, remember } from './series-memory.ts';
@@ -34,8 +35,15 @@ function getProviderInstance(providerName: AiProvider) {
   return inst;
 }
 
-/** Modelo pensante do Ollama (qwen3.x, deepseek-r1) gasta o limite raciocinando e devolve texto vazio. */
-const noThinking = (p: AiProvider) => (p === 'ollama' ? { providerOptions: { ollama: { reasoningEffort: 'none' } } } : {});
+/**
+ * So' no Ollama (outro servidor OpenAI-compativel pode recusar os campos): modelo pensante
+ * (qwen3.x, deepseek-r1) gastava o limite raciocinando e devolvia vazio; `json` liga a
+ * gramatica de JSON, porque o 7B quebrava aspas e escapes em ~5% das paginas.
+ */
+const ollamaOptions = (p: AiProvider, json = false) =>
+  p === 'ollama'
+    ? { providerOptions: { ollama: { reasoningEffort: 'none', ...(json ? { response_format: { type: 'json_object' } } : {}) } } }
+    : {};
 
 export function getLanguageModel(providerName: AiProvider, modelId: string): LanguageModel {
   const p = getProviderInstance(providerName);
@@ -217,16 +225,26 @@ export async function translateBlocks(input: TranslateInput): Promise<{ id: numb
           : { prompt }),
         temperature: 0.2,
         maxOutputTokens: Math.max(config.ai.maxTokens, batch.length * 160 + 900),
-        ...noThinking(providerName),
+        ...ollamaOptions(providerName, true),
         maxRetries: 0,
         abortSignal: AbortSignal.timeout(config.ai.timeoutMs),
       });
       raw = result.text;
       const reply = parseReply(raw);
-      out.push(...reply.translations);
+      if (reply.partial) {
+        console.error(
+          `[traducao/${providerName}] resposta cortada (${result.finishReason}): ${reply.translations.length} de ${batch.length} baloes aproveitados`,
+        );
+      }
+      out.push(...realign(reply.translations, batch));
       if (series) {
+        // termo que nao esta' no texto do lote nao foi aprendido aqui: o 7B inventava personagens
+        const seen = batch.map((b) => b.text).join(' ').toLowerCase();
+        const learned = Array.isArray(reply.glossary)
+          ? (reply.glossary as { orig?: unknown }[]).filter((g) => typeof g?.orig === 'string' && seen.includes(g.orig.trim().toLowerCase()))
+          : [];
         await remember(series, target, chapter, input.page ?? -1, {
-          glossary: reply.glossary,
+          glossary: learned,
           note: input.page === undefined ? undefined : reply.note,
         });
       }
@@ -280,7 +298,7 @@ export async function visionTranslate(input: VisionInput): Promise<{ original: s
       },
     ],
     maxOutputTokens: config.ai.maxTokens,
-    ...noThinking(providerName),
+    ...ollamaOptions(providerName),
     maxRetries: 0,
     abortSignal: AbortSignal.timeout(config.ai.timeoutMs),
   });
@@ -332,7 +350,7 @@ export async function explainStream(input: ExplainInput): Promise<ReadableStream
     messages,
     temperature: 0.4,
     maxOutputTokens: config.ai.maxTokens,
-    ...noThinking(providerName),
+    ...ollamaOptions(providerName),
     maxRetries: 0,
     abortSignal: AbortSignal.timeout(config.ai.timeoutMs),
   });

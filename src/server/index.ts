@@ -379,6 +379,12 @@ const AUTO_ORDER = ['google', 'mymemory', 'llm'] as const;
 
 type TranslateBody = Parameters<typeof translateBlocks>[0] & { engine?: Engine };
 
+/**
+ * Obra/capitulo vao para o prompt e para a memoria: quebra de linha forjaria uma "nota" de outra pagina.
+ * Normaliza em vez de recusar porque titulo raspado traz `\n` do HTML (stripTags so' apara as pontas).
+ */
+const oneLine = (s: string): string => s.replace(/[\p{Cc}\p{Zl}\p{Zp}]+/gu, ' ').trim();
+
 const runEngine = (engine: Exclude<Engine, 'auto'>, body: TranslateBody): Promise<{ id: number; pt: string }[]> =>
   engine === 'llm'
     ? translateBlocks(body)
@@ -393,6 +399,9 @@ app.post('/api/ai/translate', async (c) => {
     return c.json({ error: 'imagem da pagina invalida' }, 400);
   }
   // viram chave da memoria da obra: mesmo teto das rotas /api/ai/memory
+  for (const field of ['series', 'target', 'chapter'] as const) {
+    if (typeof body[field] === 'string') body[field] = oneLine(body[field]);
+  }
   const shortText = (v: unknown, max: number): boolean => v === undefined || (typeof v === 'string' && v.length <= max);
   if (!shortText(body.series, 300) || !shortText(body.target, 20) || !shortText(body.chapter, 40)) {
     return c.json({ error: 'series, capitulo ou idioma invalido' }, 400);
@@ -430,8 +439,8 @@ app.post('/api/ai/translate', async (c) => {
 
 /** Memoria da obra (glossario + notas): consultavel e apagavel, porque erro de nome gravado se propaga. */
 const memoryKey = (series: unknown, target: unknown): { series: string; target: string } | null =>
-  typeof series === 'string' && series.trim() && series.length <= 300
-    ? { series, target: typeof target === 'string' && target ? target : 'pt-BR' }
+  typeof series === 'string' && oneLine(series) && oneLine(series).length <= 300
+    ? { series: oneLine(series), target: typeof target === 'string' && target ? oneLine(target) : 'pt-BR' }
     : null;
 
 app.get('/api/ai/memory', async (c) => {

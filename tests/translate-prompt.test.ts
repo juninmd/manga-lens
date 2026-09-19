@@ -30,6 +30,25 @@ describe('parseReply', () => {
 
   test('resposta sem JSON vira erro explicito', () => {
     expect(() => parseReply('desculpe, nao posso')).toThrow('sem JSON');
+    // cortada antes de fechar qualquer par: nada a salvar, continua sendo erro
+    expect(() => parseReply('{"translations":[{"id":0,"pt":"Esta e a primeira草稿草稿草稿')).toThrow('sem JSON');
+  });
+
+  test('modelo em loop num balao nao derruba os outros da pagina (visto no cap. 1 com 7B)', () => {
+    const raw =
+      '{\n  "translations": [\n    {"id":0, "pt":"VIROU O PALHACO DA TURMA..."},\n' +
+      '    {"id":1, "pt":"SEM MEUS PAIS... \\"NINGUEM\\" ME ELOGIAVA."},\n' +
+      '    {"id":8, "pt":"DOIS, DOIS, DOIS, DOIS, DOIS, DOIS,';
+    const r = parseReply(raw);
+    expect(r.translations).toEqual([
+      { id: 0, pt: 'VIROU O PALHACO DA TURMA...' },
+      { id: 1, pt: 'SEM MEUS PAIS... "NINGUEM" ME ELOGIAVA.' },
+    ]);
+    expect(r.partial).toBe(true);
+    expect(parseReply('{"translations":[{"id":0,"pt":"ok"}]}').partial).toBeUndefined();
+    // o eco sobrevive ao corte: o realinhamento ainda tem prova nos pares salvos
+    const cut = parseReply('{"translations":[{"id":0,"src":"NOT YET","pt":"Ainda nao!"},{"id":1,"src":"THIS","pt":"DOIS, DOIS');
+    expect(cut.translations).toEqual([{ id: 0, src: 'NOT YET', pt: 'Ainda nao!' }]);
   });
 });
 
@@ -58,5 +77,24 @@ describe('prompts', () => {
     expect(systemPrompt('portugues do Brasil', 'pt-BR')).toContain('construcao neutra');
     expect(systemPrompt('portugues do Brasil', 'pt-BR')).toContain('Conto com voce!');
     expect(systemPrompt('ingles', 'en')).not.toContain('Conto com voce!');
+  });
+
+  test('memoria replayed e dado, nao instrucao (nota veio de OCR de imagem de terceiro)', () => {
+    const rule = systemPrompt('portugues do Brasil', 'pt-BR')
+      .split('\n')
+      .find((l) => l.startsWith('6.'))
+      ?.toLowerCase();
+    expect(rule).toContain('blocos');
+    expect(rule).toContain('glossario');
+    expect(rule).toContain('paginas anteriores');
+    expect(rule).toContain('nunca instrucao');
+  });
+
+  test('eco do original nao pode encurtar a traducao', () => {
+    // "src = 3 primeiras palavras" fez o 7B traduzir so' o comeco de 1/3 das falas longas
+    const s = systemPrompt('portugues do Brasil', 'pt-BR');
+    expect(s).toContain('"src":string');
+    expect(s).toContain('bloco INTEIRO');
+    expect(s).not.toContain('3 primeiras palavras');
   });
 });

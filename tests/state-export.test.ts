@@ -75,17 +75,19 @@ describe('exportStore / importStore', () => {
 
   test('JSON malformado falha sem tocar no estado atual', () => {
     populate();
-    const before = exportStore();
+    // `exportedAt` muda a cada milissegundo: comparar o backup inteiro falhava sob carga
+    const before = JSON.parse(exportStore()).store;
     const result = importStore('{ isso nao e json valido');
     expect(result.ok).toBe(false);
-    expect(exportStore()).toBe(before);
+    expect(JSON.parse(exportStore()).store).toEqual(before);
   });
 
   test('JSON valido mas sem o formato de backup falha sem tocar no estado atual', () => {
     populate();
-    const before = exportStore();
+    // `exportedAt` muda a cada milissegundo: comparar o backup inteiro falhava sob carga
+    const before = JSON.parse(exportStore()).store;
     const result = importStore(JSON.stringify({ hello: 'world' }));
     expect(result.ok).toBe(false);
-    expect(exportStore()).toBe(before);
+    expect(JSON.parse(exportStore()).store).toEqual(before);
   });
 });

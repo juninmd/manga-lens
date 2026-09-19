@@ -107,7 +107,13 @@ No modo **IA**, as opções do leitor mostram a seção **Contexto da obra**:
 
 A memória é por obra **e** idioma de chegada, local (`.cache/series-memory`), com
 teto de 80 nomes e 60 notas; o prompt usa só as 5 notas mais recentes antes da
-página atual — contexto longo piora a tradução.
+página atual — contexto longo piora a tradução. Só entra no glossário termo que
+aparece no texto da página (o modelo pequeno inventava personagens).
+
+Cada tradução volta com o eco do começo do original (`src`): quando o modelo pula
+uma fala curta e escorrega as seguintes, o servidor devolve cada fala ao balão
+que o eco identifica — balão vazio (refeito com **R**) em vez de fala no balão
+errado. Resposta cortada no limite de tokens aproveita os pares que fecharam.
 
 ### Traduzindo os capítulos em sequência
 
@@ -191,7 +197,7 @@ A IA é integrada via **Vercel AI SDK**, permitindo escolher o provider através
 
 | Provider | `AI_PROVIDER` | Descrição |
 |---|---|---|
-| **Ollama** (padrão) | `ollama` | Execução local com modelos como `qwen2.5:7b-instruct`. Modelos com raciocínio (`qwen3.x`, `deepseek-r1`) rodam com `reasoning_effort: none` — senão gastam o limite de tokens pensando e devolvem resposta vazia |
+| **Ollama** (padrão) | `ollama` | Execução local com modelos como `qwen2.5:7b-instruct`. Modelos com raciocínio (`qwen3.x`, `deepseek-r1`) rodam com `reasoning_effort: none` — senão gastam o limite de tokens pensando e devolvem resposta vazia. A tradução usa a saída JSON com gramática do Ollama (`response_format: json_object`) |
 | **OpenRouter** | `openrouter` | Gateway em nuvem para dezenas de modelos (Llama 3.3, Claude, GPT, etc.) |
 | **OpenAI-Compatible** | `openaicompatible` | Qualquer endpoint compatível (LM Studio, vLLM, LiteLLM, Groq, etc.) |
 
@@ -284,6 +290,10 @@ node scripts/make-test-cbz.mjs    # cria .testlib com CBZ + pasta para o provide
   `.workflow/6-ocr-translation-research/research.md`.
 - Sem o detector neural (offline no primeiro uso, ou desligado), página colorida e
   texto fora de balão voltam a depender da passada de página inteira, que rende menos.
+- Com modelo local de 7B (`qwen2.5:7b-instruct`), o capítulo 1 de Naruto sai
+  inteiro (59 páginas, ~9 s/página numa RTX 4060 Ti), mas com erros de tradução
+  visíveis e erro de OCR que o glossário pode congelar ("OCEMON FOX"). Use
+  **limpar memória da obra** se isso acontecer, ou um modelo maior.
 - MangaPill e Weeb Central são HTML: mudança de layout no site quebra o parser
   (o provider cai sozinho, sem derrubar a busca).
 - Capítulo do MangaDex com `pages: 0` é link externo e fica fora da lista.
