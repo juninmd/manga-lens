@@ -228,10 +228,13 @@ export const getEngines = (): Promise<TranslateEngineInfo[]> => json('/api/trans
 export const getTargets = (): Promise<TargetLangInfo[]> => json('/api/translate/targets');
 
 export const translate = (body: {
-  blocks: { id: number; text: string }[];
+  blocks: { id: number; text: string; x?: number; y?: number; w?: number; h?: number }[];
   sourceLang?: string;
   series?: string;
   chapter?: string;
+  page?: number;
+  rtl?: boolean;
+  pageImage?: string;
   engine?: string;
   target?: string;
   provider?: string;
@@ -240,6 +243,21 @@ export const translate = (body: {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+  });
+
+export interface SeriesMemory {
+  glossary: { orig: string; pt: string; gender: 'm' | 'f' | '?' }[];
+  notes: { chapter: string; page: number; note: string }[];
+}
+
+export const seriesMemory = (series: string, target: string): Promise<SeriesMemory> =>
+  json(`/api/ai/memory?series=${encodeURIComponent(series)}&target=${encodeURIComponent(target)}`);
+
+export const clearSeriesMemory = (series: string, target: string): Promise<{ ok: boolean }> =>
+  json('/api/ai/memory/clear', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ series, target }),
   });
 
 export const visionTranslate = (body: {
