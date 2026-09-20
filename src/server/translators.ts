@@ -1,6 +1,6 @@
 import { HttpError, httpFetch } from './http.ts';
 
-export type Engine = 'auto' | 'llm' | 'google' | 'mymemory';
+export type Engine = 'auto' | 'llm' | 'google' | 'mymemory' | 'vision';
 
 export interface EngineInfo {
   id: Engine;
@@ -21,6 +21,12 @@ export const engines: EngineInfo[] = [
     name: 'IA (contexto)',
     needsAi: true,
     note: 'corrige ruido do OCR e entende girias; depende do endpoint OpenAI-compatible',
+  },
+  {
+    id: 'vision',
+    name: 'IA com visao (le a pagina)',
+    needsAi: true,
+    note: 'o modelo de visao le os baloes direto da imagem, sem Tesseract; exige Modelo de visao configurado',
   },
   {
     id: 'google',
@@ -140,19 +146,40 @@ export const isNoise = (text: string): boolean => {
  */
 const CONCURRENCY = Math.max(1, Number(process.env['TRANSLATE_CONCURRENCY'] ?? 5));
 
-/** map com teto de concorrencia, preservando a ordem da entrada. */
-async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const out = new Array<R>(items.length);
-  let next = 0;
-  const runner = async (): Promise<void> => {
-    for (;;) {
-      const i = next++;
-      if (i >= items.length) return;
-      out[i] = await fn(items[i]!);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, runner));
-  return out;
+/**
+ * O teto e' do processo, nao da requisicao: o leitor traduz varias paginas em
+ * paralelo, e um teto por chamada deixava N paginas x CONCURRENCY baloes
+ * batendo no Google ao mesmo tempo — exatamente a rajada que devolve 429.
+ */
+let inFlight = 0;
+const waiting: (() => void)[] = [];
+
+async function acquire(): Promise<void> {
+  if (inFlight < CONCURRENCY) {
+    inFlight++;
+    return;
+  }
+  await new Promise<void>((resolve) => waiting.push(resolve));
+  inFlight++;
+}
+
+function release(): void {
+  inFlight--;
+  waiting.shift()?.();
+}
+
+/** map com teto global de concorrencia, preservando a ordem da entrada. */
+async function mapPool<T, R>(items: T[], fn: (item: T) => Promise<R>): Promise<R[]> {
+  return Promise.all(
+    items.map(async (item) => {
+      await acquire();
+      try {
+        return await fn(item);
+      } finally {
+        release();
+      }
+    }),
+  );
 }
 
 /**
@@ -160,7 +187,7 @@ async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise
  * o filtro de lixo e a limpeza acontecem aqui antes de gastar requisicao.
  */
 export async function translateWithEngine(
-  engine: Exclude<Engine, 'llm' | 'auto'>,
+  engine: Exclude<Engine, 'llm' | 'auto' | 'vision'>,
   blocks: { id: number; text: string }[],
   sourceLang: string | undefined,
   targetLang?: string,
@@ -170,7 +197,7 @@ export async function translateWithEngine(
   const translate = engine === 'google' ? googleTranslate : myMemoryTranslate;
   let lastError = '';
 
-  const results = await mapPool(blocks, CONCURRENCY, async (block) => {
+  const results = await mapPool(blocks, async (block) => {
     const text = block.text.replace(/\s*\n\s*/g, ' ').trim();
     // ruido nao gasta requisicao — e tambem nao conta como tentativa
     if (isNoise(text)) return { id: block.id, pt: '', attempted: false, failed: false };

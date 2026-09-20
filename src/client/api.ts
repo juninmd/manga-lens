@@ -238,7 +238,7 @@ export const translate = (body: {
   engine?: string;
   target?: string;
   provider?: string;
-}): Promise<{ translations: { id: number; pt: string }[]; engine?: string }> =>
+}): Promise<{ translations: { id: number; pt: string; orig?: string }[]; engine?: string }> =>
   json('/api/ai/translate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

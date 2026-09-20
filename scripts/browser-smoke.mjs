@@ -110,21 +110,37 @@ try {
     { timeout: 60_000 },
   );
 
-  // OCR de verdade (baixa o modelo e reconhece a pagina)
-  await page.locator('button:has-text("OCR")').click();
+  // OCR de verdade (baixa o modelo e reconhece a pagina). Com `autoTranslate`
+  // ligado a execucao do capitulo ja' comecou sozinha e o botao virou "cancelar":
+  // clicar ali abortaria justamente o que o teste quer medir.
+  const ocrBtn = page.locator('button:has-text("OCR")');
+  if (await ocrBtn.count()) await ocrBtn.first().click();
   // Esperar pelo TEXTO da barra de status era corrida: com a fila adiantando
   // paginas em paralelo, o "N baloes" que aparece pode ser de outra pagina, e a
   // medicao saia da capa em vez da pagina aberta. O cache e' o sinal exato — a
-  // chave termina no indice da pagina (`:10` = pagina 11).
+  // chave e' `capitulo:pagina:tipo` (`:10:t` = pagina 11, reconhecida pelo OCR).
   await page.waitForFunction(
-    () => (window.__mangaLens?.translatedKeys?.() ?? []).some((k) => k.endsWith(':10')),
+    () => (window.__mangaLens?.translatedKeys?.() ?? []).some((k) => /:10:[tv]$/.test(k)),
     null,
     { timeout: 300_000 },
   );
+  // o OCR grava a pagina no cache antes de a traducao voltar: medir aqui lia
+  // sempre `pt` vazio e acusava defeito onde havia so' corrida
+  await page
+    .waitForFunction(
+      () => {
+        const key = (window.__mangaLens?.translatedKeys?.() ?? []).find((k) => /:10:[tv]$/.test(k));
+        const blocks = window.__mangaLens?.blocksFor?.(key) ?? [];
+        return blocks.some((b) => (b.pt ?? '').trim());
+      },
+      null,
+      { timeout: 120_000 },
+    )
+    .catch(() => undefined);
   const ocrStatus = await page.locator('.ml-ocr-status').innerText();
   // a traducao e' composta no canvas, nao em DOM: os baloes so' existem no cache
   const blocks = await page.evaluate(() => {
-    const key = (window.__mangaLens?.translatedKeys?.() ?? []).find((k) => k.endsWith(':10'));
+    const key = (window.__mangaLens?.translatedKeys?.() ?? []).find((k) => /:10:[tv]$/.test(k));
     return (window.__mangaLens?.blocksFor?.(key) ?? []).map((b) => ({ text: b.text, pt: b.pt ?? '' }));
   });
   record('OCR na pagina', blocks.length >= 3, `${ocrStatus} / ${blocks.length} baloes`);
@@ -159,6 +175,50 @@ try {
     `${painted.opaque ?? 0} pixels pintados de ${painted.total ?? 0}`,
   );
 
+  // tooltip do texto original: some rapido demais e' o defeito classico aqui —
+  // ele precisa sobreviver a caminhada do mouse ate' ele e a um pixel fora da caixa
+  const ttBox = await page.evaluate(() => {
+    // `.ml-sheet` nao carrega o indice da pagina: o rotulo da barra ("12 / 59") diz
+    // qual esta' no palco, e em modo pagina ha' exatamente uma folha montada
+    const shown = Number((document.querySelector('.ml-page-label')?.textContent ?? '').split('/')[0]?.trim()) - 1;
+    const sheet = document.querySelector('.ml-sheet');
+    if (!sheet || !Number.isInteger(shown)) return null;
+    const key = (window.__mangaLens?.translatedKeys?.() ?? []).find((k) => new RegExp(`:${shown}:[tv]$`).test(k));
+    const b = (window.__mangaLens?.blocksFor?.(key) ?? [])
+      .filter((x) => (x.text ?? '').trim())
+      .sort((p, q) => q.w * q.h - p.w * p.h)[0];
+    if (!b) return null;
+    const r = sheet.getBoundingClientRect();
+    const img = sheet.querySelector('img');
+    const sx = r.width / (img?.naturalWidth || 1);
+    const sy = r.height / (img?.naturalHeight || 1);
+    return { left: r.left + b.x * sx, top: r.top + b.y * sy, w: b.w * sx, h: b.h * sy };
+  });
+  if (ttBox) {
+    const ttVisible = () => page.evaluate(() => !document.querySelector('.ml-balloon-tooltip')?.hidden);
+    await page.mouse.move(ttBox.left + ttBox.w / 2 - 12, ttBox.top + ttBox.h / 2 - 12);
+    await page.mouse.move(ttBox.left + ttBox.w / 2, ttBox.top + ttBox.h / 2);
+    const aberto = await ttVisible();
+    const alvo = await page.evaluate(() => {
+      const r = document.querySelector('.ml-balloon-tooltip').getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    });
+    await page.mouse.move(alvo.x, alvo.y, { steps: 6 });
+    await new Promise((r) => setTimeout(r, 150));
+    const sobreviveu = await ttVisible();
+    // longe do balao e do tooltip ele precisa fechar, passada a carencia
+    await page.mouse.move(8, 8, { steps: 4 });
+    await new Promise((r) => setTimeout(r, 700));
+    const fechou = !(await ttVisible());
+    record(
+      'tooltip do original sobrevive ao mouse indo ate ele',
+      aberto && sobreviveu && fechou,
+      `abriu=${aberto} sobreviveu=${sobreviveu} fechou-ao-sair=${fechou}`,
+    );
+  } else {
+    record('tooltip do original sobrevive ao mouse indo ate ele', false, 'nenhum balao com texto para medir');
+  }
+
   // A fila trabalha uma pagina por vez e so' cruza para o capitulo seguinte depois
   // de esgotar o atual: cobrar essa virada no cronometro exigiria dezenas de OCRs.
   // O que da' para provar em tempo de teste e' o comportamento: ela avanca sozinha
@@ -181,6 +241,17 @@ try {
     'fila adianta paginas sozinha',
     advanced,
     `${doneBefore} -> ${queued.keys} paginas traduzidas, ${queued.pending} na fila`,
+  );
+  const bar = await page.evaluate(() => {
+    const host = document.querySelector('.ml-progress-item');
+    const fill = document.querySelector('.ml-progress-fill');
+    const p = window.__mangaLens?.progress?.() ?? { done: 0, total: 0 };
+    return { visible: Boolean(host) && !host.hidden, width: fill?.style.width ?? '', text: document.querySelector('.ml-progress-text')?.textContent ?? '', ...p };
+  });
+  record(
+    'barra de progresso do capitulo',
+    bar.visible && bar.total > 0 && bar.done > 0,
+    `${bar.text || 'sem rotulo'} (largura ${bar.width || '0'})`,
   );
   record(
     'fila ja enfileira o proximo capitulo',
@@ -219,11 +290,28 @@ try {
   const readRows = await page.locator('.ml-chapter.is-read').count();
   record('lista marca capitulo lido', readRows > 0, `${readRows} capitulo(s) marcados`);
 
-  // motor de traducao sem IA aparece na barra
+  // os motores e os modos vivem no popover de opcoes, nao mais na barra de cima
   await page.locator('.ml-chapter-open').first().click();
   await page.waitForSelector('.ml-reader.is-open .ml-sheet img', { timeout: 60_000 });
-  const engineOptions = await page.locator('.ml-reader-top select option').allInnerTexts();
+  await page.locator('#ml-btn-options').first().click();
+  await page.waitForSelector('.ml-popover .ml-segmented', { timeout: 15_000 });
+  const modes = await page.locator('.ml-popover .ml-segmented .ml-segmented-btn').allInnerTexts();
+  const engineOptions = await page.locator('.ml-popover select option').allInnerTexts();
   record('motor de traducao selecionavel', engineOptions.length >= 2, engineOptions.join(' / '));
+  record(
+    'modos de traducao: web, IA e visao',
+    modes.length === 3 && modes.some((m) => /visao/i.test(m)),
+    modes.join(' / '),
+  );
+  // o motor que exige IA tem modo proprio: oferecer no select do Tradutor Web
+  // levaria o usuario a escolher visao "sem IA" e receber erro de configuracao
+  record(
+    'select do Tradutor Web nao oferece motor de IA',
+    !engineOptions.some((o) => /visao|contexto/i.test(o)),
+    engineOptions.slice(0, 4).join(' / '),
+  );
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('.ml-popover', { state: 'hidden', timeout: 10_000 }).catch(() => undefined);
 
   // troca de modo de leitura
   await page.locator('button:has-text("tira")').click();

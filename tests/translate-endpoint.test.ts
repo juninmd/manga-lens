@@ -59,6 +59,14 @@ describe('POST /api/ai/translate', () => {
     expect(((await res.json()) as { engine: string }).engine).toBe('mymemory');
   });
 
+  test('motor de visao sem imagem da pagina falha explicando, nao com 500', async () => {
+    // o modelo le a pagina: sem a imagem nao ha' o que traduzir, e o cliente
+    // precisa da mensagem para saber que o problema nao e' o servidor
+    const res = await post({ engine: 'vision', sourceLang: 'ja', blocks: [{ id: 0, text: '' }] });
+    expect(res.status).toBe(502);
+    expect(((await res.json()) as { error: string }).error).toMatch(/visao|imagem/i);
+  });
+
   test('corpo sem blocos e recusado com 400', async () => {
     for (const body of [{ blocks: [] }, {}, { blocks: 'nao e lista' }]) {
       expect((await post(body)).status).toBe(400);

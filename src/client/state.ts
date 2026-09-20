@@ -1,9 +1,9 @@
 export type ReadingMode = 'single' | 'double' | 'strip';
 export type FitMode = 'width' | 'page' | 'height' | 'free';
 
-export type TranslateEngine = 'auto' | 'llm' | 'google' | 'mymemory';
+export type TranslateEngine = 'auto' | 'llm' | 'google' | 'mymemory' | 'vision';
 export type LetterFont = 'comic' | 'sans' | 'serif';
-export type TranslateMode = 'ocr' | 'ai';
+export type TranslateMode = 'ocr' | 'ai' | 'vision';
 export type AiProviderName = 'openrouter' | 'ollama' | 'openaicompatible';
 
 export interface Settings {
@@ -11,11 +11,12 @@ export interface Settings {
   fit: FitMode;
   rtl: boolean;
   ocrLang: string;
-  autoTranslate: boolean;
   showOriginal: boolean;
   invertScroll: boolean;
   engine: TranslateEngine;
-  /** modo de traducao: OCR tradicional (motores web) ou IA (LLM) */
+  /** traduz o capitulo inteiro sozinho assim que ele abre */
+  autoTranslate: boolean;
+  /** modo de traducao: OCR tradicional (motores web), IA (LLM sobre o texto do OCR) ou visao (o modelo le a pagina) */
   translateMode: TranslateMode;
   /** idioma de chegada da traducao (pt-BR, en, es...) */
   targetLang: string;

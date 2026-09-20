@@ -17,6 +17,7 @@ import {
   MAX_PAGE_IMAGE,
   PAGE_IMAGE_RE,
   translateBlocks,
+  visionBlocks,
   visionTranslate,
 } from './ai.ts';
 import { sanitizeBlocks } from './page-text.ts';
@@ -385,10 +386,11 @@ type TranslateBody = Parameters<typeof translateBlocks>[0] & { engine?: Engine }
  */
 const oneLine = (s: string): string => s.replace(/[\p{Cc}\p{Zl}\p{Zp}]+/gu, ' ').trim();
 
-const runEngine = (engine: Exclude<Engine, 'auto'>, body: TranslateBody): Promise<{ id: number; pt: string }[]> =>
-  engine === 'llm'
-    ? translateBlocks(body)
-    : translateWithEngine(engine, body.blocks, body.sourceLang, body.target);
+const runEngine = (engine: Exclude<Engine, 'auto'>, body: TranslateBody): Promise<{ id: number; pt: string; orig?: string }[]> => {
+  if (engine === 'llm') return translateBlocks(body);
+  if (engine === 'vision') return visionBlocks(body);
+  return translateWithEngine(engine, body.blocks, body.sourceLang, body.target);
+};
 
 app.post('/api/ai/translate', async (c) => {
   const body = (await c.req.json()) as TranslateBody;

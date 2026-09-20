@@ -802,6 +802,37 @@ textarea:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.ml-progress-item[hidden] {
+  display: none;
+}
+.ml-progress {
+  width: 120px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 12%);
+  overflow: hidden;
+}
+.ml-progress-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 200ms ease;
+}
+.ml-progress-text {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ml-progress-fill {
+    transition: none;
+  }
+}
+@media (max-width: 640px) {
+  .ml-progress {
+    width: 64px;
+  }
+}
 .ml-dot {
   width: 8px;
   height: 8px;
@@ -1825,6 +1856,8 @@ body.is-reading #toasts {
   box-shadow: 0 10px 32px rgba(0, 0, 0, 0.65), 0 0 18px rgba(255, 122, 69, 0.25);
   border-radius: 8px;
   padding: 10px 14px;
+  /* transparente ao ponteiro de proposito: o palco continua recebendo os moves
+     (ver `overTooltip`) e um clique atras dele ainda vira a pagina */
   pointer-events: none;
   font-size: 13px;
   line-height: 1.5;
