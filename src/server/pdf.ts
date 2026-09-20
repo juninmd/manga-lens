@@ -9,9 +9,35 @@ async function lib(): Promise<PdfjsModule> {
   return pdfjs;
 }
 
+/** Objeto do pdf.js que o store devolve para uma imagem desenhada na pagina. */
+interface PdfImage {
+  width: number;
+  height: number;
+  kind?: number;
+  data?: Uint8Array;
+}
+
+/** Deposito de objetos do pdf.js: resolve por callback, nao por promise. */
+interface PdfObjs {
+  has?(name: string): boolean;
+  get(name: string, cb: (value: PdfImage | null) => void): void;
+}
+
+/**
+ * A fatia do pdf.js que este modulo usa. O pacote nao publica tipo para ela, e
+ * declarar so' o necessario deixa o compilador cobrar cada campo — com `any`
+ * um `getOperatorList` renomeado numa versao nova passaria batido.
+ */
+interface PdfPage {
+  getOperatorList(): Promise<{ fnArray: number[]; argsArray: unknown[][] }>;
+  getTextContent(): Promise<{ items: { str?: string }[] }>;
+  objs?: PdfObjs;
+  commonObjs?: PdfObjs;
+}
+
 interface Doc {
   numPages: number;
-  getPage(n: number): Promise<any>;
+  getPage(n: number): Promise<PdfPage>;
   destroy(): Promise<void>;
 }
 
@@ -40,7 +66,7 @@ export async function pdfPageCount(path: string): Promise<number> {
 }
 
 /** Imagens desenhadas na pagina, da maior para a menor. */
-async function imagesOf(page: any): Promise<string[]> {
+async function imagesOf(page: PdfPage): Promise<string[]> {
   const { OPS } = await lib();
   const ops = await page.getOperatorList();
   const names: string[] = [];
@@ -54,8 +80,11 @@ async function imagesOf(page: any): Promise<string[]> {
 }
 
 /** `objs` resolve por callback; imagem grande as vezes mora no `commonObjs`. */
-function resolveImage(page: any, name: string): Promise<any> {
+function resolveImage(page: PdfPage, name: string): Promise<PdfImage | null> {
   const store = page.objs?.has?.(name) ? page.objs : page.commonObjs?.has?.(name) ? page.commonObjs : page.objs;
+  // com `any` isto passava batido: pagina sem nenhum objeto desenhado nao tem
+  // `objs`, e o `.get` estourava dentro da Promise
+  if (!store) return Promise.resolve(null);
   return new Promise((resolve) => {
     try {
       store.get(name, resolve);

@@ -410,7 +410,7 @@ export class Reader {
         const imgX = canvasX - sheet.x;
         const imgY = canvasY - sheet.y;
         const blocks = this.ocrCache.get(this.pageKey(sheet.page));
-        if (!blocks || !blocks.length) continue;
+        if (!blocks?.length) continue;
 
         for (let i = blocks.length - 1; i >= 0; i--) {
           const b = blocks[i]!;
@@ -464,7 +464,7 @@ export class Reader {
     const origEl = el('div', { class: 'ml-tooltip-original' }, origText);
     this.tooltipEl.append(header, origEl);
 
-    if (block.pt && block.pt.trim() && block.pt.trim() !== origText) {
+    if (block.pt?.trim() && block.pt.trim() !== origText) {
       const transEl = el(
         'div',
         { class: 'ml-tooltip-translated' },

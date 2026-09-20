@@ -555,7 +555,10 @@ export class Viewer {
     const step = (): void => {
       vx *= 0.92;
       vy *= 0.92;
-      if (Math.hypot(vx, vy) < 0.5) return this.stopInertia();
+      if (Math.hypot(vx, vy) < 0.5) {
+        this.stopInertia();
+        return;
+      }
       this.panBy(vx, vy);
       this.inertia = requestAnimationFrame(step);
     };

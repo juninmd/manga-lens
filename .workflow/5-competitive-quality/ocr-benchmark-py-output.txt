@@ -7,9 +7,9 @@ Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF
 [32m2026-08-30 13:23:16.806[0m | [1mINFO    [0m | [36mmanga_ocr.ocr[0m:[36m__init__[0m:[36m37[0m - [1mOCR ready[0m
 Downloading detection model, please wait. This may take several minutes depending upon your network connection.
 Downloading recognition model, please wait. This may take several minutes depending upon your network connection.
-C:\Users\jr_ac\AppData\Roaming\Python\Python314\site-packages\torch\ao\nn\quantized\dynamic\modules\rnn.py:162: UserWarning: torch.quantize_per_tensor, torch.quantize_per_channel and other quantized tensor creation functions that produce tensors with dtype torch.quint8, torch.qint8, and torch.qint32 are deprecated and will be removed in a future PyTorch release. Please see https://github.com/pytorch/pytorch/issues/184982 for more information. (Triggered internally at C:\actions-runner\_work\pytorch\pytorch\aten\src\ATen\quantized\Quantizer.cpp:116.)
+C:\Users\<usuario>\AppData\Roaming\Python\Python314\site-packages\torch\ao\nn\quantized\dynamic\modules\rnn.py:162: UserWarning: torch.quantize_per_tensor, torch.quantize_per_channel and other quantized tensor creation functions that produce tensors with dtype torch.quint8, torch.qint8, and torch.qint32 are deprecated and will be removed in a future PyTorch release. Please see https://github.com/pytorch/pytorch/issues/184982 for more information. (Triggered internally at C:\actions-runner\_work\pytorch\pytorch\aten\src\ATen\quantized\Quantizer.cpp:116.)
   w_ih = torch.quantize_per_tensor(
-C:\Users\jr_ac\AppData\Roaming\Python\Python314\site-packages\torch\utils\data\dataloader.py:759: UserWarning: 'pin_memory' argument is set as true but no accelerator is found, then device pinned memory won't be used.
+C:\Users\<usuario>\AppData\Roaming\Python\Python314\site-packages\torch\utils\data\dataloader.py:759: UserWarning: 'pin_memory' argument is set as true but no accelerator is found, then device pinned memory won't be used.
   super().__init__(loader)
   [jp1-horizontal-clean] CER=0.00 4199ms
     ref: 'おはようございます'

@@ -7,10 +7,13 @@
     "dev": "bun run build:client && bun --watch src/server/index.ts",
     "start": "bun run build:client && bun src/server/index.ts",
     "build:client": "bun run scripts/build-client.ts",
-    "lint": "oxlint --deny-warnings src scripts tests",
+    "lint": "biome lint --error-on-warnings",
+    "lint:fix": "biome lint --write",
     "typecheck": "tsc --noEmit",
     "test": "bun test tests",
-    "check": "bun run lint && bun run typecheck && bun run test",
+    "secrets": "bun run scripts/secret-scan.ts",
+    "secrets:history": "bun run scripts/secret-scan.ts --all",
+    "check": "bun run lint && bun run typecheck && bun run secrets && bun run test",
     "smoke": "bun run scripts/smoke.ts",
     "smoke:browser": "node scripts/browser-smoke.mjs",
     "smoke:canvas": "node scripts/canvas-fit-check.mjs",
@@ -32,9 +35,9 @@
     "tesseract.js": "^5.1.1"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.14",
     "@tauri-apps/cli": "^2",
     "@types/bun": "latest",
-    "oxlint": "1.80.0",
     "playwright": "^1.62.1",
     "typescript": "^5.7.2"
   }
