@@ -314,7 +314,10 @@ export class BookReader {
     const list = this.detail.chapters;
     const at = list.findIndex((c) => c.id === this.chapter?.id);
     const next = list[at + step];
-    if (!next) return toast(step > 0 ? 'ultimo capitulo' : 'primeiro capitulo');
+    if (!next) {
+      toast(step > 0 ? 'ultimo capitulo' : 'primeiro capitulo');
+      return;
+    }
     this.saveNow();
     this.onChapterChange?.(this.detail, next);
     void this.open(this.detail, next, 0);

@@ -411,12 +411,14 @@ async function detectBalloons(
       if (y > y1) y1 = y;
       // sequencia com virgula no lugar de bloco: este laco roda por pixel da
       // pagina inteira e o corpo em uma linha e' o que mantem o custo baixo
-      /* oxlint-disable no-unused-expressions */
+      // biome-ignore lint/complexity/noCommaOperator: virgula no lugar de bloco mantem o corpo em uma linha; este laco roda por pixel da pagina
       if (x > 0 && !visited[p - 1] && gray[p - 1]! >= BRIGHT) (visited[p - 1] = 1), (stack[top++] = p - 1);
+      // biome-ignore lint/complexity/noCommaOperator: virgula no lugar de bloco mantem o corpo em uma linha; este laco roda por pixel da pagina
       if (x < w - 1 && !visited[p + 1] && gray[p + 1]! >= BRIGHT) (visited[p + 1] = 1), (stack[top++] = p + 1);
+      // biome-ignore lint/complexity/noCommaOperator: virgula no lugar de bloco mantem o corpo em uma linha; este laco roda por pixel da pagina
       if (y > 0 && !visited[p - w] && gray[p - w]! >= BRIGHT) (visited[p - w] = 1), (stack[top++] = p - w);
+      // biome-ignore lint/complexity/noCommaOperator: virgula no lugar de bloco mantem o corpo em uma linha; este laco roda por pixel da pagina
       if (y < h - 1 && !visited[p + w] && gray[p + w]! >= BRIGHT) (visited[p + w] = 1), (stack[top++] = p + w);
-      /* oxlint-enable no-unused-expressions */
     }
 
     const bw = x1 - x0 + 1;

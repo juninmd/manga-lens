@@ -1183,8 +1183,11 @@ textarea:focus-visible {
   *,
   *::before,
   *::after {
+    /* biome-ignore lint/complexity/noImportantStyles: o reset de movimento reduzido precisa vencer toda regra de animacao do app */
     animation-duration: 0.01ms !important;
+    /* biome-ignore lint/complexity/noImportantStyles: o reset de movimento reduzido precisa vencer toda regra de animacao do app */
     animation-iteration-count: 1 !important;
+    /* biome-ignore lint/complexity/noImportantStyles: o reset de movimento reduzido precisa vencer toda regra de animacao do app */
     transition-duration: 0.01ms !important;
   }
   .ml-btn-action-primary:hover:not(:disabled) {
@@ -1329,6 +1332,8 @@ textarea:focus-visible {
 }
 .ml-popover[hidden],
 .ml-popover-backdrop[hidden] {
+  /* biome-ignore lint/complexity/noImportantStyles: [hidden] tem de vencer o `display: flex`
+     da regra base, senao o popover fechado continua ocupando a tela */
   display: none !important;
 }
 .ml-popover-foot {

@@ -12,7 +12,9 @@ export interface ChatMessage {
   content: string | Array<{ type: string; text?: string; image_url?: { url: string } }>;
 }
 
-const providers = new Map<AiProvider, any>();
+type ProviderInstance = ReturnType<typeof createOpenRouter> | ReturnType<typeof createOpenAICompatible>;
+
+const providers = new Map<AiProvider, ProviderInstance>();
 const effectiveModels = new Map<AiProvider, string>();
 
 function getProviderInstance(providerName: AiProvider) {
@@ -66,7 +68,7 @@ export async function listModels(providerName: AiProvider = config.ai.provider):
     }).catch(() => null);
 
     // 2. Se falhar ou der 404, e for Ollama/porta 11434, tenta /api/tags nativo
-    if (!res || !res.ok) {
+    if (!res?.ok) {
       const rootUrl = base.replace(/\/v1\/?$/, '');
       res = await fetch(`${rootUrl}/api/tags`, {
         signal: ctrl.signal,
@@ -74,7 +76,7 @@ export async function listModels(providerName: AiProvider = config.ai.provider):
       }).catch(() => null);
     }
 
-    if (!res || !res.ok) return [];
+    if (!res?.ok) return [];
 
     const text = await res.text().catch(() => '');
     if (!text || text.trim().startsWith('<')) return [];

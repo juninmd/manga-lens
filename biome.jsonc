@@ -1,0 +1,52 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+  // `useIgnoreFile` ja' respeita o .gitignore (public/, .cache/, .testlib/,
+  // src-tauri/target); aqui so' o que o linter deve olhar.
+  "files": { "includes": ["src/**", "scripts/**", "tests/**"] },
+  // Desligado de proposito: ligar reescreveria todo arquivo do repo num diff que
+  // esconderia a troca de linter. Fica para um passo proprio, se for o caso.
+  "formatter": { "enabled": false },
+  "assist": { "enabled": false },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      // O oxlint rodava so' a categoria `correctness`. O Biome separa em grupos;
+      // estes cinco sao os que apontam defeito, nao gosto — `style` e `a11y`
+      // ficam de fora para a troca de linter nao virar refactor de 200 arquivos.
+      "preset": "none",
+      "correctness": { "preset": "recommended" },
+      "suspicious": {
+        "preset": "recommended",
+        // O construtor monta o no' e guarda a referencia na mesma expressao
+        // (`append((this.grid = el(...)))`). Separar em duas linhas seria mexer
+        // em 9 construtores sem mudar comportamento nenhum.
+        "noAssignInExpressions": "off"
+      },
+      "complexity": {
+        "preset": "recommended",
+        // `q['contentType']`, `process.env['PORT']`: o colchete marca o que vem
+        // de fora sem tipo. Trocar por ponto sao 42 sites de churn.
+        "useLiteralKeys": "off"
+      },
+      "performance": { "preset": "recommended" },
+      "security": { "preset": "recommended" }
+    }
+  },
+  "javascript": { "globals": ["Bun"] },
+  "overrides": [
+    {
+      "includes": ["scripts/**", "tests/**"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            // homologacao fala com o usuario pelo console, e anda por JSON de
+            // provider de terceiro que muda de forma sem aviso
+            "noConsole": "off",
+            "noExplicitAny": "off"
+          }
+        }
+      }
+    }
+  ]
+}

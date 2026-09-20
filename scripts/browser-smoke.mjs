@@ -47,7 +47,7 @@ try {
   await page.waitForFunction(
     () => {
       const img = document.querySelector('.ml-sheet img');
-      return img && img.complete && img.naturalWidth > 0;
+      return img?.complete && img.naturalWidth > 0;
     },
     null,
     { timeout: 90_000 },
@@ -104,7 +104,7 @@ try {
   await page.waitForFunction(
     () => {
       const img = document.querySelector('.ml-sheet img');
-      return img && img.complete && img.naturalWidth > 0;
+      return img?.complete && img.naturalWidth > 0;
     },
     null,
     { timeout: 60_000 },
