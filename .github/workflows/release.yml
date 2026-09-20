@@ -1,0 +1,74 @@
+name: Release
+
+# Todo commit que entra na principal vira tag e release. A versao sai do prefixo
+# dos commits (Conventional Commits), calculada por `scripts/release-notes.ts` —
+# que tem teste, porque versao publicada nao se despublica.
+on:
+  push:
+    branches: [main]
+  # botao manual: util para refazer uma release que falhou no meio
+  workflow_dispatch:
+
+# Nunca cancela no meio: uma execucao interrompida entre criar a tag e publicar a
+# release deixaria a tag orfa, e a proxima ja' calcularia a versao seguinte.
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # o calculo le todas as tags e todos os commits desde a ultima
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.13'
+
+      - name: Calcular versao e notas
+        id: plan
+        run: bun run scripts/release-notes.ts
+
+      # Re-execucao do mesmo commit (ou `workflow_dispatch` repetido) nao pode
+      # falhar tentando criar uma tag que ja' existe.
+      - name: Conferir se a tag ja existe
+        id: guard
+        if: steps.plan.outputs.release == 'true'
+        run: |
+          if git rev-parse -q --verify "refs/tags/${{ steps.plan.outputs.tag }}" >/dev/null; then
+            echo "ja-existe=true" >> "$GITHUB_OUTPUT"
+            echo "tag ${{ steps.plan.outputs.tag }} ja existe; nada a publicar"
+          else
+            echo "ja-existe=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # `gh release create` cria a tag no commit alvo e publica a release num
+      # passo so': sem isso, um push de tag que desse errado deixaria tag sem release.
+      - name: Publicar tag e release
+        if: steps.plan.outputs.release == 'true' && steps.guard.outputs.ja-existe == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.plan.outputs.tag }}" \
+            --target "${{ github.sha }}" \
+            --title "${{ steps.plan.outputs.tag }}" \
+            --notes-file release-notes.md
+
+      - name: Resumo
+        run: |
+          {
+            if [ "${{ steps.plan.outputs.release }}" = "true" ]; then
+              echo "## ${{ steps.plan.outputs.tag }}"
+              cat release-notes.md
+            else
+              echo "Nenhum commit novo desde a ultima tag: sem release."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

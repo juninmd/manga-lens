@@ -31,3 +31,6 @@ scripts/.desktop.png
 .tauri-run.log
 .tauri-run.err
 .local-run.log
+
+# notas geradas pelo passo de release (o workflow escreve, ninguem versiona)
+release-notes.md
