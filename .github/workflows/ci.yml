@@ -36,6 +36,11 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
+      # segredo colado por engano reprova aqui; depois de entrar no historico,
+      # tirar exige reescrever o git e rotacionar a chave assim mesmo
+      - name: Credenciais e dados pessoais
+        run: bun run secrets
+
       - name: Testes unitarios
         run: bun run test
 
