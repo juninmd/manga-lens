@@ -280,8 +280,9 @@ try {
     `lidos=${readState.lidos} marcadores=${readState.marcadores}`,
   );
 
-  // a lista de capitulos mostra o que ja' foi lido
-  await page.locator('button:has-text("voltar")').click();
+  // a lista de capitulos mostra o que ja' foi lido. Seletor preso ao leitor de
+  // imagem: o leitor de livro tem o mesmo botao e vive no DOM mesmo fechado
+  await page.locator('.ml-reader-top button:has-text("voltar")').click();
   // espera fixa aqui virava corrida: com o OCR paralelo ocupando a CPU, a lista
   // as vezes ainda nao repintou em 600ms. O estado ja' foi conferido acima.
   await page
@@ -330,6 +331,37 @@ try {
     .then(() => true)
     .catch(() => false);
   record('Back do navegador fecha o leitor', leftReader, leftReader ? 'voltou para a serie' : 'leitor continuou aberto');
+  // Leitor de livro (EPUB local). So' roda quando a LOCAL_LIBRARY do servidor
+  // tem um EPUB: sem acervo local a aba Livro esta' legitimamente vazia.
+  const livros = await page.evaluate(async (base) => {
+    const res = await fetch(`${base}/api/search?providers=local&contentType=livro&limit=24`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.items.filter((i) => i.type === 'book').map((i) => i.id);
+  }, BASE);
+  if (!livros.length) {
+    console.log('PULA  leitor de livro — nenhum EPUB na biblioteca local do servidor');
+  } else {
+    await page.goto(`${BASE}/#/s/local/${encodeURIComponent(livros[0])}`, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('.ml-chapter', { timeout: 30_000 });
+    await page.locator('.ml-chapter').first().click();
+    const paras = await page
+      .waitForFunction(() => document.querySelectorAll('.ml-book.is-open .ml-book-p').length, null, { timeout: 30_000 })
+      .then((h) => h.jsonValue())
+      .catch(() => 0);
+    record('leitor de livro abre o capitulo em paragrafos', paras > 0, `${paras} paragrafos`);
+    // o livro nao tem pagina: o leitor de imagem nao pode ter sido aberto junto
+    const semLeitorDeImagem = !(await page.locator('.ml-reader.is-open').count());
+    record('EPUB nao cai no leitor de paginas', semLeitorDeImagem, semLeitorDeImagem ? 'apenas o leitor de livro' : 'os dois abriram');
+    // autoTranslate esta' ligado no smoke: o capitulo tem de terminar traduzido
+    const traduzidos = await page
+      .waitForFunction(() => document.querySelectorAll('.ml-book-p.is-translated').length, null, { timeout: 120_000 })
+      .then((h) => h.jsonValue())
+      .catch(() => 0);
+    record('livro traduz sozinho com autoTranslate', traduzidos > 0, `${traduzidos} paragrafos traduzidos`);
+    await page.goBack();
+  }
+
 } catch (err) {
   record('execucao', false, String(err).slice(0, 300));
 } finally {

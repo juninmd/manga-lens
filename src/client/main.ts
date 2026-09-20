@@ -2,6 +2,7 @@ import { aiHealth, getSeries, type ChapterRef, type SeriesDetail } from './api.t
 import { Catalog } from './catalog.ts';
 import { SeriesPanel } from './series.ts';
 import { Reader } from './reader.ts';
+import { BookReader } from './book.ts';
 import { el, qs, toast } from './ui.ts';
 import { getProgress, nextUnreadChapter } from './state.ts';
 import { isDesktop, resolveApiBase, waitForApi } from './base.ts';
@@ -61,14 +62,21 @@ const seriesHash = (provider: string, id: string): string =>
 // Entrar por deep-link `#/r/...` numa aba nova nao tem entrada anterior:
 // `history.back()` nao faz nada, o leitor fecha mas a hash fica orfa e um
 // recarregar reabre o capitulo. Sem historico, cai no painel da serie.
-const reader = new Reader(() => {
+const leaveReader = (): void => {
   if (!location.hash.startsWith('#/r/')) return;
   // `history.back()` com entrada anterior de outro site (link externo) saia do app:
   // conhecendo a obra, vai direto ao painel dela
   if (current) location.hash = seriesHash(current.provider, current.id);
   else if (history.length > 1) history.back();
   else location.hash = '';
-});
+};
+
+const reader = new Reader(leaveReader);
+// EPUB nao tem pagina: capitulo de texto abre num leitor proprio, com a mesma
+// casca (barra, progresso, traducao) e o mesmo roteamento `#/r/...`
+const book = new BookReader(leaveReader);
+/** capitulo de texto (EPUB) vai ao leitor de livro; o resto continua no de paginas */
+const surfaceFor = (chapter: ChapterRef): Reader | BookReader => (chapter.text ? book : reader);
 
 const readerHash = (detail: SeriesDetail, chapter: ChapterRef): string =>
   `#/r/${encodeURIComponent(detail.provider)}/${encodeURIComponent(detail.id)}/${encodeURIComponent(chapter.id)}`;
@@ -76,10 +84,12 @@ const readerHash = (detail: SeriesDetail, chapter: ChapterRef): string =>
 // "cap »", fim de capitulo e popover trocam o capitulo por dentro do leitor:
 // a hash ficava no anterior e reload/compartilhar/Back reabriam o errado.
 // `replaceState` nao dispara a rota (o leitor ja' esta' abrindo) nem enche o historico.
-reader.onChapterChange = (detail, chapter) => {
+const onChapterChange = (detail: SeriesDetail, chapter: ChapterRef): void => {
   current = { provider: detail.provider, id: detail.id };
   history.replaceState(null, '', readerHash(detail, chapter));
 };
+reader.onChapterChange = onChapterChange;
+book.onChapterChange = onChapterChange;
 
 const seriesPanel = new SeriesPanel((detail, chapter) => openReader(detail, chapter));
 
@@ -110,7 +120,7 @@ const catalog = new Catalog({
       const chapter = detail?.chapters.find((c) => c.id === chapterId);
       if (!detail || !chapter) return toast('marcador aponta para um capitulo que sumiu', 'error');
       location.hash = `#/r/${encodeURIComponent(provider)}/${encodeURIComponent(seriesId)}/${encodeURIComponent(chapterId)}`;
-      void reader.open(detail, chapter, page);
+      void surfaceFor(chapter).open(detail, chapter, page);
     })();
   },
 });
@@ -131,7 +141,7 @@ function openReader(detail: SeriesDetail, chapter: ChapterRef): void {
   current = { provider: detail.provider, id: detail.id };
   seriesPanel.close();
   location.hash = readerHash(detail, chapter);
-  void reader.open(detail, chapter, startPage);
+  void surfaceFor(chapter).open(detail, chapter, startPage);
 }
 
 async function route(): Promise<void> {
@@ -139,19 +149,22 @@ async function route(): Promise<void> {
   // Sair pelo botao da barra funcionava (ele chama history.back()), mas o caminho
   // inverso nao: o Back do navegador trocava a hash, a rota abria o painel de
   // serie e o leitor continuava por cima, em tela cheia, tapando tudo.
-  if (parts[0] !== 'r' && reader.isOpen) reader.close();
+  if (parts[0] !== 'r') {
+    if (reader.isOpen) reader.close();
+    if (book.isOpen) book.close();
+  }
   if (parts[0] === 's' && parts[1] && parts[2]) {
     await seriesPanel.open(parts[1], parts.slice(2).join('/'));
     return;
   }
   if (parts[0] === 'r' && parts[1] && parts[2] && parts[3]) {
     // openReader ja' abriu e so' mexeu na hash: recarregar aqui refaria o capitulo inteiro
-    if (reader.isShowing(parts[1], parts[2], parts[3])) return;
+    if (reader.isShowing(parts[1], parts[2], parts[3]) || book.isShowing(parts[1], parts[2], parts[3])) return;
     const detail = await getSeries(parts[1], parts[2]).catch(() => undefined);
     const chapter = detail?.chapters.find((c) => c.id === parts[3]);
     if (detail && chapter) {
       current = { provider: detail.provider, id: detail.id };
-      void reader.open(detail, chapter, resumePage(detail, chapter));
+      void surfaceFor(chapter).open(detail, chapter, resumePage(detail, chapter));
     }
     return;
   }

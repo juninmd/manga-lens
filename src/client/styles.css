@@ -68,7 +68,8 @@
   }
 }
 
-.ml-reader {
+.ml-reader,
+.ml-book {
   --bg: #0d0f13;
   --bg-2: #14171d;
   --bg-3: #1c2128;
@@ -1202,7 +1203,8 @@ textarea:focus-visible {
 
 /* ---------- leitor ---------- */
 
-.ml-reader {
+.ml-reader,
+.ml-book {
   position: fixed;
   inset: 0;
   background: var(--stage);
@@ -1215,10 +1217,18 @@ textarea:focus-visible {
   /* sem isso a barra de cima estica a grade e vaza da janela */
   grid-template-columns: minmax(0, 1fr);
 }
-.ml-reader.is-open {
+.ml-reader.is-open,
+.ml-book.is-open {
   display: grid;
 }
-.ml-reader-top {
+
+/* o leitor de livro tem so' barra + texto: sem barra de status nem rodape */
+.ml-book {
+  grid-template-rows: auto 1fr;
+}
+
+.ml-reader-top,
+.ml-book-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2074,4 +2084,55 @@ body.is-reading #toasts {
 
 .ml-chapters-more {
   height: 1px;
+}
+
+.ml-book-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ml-book-status {
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
+/* coluna de leitura: medida de linha fixa, como um livro — texto cheio na tela cansa */
+.ml-book-page {
+  overflow-y: auto;
+  padding: 32px 24px 96px;
+  margin: 0 auto;
+  max-width: 68ch;
+  width: 100%;
+  line-height: 1.7;
+  font-family: Georgia, 'Times New Roman', serif;
+  color: var(--fg);
+}
+
+.ml-book-p {
+  margin: 0 0 1em;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 120ms ease;
+}
+
+.ml-book-p:hover {
+  background: var(--hover-veil);
+}
+
+.ml-book-p.is-translated {
+  color: var(--fg-strong);
+}
+
+/* original de volta: fundo marcado para nao confundir com o que ja' foi traduzido */
+.ml-book-p.is-original {
+  color: var(--fg-dim);
+  background: var(--bg-3);
+  font-style: italic;
+}
+
+.ml-book-note {
+  color: var(--fg-dim);
+  font-style: italic;
 }

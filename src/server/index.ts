@@ -6,7 +6,7 @@ import { signUrl, verifyUrl } from './sign.ts';
 import { HttpError, httpFetch } from './http.ts';
 import { enabledProviders, getProvider, searchAll } from './providers/index.ts';
 import type { SearchFilters, SeriesCard } from './providers/types.ts';
-import { assertInsideLibrary, localPagePaths } from './providers/local.ts';
+import { assertInsideLibrary, localBookBlocks, localPagePaths } from './providers/local.ts';
 import { readZipEntry, readZipIndex } from './zip.ts';
 import { readRarEntry } from './rar.ts';
 import { pdfPageImage } from './pdf.ts';
@@ -235,6 +235,17 @@ const MIME: Record<string, string> = {
   '.avif': 'image/avif',
   '.bmp': 'image/bmp',
 };
+
+/** Paragrafos de um capitulo de livro (EPUB). O leitor de livro pede daqui e manda ao tradutor. */
+app.get('/api/local/book', async (c) => {
+  try {
+    return c.json({ blocks: await localBookBlocks(c.req.query('c') ?? '') });
+  } catch (err) {
+    const message = (err as Error).message;
+    // fora da biblioteca e' recusa; entrada inexistente no EPUB e' capitulo quebrado
+    return c.text(message, /fora da biblioteca/.test(message) ? 403 : 422);
+  }
+});
 
 app.get('/api/local/page', async (c) => {
   const chapterToken = c.req.query('c') ?? '';

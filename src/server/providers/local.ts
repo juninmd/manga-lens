@@ -5,15 +5,17 @@ import { readZipEntry, readZipIndex } from '../zip.ts';
 import { readRarEntry, readRarIndex } from '../rar.ts';
 import { COMIC_INFO_RE, parseComicInfo, type ComicInfo } from '../comic-info.ts';
 import { pdfPageCount } from '../pdf.ts';
-import type { ChapterRef, ContentType, PageRef, Provider, SeriesCard } from './types.ts';
+import { readEpub, readEpubChapter, type TextBlock } from '../epub.ts';
+import type { ChapterRef, ContentType, PageRef, Provider, SeriesCard, SeriesDetail } from './types.ts';
 
 const IMAGE_RE = /\.(jpe?g|png|webp|gif|bmp|avif)$/i;
 const RAR_RE = /\.(cbr|rar)$/i;
 const PDF_RE = /\.pdf$/i;
+const EPUB_RE = /\.epub$/i;
 /** todo arquivo compactado que vale como capitulo */
 const ARCHIVE_RE = /\.(cbz|zip|cbr|rar)$/i;
 /** tudo que e' um capitulo num arquivo so' (compactado ou documento) */
-const FILE_RE = /\.(cbz|zip|cbr|rar|pdf)$/i;
+const FILE_RE = /\.(cbz|zip|cbr|rar|pdf|epub)$/i;
 
 export const encodePath = (p: string): string => Buffer.from(p, 'utf8').toString('base64url');
 export const decodePath = (t: string): string => Buffer.from(t, 'base64url').toString('utf8');
@@ -111,6 +113,12 @@ export async function localPagePaths(chapterId: string): Promise<{ kind: 'dir' |
     const count = await pdfPageCount(path);
     return { kind: 'pdf', base: path, names: Array.from({ length: count }, (_, i) => `${i + 1}.png`) };
   }
+  if (EPUB_RE.test(path)) {
+    // livro nao tem paginas de imagem; a unica entrada util e' a capa, que a
+    // grade do catalogo pede como `i=0`
+    const { cover } = await readEpub(path);
+    return { kind: 'zip', base: path, names: cover ? [cover] : [] };
+  }
   const rar = RAR_RE.test(path);
   const names = rar ? (await readRarIndex(path)).map((e) => e.name) : (await readZipIndex(path)).map((e) => e.name);
   return {
@@ -119,6 +127,25 @@ export async function localPagePaths(chapterId: string): Promise<{ kind: 'dir' |
     // o CBR guarda a pagina com o separador do Windows; a ordem e' a do nome cheio
     names: names.filter((n) => IMAGE_RE.test(n)).sort(natural),
   };
+}
+
+/**
+ * Id de capitulo de livro: os dois base64url separados por ponto. Ponto nao
+ * existe no alfabeto base64url, entao o corte nunca e' ambiguo — e nem o
+ * caminho nem o href precisam de escape.
+ */
+const bookChapterId = (path: string, href: string): string => `${encodePath(path)}.${encodePath(href)}`;
+
+/**
+ * Paragrafos de um capitulo de livro. O href nunca vira caminho de disco: ele e'
+ * procurado no indice do proprio EPUB, entao "../../etc/passwd" nao existe como
+ * entrada e a leitura falha em vez de sair da biblioteca.
+ */
+export async function localBookBlocks(chapterId: string): Promise<TextBlock[]> {
+  const [raw = '', href = ''] = chapterId.split('.');
+  const path = assertInsideLibrary(decodePath(raw));
+  if (!EPUB_RE.test(path)) throw new Error('este capitulo nao pertence a um livro');
+  return readEpubChapter(path, decodePath(href));
 }
 
 async function seriesDirs(): Promise<string[]> {
@@ -143,6 +170,8 @@ function guessFromName(path: string): { contentType: ContentType; type?: string;
   // PDF e' formato de documento, nao de scan de manga: vai para a aba Livro e
   // abre da esquerda para a direita, que e' o certo para a maioria esmagadora
   if (PDF_RE.test(path)) return { contentType: 'livro', type: 'comic', origin: 'unknown' };
+  // EPUB e' texto corrido: nao tem pagina para o OCR, entao o leitor de livro assume
+  if (EPUB_RE.test(path)) return { contentType: 'livro', type: 'book', origin: 'unknown' };
   return RAR_RE.test(path)
     ? { contentType: 'hq', type: 'comic', origin: 'en' }
     : { contentType: 'manga', origin: 'unknown' };
@@ -161,6 +190,21 @@ function fromComicInfo(info: ComicInfo): { contentType?: ContentType; type?: str
 }
 
 async function cardFor(path: string, info?: ComicInfo | null): Promise<SeriesCard> {
+  // EPUB e' a excecao a regra de nao abrir arquivo na grade: o nome do arquivo
+  // costuma ser um slug ("pg1234.epub") e o titulo de verdade so' existe no OPF
+  if (EPUB_RE.test(path)) {
+    const book = await readEpub(path).catch(() => null);
+    return {
+      id: encodePath(path),
+      provider: 'local',
+      title: book?.title || basename(path, extname(path)),
+      cover: book?.cover ? `/api/local/page?c=${encodePath(path)}&i=0` : undefined,
+      contentType: 'livro',
+      type: 'book',
+      origin: book?.lang ?? 'unknown',
+      tags: [],
+    };
+  }
   const isArchive = FILE_RE.test(path);
   const id = encodePath(path);
   const firstChapter = isArchive ? id : (await chaptersOf(path))[0]?.id;
@@ -183,6 +227,39 @@ async function cardFor(path: string, info?: ComicInfo | null): Promise<SeriesCar
   };
 }
 
+/**
+ * O EPUB ja' traz titulo, autor, idioma e a ordem de leitura: aqui o spine vira
+ * a lista de capitulos e cada item guarda seu proprio href. `text: true` e' o
+ * que manda o app abrir o leitor de livro em vez do leitor de paginas.
+ */
+async function epubDetail(path: string, id: string): Promise<SeriesDetail> {
+  const info = await readEpub(path);
+  const chapters: ChapterRef[] = info.spine.map((ref, i) => ({
+    id: bookChapterId(path, ref.href),
+    provider: 'local',
+    seriesId: id,
+    number: String(i + 1),
+    title: ref.title ?? `Capitulo ${i + 1}`,
+    // `lang` aqui e' o idioma da PUBLICACAO no painel, que filtra a lista por ele;
+    // o idioma do livro vai em `origin`, que e' quem escolhe o pipeline de traducao
+    lang: 'local',
+    text: true,
+  }));
+  return {
+    id,
+    provider: 'local',
+    title: info.title || basename(path, extname(path)),
+    authors: info.author ? [info.author] : undefined,
+    cover: info.cover ? `/api/local/page?c=${id}&i=0` : undefined,
+    contentType: 'livro',
+    type: 'book',
+    origin: info.lang ?? 'unknown',
+    tags: [],
+    chapters,
+    availableLangs: ['local'],
+  };
+}
+
 export const local: Provider = {
   id: 'local',
   name: 'Biblioteca local',
@@ -200,12 +277,20 @@ export const local: Provider = {
     const start = ((f.page ?? 1) - 1) * limit;
     // a grade NAO le ComicInfo: seriam N arquivos abertos por pagina de busca.
     // O palpite pela extensao ja' poe cada obra na aba certa; o detalhe refina.
+    // Numa aba especifica o corte vem ANTES da paginacao: cortar depois devolvia
+    // 3 livros numa pagina de 24 porque os outros 21 eram manga.
+    if (f.contentType) {
+      const all = await Promise.all(matched.map((d) => cardFor(d)));
+      const only = all.filter((c) => c.contentType === f.contentType);
+      return { items: only.slice(start, start + limit), total: only.length };
+    }
     const items = await Promise.all(matched.slice(start, start + limit).map((d) => cardFor(d)));
     return { items, total: matched.length };
   },
 
   async series(id) {
     const path = assertInsideLibrary(decodePath(id));
+    if (EPUB_RE.test(path)) return epubDetail(path, id);
     const chapters = FILE_RE.test(path) ? null : await chaptersOf(path);
     // o ComicInfo mora no arquivo do capitulo, nao na pasta da obra
     const infoSource = chapters?.length ? decodePath(chapters[0]!.id) : path;

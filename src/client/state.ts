@@ -28,6 +28,8 @@ export interface Settings {
   aiSeesPage: boolean;
   /** OCR acha o texto com o detector neural local (RT-DETR); desligado = so' a heuristica de baloes */
   neuralDetect: boolean;
+  /** corpo da letra no leitor de livro (px) */
+  bookFontSize: number;
 }
 
 export interface Bookmark {
@@ -80,6 +82,7 @@ const DEFAULTS: Store = {
     aiProvider: 'ollama',
     aiSeesPage: false,
     neuralDetect: true,
+    bookFontSize: 18,
   },
   favorites: {},
   progress: {},
