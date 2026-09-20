@@ -20,6 +20,13 @@ const SCOPE = ['comics', 'folkscanomy', 'fawcett-comics', 'ace-comics'];
  *
  * Inclui Timely (a Marvel dos anos 40) nos titulos que caducaram; Captain America
  * Comics e Marvel Mystery ficam de fora porque a Marvel renovou os dois.
+ *
+ * Para entrar aqui nao basta ser dominio publico: o casamento e' por SUBSTRING
+ * do titulo, entao o nome tambem tem de ser distintivo. Titulo generico de uma
+ * palavra ("Beyond", "Attack", "Danger") casa com centenas de itens sem relacao,
+ * e nome ainda em uso por editora viva ("Strange Adventures", da DC) arrasta
+ * edicao protegida — nenhum dos dois e' pego por MODERN_FRANCHISES.
+ *
  * Para ampliar por conta propria: ARCHIVE_SERIES=Serie Um;Serie Dois.
  */
 const PUBLIC_DOMAIN_SERIES = [
@@ -49,7 +56,26 @@ const PUBLIC_DOMAIN_SERIES = [
   'Strange Worlds', 'Captain Flight',
   // Timely (Marvel dos anos 40) — apenas os titulos que caducaram
   'Daring Mystery Comics', 'Mystic Comics',
+  // MLJ (a Archie dos anos 40), so' os super-herois: 'Pep Comics' fica de fora
+  // porque e' onde o Archie estreia, e a marca segue viva e defendida
+  'Zip Comics', 'Top-Notch Comics', 'Shield Wizard Comics', 'Blue Ribbon Comics',
+  'Black Hood Comics', 'Hangman Comics', 'Jackpot Comics',
+  // Holyoke / Continental
+  'Cat-Man Comics', 'Captain Aero Comics', 'Terrific Comics', 'Punch Comics',
+  'Dynamic Comics', 'Yankee Comics',
+  // Spark / Fox
+  'Green Lama', 'Weird Comics',
+  // ACG — sem renovacao de registro, e a base do acervo de horror livre
+  'Adventures into the Unknown', 'Forbidden Worlds',
+  // horror pre-Codigo (Fawcett, Star, Comic Media, Ajax)
+  'This Magazine Is Haunted', 'Startling Terror Tales', 'Weird Terror',
+  'Tales of Horror', 'Ghostly Weird Stories',
+  // policial e ficcao cientifica (Trojan, Youthful, Ziff-Davis)
+  'Crime Smashers', 'Crimes by Women', 'Captain Science', 'Lars of Mars',
+  // faroeste (Magazine Enterprises, Fawcett)
+  'Durango Kid', 'Red Mask', 'Rocky Lane Western', 'Straight Arrow', 'Tim Holt',
 ];
+
 
 /**
  * Franquias vivas cujo nome cruza com serie livre. Um titulo da Golden Age nunca
