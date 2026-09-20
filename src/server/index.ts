@@ -8,6 +8,7 @@ import { enabledProviders, getProvider, searchAll } from './providers/index.ts';
 import type { SearchFilters, SeriesCard } from './providers/types.ts';
 import { assertInsideLibrary, localPagePaths } from './providers/local.ts';
 import { readZipEntry, readZipIndex } from './zip.ts';
+import { readRarEntry } from './rar.ts';
 import {
   aiHealth,
   explainStream,
@@ -265,6 +266,14 @@ app.get('/api/local/page', async (c) => {
   }
   // `base` ja' passou por assertInsideLibrary; decodificar o token de novo aqui
   // seria reabrir o caminho cru vindo da query
+  if (kind === 'rar') {
+    try {
+      return new Response(await readRarEntry(base, name), { headers: imageHeaders });
+    } catch (err) {
+      // CBR com senha ou corrompido e' problema do arquivo, nao do servidor
+      return c.text(`pagina indisponivel no CBR: ${(err as Error).message}`, 422);
+    }
+  }
   const entries = await readZipIndex(base);
   const entry = entries.find((e) => e.name === name);
   if (!entry) return c.text('pagina inexistente no CBZ', 404);

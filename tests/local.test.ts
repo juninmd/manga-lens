@@ -1,15 +1,17 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
 import { config } from '../src/server/config.ts';
-import { assertInsideLibrary, decodePath, encodePath, localPagePaths } from '../src/server/providers/local.ts';
+import { assertInsideLibrary, decodePath, encodePath, local, localPagePaths } from '../src/server/providers/local.ts';
+import { readRarEntry, readRarIndex } from '../src/server/rar.ts';
 
 const box = await mkdtemp(join(tmpdir(), 'manga-lens-local-'));
 const root = join(box, 'biblioteca');
 const solta = join(root, 'HQ Solta', 'Capitulo 01');
 const cbz = join(root, 'Manga Teste', 'Capitulo 01.cbz');
+const cbr = join(root, 'HQ Em Cbr', 'Capitulo 01.cbr');
 const saved = [...config.localRoots];
 
 /** CBZ minimo: uma entrada de imagem, uma de lixo e uma pasta. */
@@ -55,6 +57,9 @@ beforeAll(async () => {
   for (const n of ['1.png', '2.jpg', '10.webp']) await writeFile(join(solta, n), 'x');
   await writeFile(join(solta, 'leiame.txt'), 'nao e pagina');
   await writeFile(cbz, buildCbz(['cap/', '001.jpg', '010.png', '002.jpeg', 'ComicInfo.xml']));
+  // CBR de verdade (RAR5 store, 3 PNGs) — CBR nao da' para forjar com zlib como o CBZ
+  await mkdir(join(root, 'HQ Em Cbr'), { recursive: true });
+  await copyFile(join(import.meta.dir, 'fixtures', 'comic.cbr'), cbr);
   // vizinho com o mesmo prefixo do root: nao pode ser considerado "dentro"
   await mkdir(join(box, 'biblioteca-alheia'), { recursive: true });
   await writeFile(join(box, 'segredo.txt'), 'top secret');
@@ -132,5 +137,60 @@ describe('localPagePaths', () => {
 
   test('token com travessia e recusado', async () => {
     expect(localPagePaths(encodePath(join(root, '..', 'segredo.txt')))).rejects.toThrow('fora da biblioteca');
+  });
+});
+
+describe('CBR (HQ em RAR)', () => {
+  test('as paginas saem na ordem natural, so imagens', async () => {
+    const { kind, names } = await localPagePaths(encodePath(cbr));
+    expect(kind).toBe('rar');
+    expect(names).toEqual(['p01.png', 'p02.png', 'p03.png']);
+  });
+
+  test('o indice ignora diretorio e informa entrada com senha', async () => {
+    const entries = await readRarIndex(cbr);
+    expect(entries.map((e) => e.name)).toEqual(['p01.png', 'p02.png', 'p03.png']);
+    expect(entries.every((e) => !e.encrypted)).toBe(true);
+  });
+
+  test('extrair devolve o PNG inteiro e independente do heap do WASM', async () => {
+    const um = await readRarEntry(cbr, 'p01.png');
+    // assinatura PNG: extrair errado aqui daria pagina quebrada no leitor
+    expect(Array.from(um.slice(0, 4))).toEqual([0x89, 0x50, 0x4e, 0x47]);
+    const copia = [...um];
+    // a segunda extracao reusa o heap do unrar: se a primeira fosse uma view, mudaria aqui
+    await readRarEntry(cbr, 'p02.png');
+    expect([...um]).toEqual(copia);
+  });
+
+  test('pagina que nao existe falha dizendo qual', async () => {
+    await expect(readRarEntry(cbr, 'nao-existe.png')).rejects.toThrow('nao-existe.png');
+  });
+
+  test('arquivo trocado no disco nao continua servindo o antigo', async () => {
+    // o CBR fica inteiro em memoria num slot: sem carimbo de mtime/tamanho, salvar
+    // outra versao do capitulo na mesma pasta seguiria abrindo as paginas velhas
+    expect((await readRarIndex(cbr)).map((e) => e.name)).toEqual(['p01.png', 'p02.png', 'p03.png']);
+    await copyFile(join(import.meta.dir, 'fixtures', 'comic-trocado.cbr'), cbr);
+    expect((await readRarIndex(cbr)).map((e) => e.name)).toEqual(['capa.png', 'fim.png']);
+  });
+});
+
+describe('classificacao de HQ x manga na biblioteca local', () => {
+  test('CBR sem ComicInfo entra como HQ e em LTR', async () => {
+    // manga circula em CBZ, HQ ocidental em CBR: `type: 'comic'` e' o que o
+    // leitor le para abrir da esquerda para a direita
+    const detail = await local.series(encodePath(cbr));
+    expect(detail.contentType).toBe('hq');
+    expect(detail.type).toBe('comic');
+    expect(detail.origin).toBe('en');
+  });
+
+  test('CBZ com ComicInfo incompleto NAO vira HQ', async () => {
+    // a fixture tem um ComicInfo.xml que nao declara `Manga`: sem isso o CBZ
+    // caia na aba de HQ e abria em LTR
+    const detail = await local.series(encodePath(join(root, 'Manga Teste')));
+    expect(detail.contentType ?? 'manga').toBe('manga');
+    expect(detail.type).not.toBe('comic');
   });
 });

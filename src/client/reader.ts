@@ -1195,8 +1195,20 @@ export class Reader {
    */
   private rtlFor(detail: SeriesDetail | undefined): boolean {
     const western = ['en', 'pt-br', 'pt', 'es', 'fr', 'it', 'de'];
-    if (detail?.type === 'comic' || western.includes((detail?.origin ?? '').toLowerCase())) return false;
+    // `contentType` vem dos sites de HQ, que nem sempre preenchem `type`
+    if (detail?.type === 'comic' || detail?.contentType === 'hq') return false;
+    if (western.includes((detail?.origin ?? '').toLowerCase())) return false;
     return store.settings.rtl;
+  }
+
+  /**
+   * HQ ocidental publica a capa sozinha e so' depois as duplas (2-3, 4-5); manga
+   * parea desde a primeira. Como o deslocamento nao e' preferencia salva, acertar
+   * ele na abertura poupa o usuario de descobrir o botao "↔ capa" toda vez.
+   */
+  private applyCoverOffset(detail: SeriesDetail | undefined): void {
+    if (store.settings.mode !== 'double') return;
+    this.viewer.setCoverOffset(detail?.type === 'comic' || detail?.contentType === 'hq' ? 1 : 0);
   }
 
   private chapterLabel(): string {
@@ -1402,6 +1414,7 @@ export class Reader {
     }
     this.rtl = this.rtlFor(detail);
     this.viewer.setRtl(this.rtl);
+    this.applyCoverOffset(detail);
     this.history = [];
     this.chatLog.innerHTML = '';
     this.host.classList.add('is-open');
