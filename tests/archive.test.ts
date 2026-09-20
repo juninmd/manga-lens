@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { archive } from '../src/server/providers/archive.ts';
+import { hostAllowed } from '../src/server/config.ts';
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -68,5 +69,17 @@ describe('acervo de HQ em dominio publico', () => {
     // centenas de itens sem relacao para dentro do catalogo
     const genericos = allowed.filter((t) => !t.includes(' ') && t.length < 8);
     expect(genericos).toEqual([]);
+  });
+});
+
+describe('proxy de imagem do Archive', () => {
+  test('o no que serve a pagina entra na allowlist junto com o dominio', () => {
+    // /download/.../page/nN.jpg responde 302 para ia802800.us.archive.org, e a
+    // allowlist vale a cada salto: sem o sufixo nenhuma pagina de HQ carregava
+    expect(hostAllowed('archive.org')).toBe(true);
+    expect(hostAllowed('ia802800.us.archive.org')).toBe(true);
+    // o sufixo nao pode virar um curinga que aceite dominio parecido
+    expect(hostAllowed('evilarchive.org')).toBe(false);
+    expect(hostAllowed('archive.org.attacker.net')).toBe(false);
   });
 });

@@ -217,6 +217,10 @@ async function pages(chapterId: string): Promise<PageRef[]> {
 }
 
 registerImageHost('archive.org');
+// /download/<id>/page/nN.jpg responde 302 para o no' que serve o item
+// (ia802800.us.archive.org). O proxy confere a allowlist a cada salto, entao sem
+// o sufixo toda pagina de HQ morria em "host bloqueado" — 403, imagem nenhuma.
+registerImageHost('.archive.org');
 
 export const archive: Provider = {
   id: 'archive',
