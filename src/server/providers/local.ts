@@ -4,12 +4,16 @@ import { config } from '../config.ts';
 import { readZipEntry, readZipIndex } from '../zip.ts';
 import { readRarEntry, readRarIndex } from '../rar.ts';
 import { COMIC_INFO_RE, parseComicInfo, type ComicInfo } from '../comic-info.ts';
+import { pdfPageCount } from '../pdf.ts';
 import type { ChapterRef, ContentType, PageRef, Provider, SeriesCard } from './types.ts';
 
 const IMAGE_RE = /\.(jpe?g|png|webp|gif|bmp|avif)$/i;
 const RAR_RE = /\.(cbr|rar)$/i;
+const PDF_RE = /\.pdf$/i;
 /** todo arquivo compactado que vale como capitulo */
 const ARCHIVE_RE = /\.(cbz|zip|cbr|rar)$/i;
+/** tudo que e' um capitulo num arquivo so' (compactado ou documento) */
+const FILE_RE = /\.(cbz|zip|cbr|rar|pdf)$/i;
 
 export const encodePath = (p: string): string => Buffer.from(p, 'utf8').toString('base64url');
 export const decodePath = (t: string): string => Buffer.from(t, 'base64url').toString('utf8');
@@ -33,7 +37,7 @@ async function listChapterFiles(dir: string): Promise<{ dirs: string[]; archives
   return {
     dirs: entries.filter((e) => e.isDirectory()).map((e) => join(dir, e.name)).sort(natural),
     archives: entries
-      .filter((e) => e.isFile() && ARCHIVE_RE.test(e.name))
+      .filter((e) => e.isFile() && FILE_RE.test(e.name))
       .map((e) => join(dir, e.name))
       .sort(natural),
     images: entries
@@ -94,12 +98,18 @@ export async function comicInfoOf(path: string): Promise<ComicInfo | null> {
   }
 }
 
-export async function localPagePaths(chapterId: string): Promise<{ kind: 'dir' | 'zip' | 'rar'; base: string; names: string[] }> {
+export async function localPagePaths(chapterId: string): Promise<{ kind: 'dir' | 'zip' | 'rar' | 'pdf'; base: string; names: string[] }> {
   const path = assertInsideLibrary(decodePath(chapterId));
   const st = await stat(path);
   if (st.isDirectory()) {
     const { images } = await listChapterFiles(path);
     return { kind: 'dir', base: path, names: images.map((i) => basename(i)) };
+  }
+  if (PDF_RE.test(path)) {
+    // o PDF nao tem "nomes" de pagina: o indice e' a propria pagina, e a extensao
+    // .png e' o que a rota usa para decidir o Content-Type
+    const count = await pdfPageCount(path);
+    return { kind: 'pdf', base: path, names: Array.from({ length: count }, (_, i) => `${i + 1}.png`) };
   }
   const rar = RAR_RE.test(path);
   const names = rar ? (await readRarIndex(path)).map((e) => e.name) : (await readZipIndex(path)).map((e) => e.name);
@@ -117,7 +127,7 @@ async function seriesDirs(): Promise<string[]> {
     const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
     for (const e of entries) {
       if (e.isDirectory()) out.push(join(root, e.name));
-      else if (ARCHIVE_RE.test(e.name)) out.push(join(root, e.name));
+      else if (FILE_RE.test(e.name)) out.push(join(root, e.name));
     }
   }
   return out.sort(natural);
@@ -130,6 +140,9 @@ async function seriesDirs(): Promise<string[]> {
  * corrigiveis na barra do leitor.
  */
 function guessFromName(path: string): { contentType: ContentType; type?: string; origin: string } {
+  // PDF e' formato de documento, nao de scan de manga: vai para a aba Livro e
+  // abre da esquerda para a direita, que e' o certo para a maioria esmagadora
+  if (PDF_RE.test(path)) return { contentType: 'livro', type: 'comic', origin: 'unknown' };
   return RAR_RE.test(path)
     ? { contentType: 'hq', type: 'comic', origin: 'en' }
     : { contentType: 'manga', origin: 'unknown' };
@@ -148,10 +161,12 @@ function fromComicInfo(info: ComicInfo): { contentType?: ContentType; type?: str
 }
 
 async function cardFor(path: string, info?: ComicInfo | null): Promise<SeriesCard> {
-  const isArchive = ARCHIVE_RE.test(path);
+  const isArchive = FILE_RE.test(path);
   const id = encodePath(path);
   const firstChapter = isArchive ? id : (await chaptersOf(path))[0]?.id;
-  const guess = guessFromName(path);
+  // numa pasta o formato esta' no capitulo, nao no nome da obra: "HQ Teste/Cap 01.cbr"
+  // ficava como manga porque a pasta nao tem extensao nenhuma
+  const guess = guessFromName(isArchive || !firstChapter ? path : decodePath(firstChapter));
   const declared: { contentType?: ContentType; type?: string; origin?: string } = info ? fromComicInfo(info) : {};
   return {
     id,
@@ -191,9 +206,7 @@ export const local: Provider = {
 
   async series(id) {
     const path = assertInsideLibrary(decodePath(id));
-    const chapters = ARCHIVE_RE.test(path)
-      ? null
-      : await chaptersOf(path);
+    const chapters = FILE_RE.test(path) ? null : await chaptersOf(path);
     // o ComicInfo mora no arquivo do capitulo, nao na pasta da obra
     const infoSource = chapters?.length ? decodePath(chapters[0]!.id) : path;
     const info = await comicInfoOf(infoSource);

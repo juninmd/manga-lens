@@ -6,12 +6,14 @@ import { deflateRawSync } from 'node:zlib';
 import { config } from '../src/server/config.ts';
 import { assertInsideLibrary, decodePath, encodePath, local, localPagePaths } from '../src/server/providers/local.ts';
 import { readRarEntry, readRarIndex } from '../src/server/rar.ts';
+import { pdfPageImage, pdfPageText } from '../src/server/pdf.ts';
 
 const box = await mkdtemp(join(tmpdir(), 'manga-lens-local-'));
 const root = join(box, 'biblioteca');
 const solta = join(root, 'HQ Solta', 'Capitulo 01');
 const cbz = join(root, 'Manga Teste', 'Capitulo 01.cbz');
 const cbr = join(root, 'HQ Em Cbr', 'Capitulo 01.cbr');
+const pdf = join(root, 'Livro Em Pdf.pdf');
 const saved = [...config.localRoots];
 
 /** CBZ minimo: uma entrada de imagem, uma de lixo e uma pasta. */
@@ -60,6 +62,7 @@ beforeAll(async () => {
   // CBR de verdade (RAR5 store, 3 PNGs) — CBR nao da' para forjar com zlib como o CBZ
   await mkdir(join(root, 'HQ Em Cbr'), { recursive: true });
   await copyFile(join(import.meta.dir, 'fixtures', 'comic.cbr'), cbr);
+  await copyFile(join(import.meta.dir, 'fixtures', 'livro.pdf'), pdf);
   // vizinho com o mesmo prefixo do root: nao pode ser considerado "dentro"
   await mkdir(join(box, 'biblioteca-alheia'), { recursive: true });
   await writeFile(join(box, 'segredo.txt'), 'top secret');
@@ -192,5 +195,42 @@ describe('classificacao de HQ x manga na biblioteca local', () => {
     const detail = await local.series(encodePath(join(root, 'Manga Teste')));
     expect(detail.contentType ?? 'manga').toBe('manga');
     expect(detail.type).not.toBe('comic');
+  });
+});
+
+describe('PDF na biblioteca local', () => {
+  test('cada pagina do PDF vira uma pagina do leitor', async () => {
+    const { kind, names } = await localPagePaths(encodePath(pdf));
+    expect(kind).toBe('pdf');
+    expect(names).toEqual(['1.png']);
+  });
+
+  test('a pagina sai como PNG com os pixels do PDF', async () => {
+    const png = await pdfPageImage(pdf, 0);
+    expect(png).not.toBeNull();
+    // assinatura PNG: sem canvas no servidor, a codificacao e' nossa e precisa provar que fecha
+    expect(Array.from(png!.slice(0, 8))).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    // IHDR: 40x60, 8 bits, tipo 2 (RGB) — o mesmo bitmap embutido no PDF
+    const view = new DataView(png!.buffer, png!.byteOffset);
+    expect(view.getUint32(16)).toBe(40);
+    expect(view.getUint32(20)).toBe(60);
+    expect(png![24]).toBe(8);
+    expect(png![25]).toBe(2);
+  });
+
+  test('pagina fora do intervalo devolve null, nao estoura', async () => {
+    expect(await pdfPageImage(pdf, 99)).toBeNull();
+    expect(await pdfPageText(pdf, 99)).toBe('');
+  });
+
+  test('o texto nativo da pagina sai legivel (base do leitor de livro)', async () => {
+    expect(await pdfPageText(pdf, 0)).toContain('Pagina de teste');
+  });
+
+  test('PDF entra na aba Livro e em LTR', async () => {
+    const detail = await local.series(encodePath(pdf));
+    expect(detail.contentType).toBe('livro');
+    expect(detail.type).toBe('comic');
+    expect(detail.chapters).toHaveLength(1);
   });
 });

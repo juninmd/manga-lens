@@ -9,6 +9,7 @@ import type { SearchFilters, SeriesCard } from './providers/types.ts';
 import { assertInsideLibrary, localPagePaths } from './providers/local.ts';
 import { readZipEntry, readZipIndex } from './zip.ts';
 import { readRarEntry } from './rar.ts';
+import { pdfPageImage } from './pdf.ts';
 import {
   aiHealth,
   explainStream,
@@ -266,6 +267,17 @@ app.get('/api/local/page', async (c) => {
   }
   // `base` ja' passou por assertInsideLibrary; decodificar o token de novo aqui
   // seria reabrir o caminho cru vindo da query
+  if (kind === 'pdf') {
+    try {
+      const png = await pdfPageImage(base, index);
+      // PDF de texto nativo nao tem bitmap para extrair; rasterizar exigiria
+      // canvas nativo, que custaria binario por plataforma no sidecar
+      if (!png) return c.text('esta pagina do PDF e texto, nao imagem — o leitor ainda nao renderiza PDF de texto', 415);
+      return new Response(png, { headers: imageHeaders });
+    } catch (err) {
+      return c.text(`pagina indisponivel no PDF: ${(err as Error).message}`, 422);
+    }
+  }
   if (kind === 'rar') {
     try {
       return new Response(await readRarEntry(base, name), { headers: imageHeaders });
