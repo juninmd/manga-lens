@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { parseReply, systemPrompt, userPrompt, type PromptContext } from '../src/server/translate-prompt.ts';
+import { parseReply, systemPrompt, userPrompt, visionSystemPrompt, visionUserPrompt, type PromptContext } from '../src/server/translate-prompt.ts';
 
 const ctx = (over: Partial<PromptContext> = {}): PromptContext => ({
   series: 'Naruto',
@@ -96,5 +96,28 @@ describe('prompts', () => {
     expect(s).toContain('"src":string');
     expect(s).toContain('bloco INTEIRO');
     expect(s).not.toContain('3 primeiras palavras');
+  });
+});
+
+describe('motor de visao', () => {
+  test('o prompt manda ler a imagem, nao traduzir texto recebido', () => {
+    const sys = visionSystemPrompt('portugues do Brasil', 'pt-BR');
+    expect(sys).toContain('circulo vermelho');
+    expect(sys).toContain('"orig"');
+    // o motor de visao nao recebe texto de OCR: pedir correcao de ruido levaria
+    // o modelo a inventar um original que ele nunca leu
+    expect(sys).not.toContain('vem de OCR');
+  });
+
+  test('o usuario leva o contexto da obra e os ids marcados, sem os textos', () => {
+    const out = visionUserPrompt(ctx({ glossary: [{ orig: 'ナルト', pt: 'Naruto', gender: 'm' }] }), [2, 0, 1]);
+    expect(out).toContain('Naruto — capitulo 3 — pagina 5');
+    expect(out).toContain('[2,0,1]');
+    expect(out).toContain('ナルト');
+  });
+
+  test('a resposta da visao preserva o original lido', () => {
+    const r = parseReply('{"translations":[{"id":3,"orig":"ドン","pt":"BUM"}]}');
+    expect(r.translations).toEqual([{ id: 3, pt: 'BUM', orig: 'ドン' }]);
   });
 });

@@ -2,7 +2,7 @@ import { createWorker, type Worker } from 'tesseract.js';
 import { translate } from './api.ts';
 import { api } from './base.ts';
 import { langLabel } from './ui.ts';
-import { planTargets, type Detection, type OcrTarget } from './region-plan.ts';
+import { planTargets, type Detection, type OcrTarget, type Rect } from './region-plan.ts';
 import { detectText } from './text-detector.ts';
 
 /** Mascara do balao em coordenadas reduzidas, relativa ao bbox do bloco. */
@@ -894,18 +894,22 @@ async function looseText(
  * `signal` cancela entre etapas (deteccao, cada balao, passada solta): virar a
  * pagina no meio do OCR nao precisa mais esperar a antiga terminar. Um balao ja'
  * enviado ao worker termina sozinho; so' o resultado e' descartado.
+ *
+ * `read: false` para no mapeamento: devolve as caixas, mascaras e cores sem
+ * passar o Tesseract. E' o que o motor de visao precisa — quem le o texto la'
+ * e' o proprio modelo, na pagina numerada.
  */
 export async function recognizePage(
   img: HTMLImageElement,
   lang: string,
   onProgress?: (p: OcrProgress) => void,
   signal?: AbortSignal,
-  opts: { neural?: boolean } = {},
+  opts: { neural?: boolean; read?: boolean } = {},
 ): Promise<OcrBlock[]> {
   const previous = activeProgress;
   activeProgress = onProgress;
   try {
-    return await recognize(img, lang, onProgress, signal, opts.neural ?? true);
+    return await recognize(img, lang, onProgress, signal, opts.neural ?? true, opts.read ?? true);
   } finally {
     activeProgress = previous;
   }
@@ -939,15 +943,34 @@ async function neuralDetections(img: HTMLImageElement, onProgress?: (p: OcrProgr
   }
 }
 
+/** Fundo do alvo: cor lisa quando da', senao a difusao (mesma regra do caminho com OCR). */
+function fillFor(img: HTMLImageElement, box: Rect): { bg: string; fg: string; bgCanvas?: HTMLCanvasElement } {
+  const flat = flatBackground(img, box);
+  const sampled = flat ?? sampleColors(img, box);
+  return { bg: sampled.bg, fg: sampled.fg, bgCanvas: flat ? undefined : diffuseFill(img, box) };
+}
+
+/** Alvos do detector viram blocos sem texto: o motor de visao preenche `text` e `pt`. */
+function mappedBlocks(img: HTMLImageElement, targets: OcrTarget[]): OcrBlock[] {
+  return targets
+    .map((t) => {
+      const common = { id: 0, text: '', confidence: 0, ...t.block, upper: false };
+      return t.free ? { ...common, ...fillFor(img, t.block) } : { ...common, mask: t.mask, bg: t.bg, fg: t.fg };
+    })
+    .sort((a, b) => a.y - b.y || a.x - b.x)
+    .map((b, id) => ({ ...b, id }));
+}
+
 async function recognize(
   img: HTMLImageElement,
   lang: string,
   onProgress?: (p: OcrProgress) => void,
   signal?: AbortSignal,
   neural = true,
+  read = true,
 ): Promise<OcrBlock[]> {
   throwIfAborted(signal);
-  const pool = await Promise.all(getPool(lang));
+  const pool = read ? await Promise.all(getPool(lang)) : [];
   throwIfAborted(signal);
   const page = preprocess(img);
   await yieldToUi();
@@ -957,6 +980,7 @@ async function recognize(
   const targets = detections
     ? planTargets(detections, regions, scale, { w: img.naturalWidth, h: img.naturalHeight })
     : regions.map(legacyTarget(scale));
+  if (!read) return mappedBlocks(img, targets);
   // com o detector, texto fora de balao ja' vem como alvo: a passada da pagina inteira sobra
   const share = detections ? 1 : LOOSE_START;
 
@@ -1036,8 +1060,12 @@ export async function translateBlocks(
     blocks: blocks.map((b) => ({ id: b.id, text: b.text, x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.w), h: Math.round(b.h) })),
     ...meta,
   });
-  const map = new Map(translations.map((t) => [t.id, t.pt]));
-  return blocks.map((b) => ({ ...b, pt: map.get(b.id) ?? '' }));
+  const map = new Map(translations.map((t) => [t.id, t]));
+  // motor de visao: o original so' existe na resposta — sem ele o "ver original" fica vazio
+  return blocks.map((b) => {
+    const t = map.get(b.id);
+    return { ...b, pt: t?.pt ?? '', text: t?.orig?.trim() || b.text };
+  });
 }
 
 export type LetterFont = 'comic' | 'sans' | 'serif';

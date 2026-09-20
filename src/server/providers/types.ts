@@ -57,6 +57,8 @@ export interface ChapterRef {
   group?: string;
   pages?: number;
   publishedAt?: string;
+  /** capitulo de texto (EPUB): abre no leitor de livro, sem OCR */
+  text?: boolean;
 }
 
 export interface SeriesDetail extends SeriesCard {

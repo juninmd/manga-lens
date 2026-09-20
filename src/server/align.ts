@@ -3,6 +3,8 @@ export interface ReplyItem {
   id: number;
   pt: string;
   src?: string;
+  /** motor de visao: o texto que o modelo leu no balao (o OCR nao rodou) */
+  orig?: string;
 }
 
 const norm = (s: string): string =>

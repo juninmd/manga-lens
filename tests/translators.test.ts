@@ -161,3 +161,47 @@ describe('translateWithEngine', () => {
     expect(new URL(stub.urls[0]!).searchParams.get('langpair')).toBe('en|es');
   });
 });
+
+describe('teto de concorrencia', () => {
+  test('e do processo, nao da requisicao: duas paginas em paralelo nao somam os tetos', async () => {
+    // o leitor traduz ate' 3 paginas ao mesmo tempo; sem teto global a rajada
+    // chegava a 3 x CONCURRENCY no Google e voltava 429
+    let live = 0;
+    let peak = 0;
+    globalThis.fetch = (() => {
+      live++;
+      peak = Math.max(peak, live);
+      return new Promise<Response>((resolve) =>
+        setTimeout(() => {
+          live--;
+          resolve(new Response(googleBody('ok'), { status: 200 }));
+        }, 5),
+      );
+    }) as unknown as typeof fetch;
+
+    const page = (base: number) => Array.from({ length: 8 }, (_, i) => ({ id: base + i, text: `fala ${base + i}` }));
+    await Promise.all([
+      translateWithEngine('google', page(0), 'ja', 'pt-BR'),
+      translateWithEngine('google', page(100), 'ja', 'pt-BR'),
+      translateWithEngine('google', page(200), 'ja', 'pt-BR'),
+    ]);
+
+    expect(peak).toBeLessThanOrEqual(5);
+  });
+
+  test('a ordem da entrada sobrevive ao teto', async () => {
+    // a traducao volta casada por id: embaralhar aqui trocaria as falas de balao
+    stubTranslator((url) => new Response(googleBody(`[${textOf(url)}]`), { status: 200 }));
+    const blocks = Array.from({ length: 12 }, (_, i) => ({ id: i, text: `fala ${i}` }));
+    const out = await translateWithEngine('google', blocks, 'ja', 'pt-BR');
+    expect(out.map((r) => r.id)).toEqual(blocks.map((b) => b.id));
+    expect(out[7]!.pt).toBe('[fala 7]');
+  });
+});
+
+describe('motores publicados', () => {
+  test('a visao aparece como motor de IA', () => {
+    const vision = engines.find((e) => e.id === 'vision');
+    expect(vision?.needsAi).toBe(true);
+  });
+});

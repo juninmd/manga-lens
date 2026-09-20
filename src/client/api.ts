@@ -45,6 +45,8 @@ export interface ChapterRef {
   group?: string;
   pages?: number;
   publishedAt?: string;
+  /** capitulo de texto (EPUB): abre no leitor de livro, sem OCR */
+  text?: boolean;
 }
 
 export interface SeriesDetail extends SeriesCard {
@@ -238,7 +240,7 @@ export const translate = (body: {
   engine?: string;
   target?: string;
   provider?: string;
-}): Promise<{ translations: { id: number; pt: string }[]; engine?: string }> =>
+}): Promise<{ translations: { id: number; pt: string; orig?: string }[]; engine?: string }> =>
   json('/api/ai/translate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -299,3 +301,7 @@ export async function* explain(body: {
     yield decoder.decode(value, { stream: true });
   }
 }
+
+/** Paragrafos de um capitulo de livro (EPUB local). */
+export const getBookChapter = (chapterId: string): Promise<{ blocks: { id: number; text: string }[] }> =>
+  json(`/api/local/book?c=${encodeURIComponent(chapterId)}`);

@@ -1,15 +1,21 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
 import { config } from '../src/server/config.ts';
-import { assertInsideLibrary, decodePath, encodePath, localPagePaths } from '../src/server/providers/local.ts';
+import { assertInsideLibrary, decodePath, encodePath, local, localBookBlocks, localPagePaths } from '../src/server/providers/local.ts';
+import { enabledProviders } from '../src/server/providers/index.ts';
+import { readRarEntry, readRarIndex } from '../src/server/rar.ts';
+import { pdfPageImage, pdfPageText } from '../src/server/pdf.ts';
 
 const box = await mkdtemp(join(tmpdir(), 'manga-lens-local-'));
 const root = join(box, 'biblioteca');
 const solta = join(root, 'HQ Solta', 'Capitulo 01');
 const cbz = join(root, 'Manga Teste', 'Capitulo 01.cbz');
+const cbr = join(root, 'HQ Em Cbr', 'Capitulo 01.cbr');
+const pdf = join(root, 'Livro Em Pdf.pdf');
+const epub = join(root, 'Livro Em Epub.epub');
 const saved = [...config.localRoots];
 
 /** CBZ minimo: uma entrada de imagem, uma de lixo e uma pasta. */
@@ -55,6 +61,11 @@ beforeAll(async () => {
   for (const n of ['1.png', '2.jpg', '10.webp']) await writeFile(join(solta, n), 'x');
   await writeFile(join(solta, 'leiame.txt'), 'nao e pagina');
   await writeFile(cbz, buildCbz(['cap/', '001.jpg', '010.png', '002.jpeg', 'ComicInfo.xml']));
+  // CBR de verdade (RAR5 store, 3 PNGs) — CBR nao da' para forjar com zlib como o CBZ
+  await mkdir(join(root, 'HQ Em Cbr'), { recursive: true });
+  await copyFile(join(import.meta.dir, 'fixtures', 'comic.cbr'), cbr);
+  await copyFile(join(import.meta.dir, 'fixtures', 'livro.pdf'), pdf);
+  await copyFile(join(import.meta.dir, 'fixtures', 'livro.epub'), epub);
   // vizinho com o mesmo prefixo do root: nao pode ser considerado "dentro"
   await mkdir(join(box, 'biblioteca-alheia'), { recursive: true });
   await writeFile(join(box, 'segredo.txt'), 'top secret');
@@ -132,5 +143,153 @@ describe('localPagePaths', () => {
 
   test('token com travessia e recusado', async () => {
     expect(localPagePaths(encodePath(join(root, '..', 'segredo.txt')))).rejects.toThrow('fora da biblioteca');
+  });
+});
+
+describe('CBR (HQ em RAR)', () => {
+  test('as paginas saem na ordem natural, so imagens', async () => {
+    const { kind, names } = await localPagePaths(encodePath(cbr));
+    expect(kind).toBe('rar');
+    expect(names).toEqual(['p01.png', 'p02.png', 'p03.png']);
+  });
+
+  test('o indice ignora diretorio e informa entrada com senha', async () => {
+    const entries = await readRarIndex(cbr);
+    expect(entries.map((e) => e.name)).toEqual(['p01.png', 'p02.png', 'p03.png']);
+    expect(entries.every((e) => !e.encrypted)).toBe(true);
+  });
+
+  test('extrair devolve o PNG inteiro e independente do heap do WASM', async () => {
+    const um = await readRarEntry(cbr, 'p01.png');
+    // assinatura PNG: extrair errado aqui daria pagina quebrada no leitor
+    expect(Array.from(um.slice(0, 4))).toEqual([0x89, 0x50, 0x4e, 0x47]);
+    const copia = [...um];
+    // a segunda extracao reusa o heap do unrar: se a primeira fosse uma view, mudaria aqui
+    await readRarEntry(cbr, 'p02.png');
+    expect([...um]).toEqual(copia);
+  });
+
+  test('pagina que nao existe falha dizendo qual', async () => {
+    await expect(readRarEntry(cbr, 'nao-existe.png')).rejects.toThrow('nao-existe.png');
+  });
+
+  test('arquivo trocado no disco nao continua servindo o antigo', async () => {
+    // o CBR fica inteiro em memoria num slot: sem carimbo de mtime/tamanho, salvar
+    // outra versao do capitulo na mesma pasta seguiria abrindo as paginas velhas
+    expect((await readRarIndex(cbr)).map((e) => e.name)).toEqual(['p01.png', 'p02.png', 'p03.png']);
+    await copyFile(join(import.meta.dir, 'fixtures', 'comic-trocado.cbr'), cbr);
+    expect((await readRarIndex(cbr)).map((e) => e.name)).toEqual(['capa.png', 'fim.png']);
+  });
+});
+
+describe('classificacao de HQ x manga na biblioteca local', () => {
+  test('CBR sem ComicInfo entra como HQ e em LTR', async () => {
+    // manga circula em CBZ, HQ ocidental em CBR: `type: 'comic'` e' o que o
+    // leitor le para abrir da esquerda para a direita
+    const detail = await local.series(encodePath(cbr));
+    expect(detail.contentType).toBe('hq');
+    expect(detail.type).toBe('comic');
+    expect(detail.origin).toBe('en');
+  });
+
+  test('CBZ com ComicInfo incompleto NAO vira HQ', async () => {
+    // a fixture tem um ComicInfo.xml que nao declara `Manga`: sem isso o CBZ
+    // caia na aba de HQ e abria em LTR
+    const detail = await local.series(encodePath(join(root, 'Manga Teste')));
+    expect(detail.contentType ?? 'manga').toBe('manga');
+    expect(detail.type).not.toBe('comic');
+  });
+});
+
+describe('PDF na biblioteca local', () => {
+  test('cada pagina do PDF vira uma pagina do leitor', async () => {
+    const { kind, names } = await localPagePaths(encodePath(pdf));
+    expect(kind).toBe('pdf');
+    expect(names).toEqual(['1.png']);
+  });
+
+  test('a pagina sai como PNG com os pixels do PDF', async () => {
+    const png = await pdfPageImage(pdf, 0);
+    expect(png).not.toBeNull();
+    // assinatura PNG: sem canvas no servidor, a codificacao e' nossa e precisa provar que fecha
+    expect(Array.from(png!.slice(0, 8))).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    // IHDR: 40x60, 8 bits, tipo 2 (RGB) — o mesmo bitmap embutido no PDF
+    const view = new DataView(png!.buffer, png!.byteOffset);
+    expect(view.getUint32(16)).toBe(40);
+    expect(view.getUint32(20)).toBe(60);
+    expect(png![24]).toBe(8);
+    expect(png![25]).toBe(2);
+  });
+
+  test('pagina fora do intervalo devolve null, nao estoura', async () => {
+    expect(await pdfPageImage(pdf, 99)).toBeNull();
+    expect(await pdfPageText(pdf, 99)).toBe('');
+  });
+
+  test('o texto nativo da pagina sai legivel (base do leitor de livro)', async () => {
+    expect(await pdfPageText(pdf, 0)).toContain('Pagina de teste');
+  });
+
+  test('PDF entra na aba Livro e em LTR', async () => {
+    const detail = await local.series(encodePath(pdf));
+    expect(detail.contentType).toBe('livro');
+    expect(detail.type).toBe('comic');
+    expect(detail.chapters).toHaveLength(1);
+  });
+});
+
+describe('EPUB na biblioteca local', () => {
+  test('o spine vira a lista de capitulos, com titulo e autor do proprio arquivo', async () => {
+    const detail = await local.series(encodePath(epub));
+    expect(detail.title).toBe('O Livro de Teste');
+    expect(detail.authors).toEqual(['Maria Autora']);
+    expect(detail.contentType).toBe('livro');
+    // `type: 'book'` e' o que separa o EPUB do PDF: um abre no leitor de texto, o outro em paginas
+    expect(detail.type).toBe('book');
+    // o capitulo com linear="no" (notas da editora) fica fora do fio principal
+    expect(detail.chapters).toHaveLength(2);
+    expect(detail.chapters.every((c) => c.text)).toBe(true);
+  });
+
+  test('o capitulo devolve paragrafos prontos para o tradutor', async () => {
+    const detail = await local.series(encodePath(epub));
+    const blocks = await localBookBlocks(detail.chapters[0]!.id);
+    expect(blocks[0]).toEqual({ id: 0, text: 'Chapter One' });
+    expect(blocks.map((b) => b.text)).toContain('Café & jornal <velho>.');
+    // <script> nao e' texto do livro; paragrafo vazio nao vira bloco
+    expect(blocks.some((b) => b.text.includes('nao e texto'))).toBe(false);
+  });
+
+  test('capitulo de livro le apenas de dentro da biblioteca e apenas de EPUB', async () => {
+    const fora = `${encodePath(join(box, 'segredo.txt'))}.${encodePath('x')}`;
+    expect(localBookBlocks(fora)).rejects.toThrow('fora da biblioteca');
+    // token de pagina (PDF) nao vira token de livro
+    expect(localBookBlocks(`${encodePath(pdf)}.${encodePath('x')}`)).rejects.toThrow('nao pertence a um livro');
+  });
+
+  test('a capa do EPUB e a unica pagina que a grade pede', async () => {
+    const { kind, names } = await localPagePaths(encodePath(epub));
+    expect(kind).toBe('zip');
+    expect(names).toEqual(['OEBPS/images/capa.png']);
+  });
+});
+
+describe('abas do catalogo', () => {
+  test('a biblioteca local nao sai da aba pelo tipo declarado do provider', () => {
+    // o provider local se declara 'manga', mas o acervo e' misto: filtra-lo por
+    // esse rotulo escondia CBR e PDF/EPUB das abas HQ e Livro, que ficavam vazias
+    for (const tipo of ['manga', 'hq', 'livro'] as const) {
+      expect(enabledProviders(tipo).map((p) => p.id)).toContain('local');
+    }
+  });
+
+  test('numa aba especifica o corte por tipo vem antes da paginacao', async () => {
+    const livros = await local.search({ contentType: 'livro', limit: 24 });
+    // o EPUB entra na grade com o titulo do OPF, nao com o nome do arquivo
+    expect(livros.items.map((c) => c.title).sort()).toEqual(['Livro Em Pdf', 'O Livro de Teste']);
+    // `total` tem de contar o que a aba mostra, nao o acervo inteiro
+    expect(livros.total).toBe(2);
+    const hqs = await local.search({ contentType: 'hq', limit: 24 });
+    expect(hqs.items.map((c) => c.title)).toEqual(['HQ Em Cbr']);
   });
 });

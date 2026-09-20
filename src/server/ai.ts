@@ -5,7 +5,7 @@ import { realign } from './align.ts';
 import { config, getProviderConfig, normalizeProvider, type AiProvider } from './config.ts';
 import { readingOrder, type PageBlock } from './page-text.ts';
 import { contextFor, remember } from './series-memory.ts';
-import { parseReply, systemPrompt, userPrompt } from './translate-prompt.ts';
+import { parseReply, systemPrompt, userPrompt, visionSystemPrompt, visionUserPrompt } from './translate-prompt.ts';
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -258,6 +258,76 @@ export async function translateBlocks(input: TranslateInput): Promise<{ id: numb
   }
 
   if (batches > 0 && failed === batches) throw new Error(`IA indisponivel (${providerName}): ${lastError}`);
+  return out;
+}
+
+/**
+ * Motor de visao: o detector ja' deu a geometria dos baloes, mas o Tesseract
+ * NAO rodou — quem le o texto e' o proprio modelo, na pagina numerada. Resolve
+ * o que o OCR erra sempre (japones vertical, letra estilizada, SFX sobre arte)
+ * sem perder o letreiramento, que so' depende das caixas.
+ */
+export async function visionBlocks(input: TranslateInput): Promise<{ id: number; pt: string; orig?: string }[]> {
+  const target = input.target ?? 'pt-br';
+  const src = LANG_NAME[input.sourceLang ?? 'unknown'] ?? input.sourceLang ?? 'idioma original';
+  const dst = TARGET_NAME[target.toLowerCase()] ?? 'portugues do Brasil';
+  const providerName = normalizeProvider(input.provider, config.ai.provider);
+  const visionModel = getProviderConfig(providerName).visionModel;
+  if (!visionModel) throw new Error(`modelo de visao nao configurado para ${providerName} — defina em IA > Modelo de visao`);
+  const image = input.pageImage;
+  if (!image || image.length > MAX_PAGE_IMAGE || !PAGE_IMAGE_RE.test(image)) {
+    throw new Error('o motor de visao precisa da imagem da pagina; recarregue a pagina e tente de novo');
+  }
+  const model = getLanguageModel(providerName, visionModel);
+  const series = input.series?.trim();
+  const chapter = input.chapter ?? '';
+  const memory = series ? await contextFor(series, target, chapter, input.page ?? 0) : { glossary: [], notes: [] };
+  const blocks = readingOrder(input.blocks, input.rtl ?? true);
+
+  const prompt = visionUserPrompt(
+    { series, chapter: input.chapter, page: input.page, sourceName: src, ...memory, neighbours: [], withImage: true },
+    blocks.map((b) => b.id),
+  );
+  const result = await generateText({
+    model,
+    system: visionSystemPrompt(dst, target),
+    messages: [
+      {
+        role: 'user' as const,
+        content: [
+          { type: 'text' as const, text: prompt },
+          { type: 'file' as const, data: image, mediaType: image.slice(5, image.indexOf(';')) },
+        ],
+      },
+    ],
+    temperature: 0.2,
+    maxOutputTokens: Math.max(config.ai.maxTokens, blocks.length * 200 + 900),
+    ...ollamaOptions(providerName, true),
+    maxRetries: 0,
+    abortSignal: AbortSignal.timeout(config.ai.timeoutMs),
+  });
+  const reply = parseReply(result.text);
+  if (reply.partial) {
+    console.error(`[visao/${providerName}] resposta cortada (${result.finishReason}): ${reply.translations.length} de ${blocks.length} baloes aproveitados`);
+  }
+  // sem texto de OCR nao ha' como reancorar: o id marcado na imagem e' a unica chave
+  const known = new Set(blocks.map((b) => b.id));
+  const out = reply.translations
+    .filter((t) => known.has(t.id))
+    .map((t) => ({ id: t.id, pt: t.pt, ...(t.orig ? { orig: t.orig } : {}) }));
+  if (series) {
+    // o modelo le a pagina inteira: o termo aprendido tem de aparecer no que ele diz ter lido
+    const seen = out.map((t) => `${t.orig ?? ''} ${t.pt}`).join(' ').toLowerCase();
+    const learned = Array.isArray(reply.glossary)
+      ? (reply.glossary as { orig?: unknown; pt?: unknown }[]).filter(
+          (g) => typeof g?.orig === 'string' && (seen.includes(g.orig.trim().toLowerCase()) || (typeof g.pt === 'string' && seen.includes(g.pt.trim().toLowerCase()))),
+        )
+      : [];
+    await remember(series, target, chapter, input.page ?? -1, {
+      glossary: learned,
+      note: input.page === undefined ? undefined : reply.note,
+    });
+  }
   return out;
 }
 

@@ -6,8 +6,10 @@ import { signUrl, verifyUrl } from './sign.ts';
 import { HttpError, httpFetch } from './http.ts';
 import { enabledProviders, getProvider, searchAll } from './providers/index.ts';
 import type { SearchFilters, SeriesCard } from './providers/types.ts';
-import { assertInsideLibrary, localPagePaths } from './providers/local.ts';
+import { assertInsideLibrary, localBookBlocks, localPagePaths } from './providers/local.ts';
 import { readZipEntry, readZipIndex } from './zip.ts';
+import { readRarEntry } from './rar.ts';
+import { pdfPageImage } from './pdf.ts';
 import {
   aiHealth,
   explainStream,
@@ -17,6 +19,7 @@ import {
   MAX_PAGE_IMAGE,
   PAGE_IMAGE_RE,
   translateBlocks,
+  visionBlocks,
   visionTranslate,
 } from './ai.ts';
 import { sanitizeBlocks } from './page-text.ts';
@@ -233,6 +236,17 @@ const MIME: Record<string, string> = {
   '.bmp': 'image/bmp',
 };
 
+/** Paragrafos de um capitulo de livro (EPUB). O leitor de livro pede daqui e manda ao tradutor. */
+app.get('/api/local/book', async (c) => {
+  try {
+    return c.json({ blocks: await localBookBlocks(c.req.query('c') ?? '') });
+  } catch (err) {
+    const message = (err as Error).message;
+    // fora da biblioteca e' recusa; entrada inexistente no EPUB e' capitulo quebrado
+    return c.text(message, /fora da biblioteca/.test(message) ? 403 : 422);
+  }
+});
+
 app.get('/api/local/page', async (c) => {
   const chapterToken = c.req.query('c') ?? '';
   const index = Number(c.req.query('i') ?? '0');
@@ -264,6 +278,25 @@ app.get('/api/local/page', async (c) => {
   }
   // `base` ja' passou por assertInsideLibrary; decodificar o token de novo aqui
   // seria reabrir o caminho cru vindo da query
+  if (kind === 'pdf') {
+    try {
+      const png = await pdfPageImage(base, index);
+      // PDF de texto nativo nao tem bitmap para extrair; rasterizar exigiria
+      // canvas nativo, que custaria binario por plataforma no sidecar
+      if (!png) return c.text('esta pagina do PDF e texto, nao imagem — o leitor ainda nao renderiza PDF de texto', 415);
+      return new Response(png, { headers: imageHeaders });
+    } catch (err) {
+      return c.text(`pagina indisponivel no PDF: ${(err as Error).message}`, 422);
+    }
+  }
+  if (kind === 'rar') {
+    try {
+      return new Response(await readRarEntry(base, name), { headers: imageHeaders });
+    } catch (err) {
+      // CBR com senha ou corrompido e' problema do arquivo, nao do servidor
+      return c.text(`pagina indisponivel no CBR: ${(err as Error).message}`, 422);
+    }
+  }
   const entries = await readZipIndex(base);
   const entry = entries.find((e) => e.name === name);
   if (!entry) return c.text('pagina inexistente no CBZ', 404);
@@ -385,10 +418,11 @@ type TranslateBody = Parameters<typeof translateBlocks>[0] & { engine?: Engine }
  */
 const oneLine = (s: string): string => s.replace(/[\p{Cc}\p{Zl}\p{Zp}]+/gu, ' ').trim();
 
-const runEngine = (engine: Exclude<Engine, 'auto'>, body: TranslateBody): Promise<{ id: number; pt: string }[]> =>
-  engine === 'llm'
-    ? translateBlocks(body)
-    : translateWithEngine(engine, body.blocks, body.sourceLang, body.target);
+const runEngine = (engine: Exclude<Engine, 'auto'>, body: TranslateBody): Promise<{ id: number; pt: string; orig?: string }[]> => {
+  if (engine === 'llm') return translateBlocks(body);
+  if (engine === 'vision') return visionBlocks(body);
+  return translateWithEngine(engine, body.blocks, body.sourceLang, body.target);
+};
 
 app.post('/api/ai/translate', async (c) => {
   const body = (await c.req.json()) as TranslateBody;
