@@ -192,6 +192,10 @@ async function fetchImage(url: string, referer?: string): Promise<Response> {
       current = new URL(location, current).href;
       continue;
     }
+    const contentType = res.headers.get('content-type') ?? '';
+    if (!contentType.toLowerCase().startsWith('image/')) {
+      throw new HttpError(`conteudo suspeito ou nao suportado (${contentType})`, 415);
+    }
     return res;
   }
   throw new HttpError('redirects demais', 502);
