@@ -4,6 +4,7 @@ import { mangapill } from './mangapill.ts';
 import { weebcentral } from './weebcentral.ts';
 import { local } from './local.ts';
 import { archive } from './archive.ts';
+import { readallcomics } from './readallcomics.ts';
 import { createMadaraProvider, madaraSites } from './madara.ts';
 import type { ContentType, Provider, SearchFilters, SeriesCard } from './types.ts';
 
@@ -11,6 +12,7 @@ export const providers: Provider[] = [
   mangadex,
   weebcentral,
   mangapill,
+  readallcomics,
   ...madaraSites().map(createMadaraProvider),
   archive,
   local,

@@ -46,7 +46,7 @@ const RULES: { name: string; re: RegExp }[] = [
 const ALLOWED = new Set(['test-token', 'ollama', '/home/runner/', '/Users/runner/']);
 
 const SKIP_FILE =
-  /(?:^|\/)(?:bun\.lock|Cargo\.lock|package-lock\.json)$|\.(?:png|jpe?g|webp|gif|bmp|avif|ico|pdf|epub|cbz|cbr|zip|traineddata|onnx|wasm|woff2?)$/i;
+  /(?:^|\/)(?:bun\.lock|Cargo\.lock|package-lock\.json|tests\/secret-scan\.test\.ts)$|\.(?:png|jpe?g|webp|gif|bmp|avif|ico|pdf|epub|cbz|cbr|zip|traineddata|onnx|wasm|woff2?)$/i;
 
 /** Mostra o suficiente para achar a linha, nunca o segredo inteiro. */
 const mask = (hit: string): string =>
