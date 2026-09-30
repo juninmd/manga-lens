@@ -6,6 +6,10 @@ import { local } from './local.ts';
 import { archive } from './archive.ts';
 import { readallcomics } from './readallcomics.ts';
 import { createMadaraProvider, madaraSites } from './madara.ts';
+import { createThemesiaProvider } from './themesia.ts';
+import { builtinThemesiaSites } from './sites.ts';
+import { hqnow } from './hqnow.ts';
+import { mangakatana } from './mangakatana.ts';
 import type { ContentType, Provider, SearchFilters, SeriesCard } from './types.ts';
 
 export const providers: Provider[] = [
@@ -13,7 +17,10 @@ export const providers: Provider[] = [
   weebcentral,
   mangapill,
   readallcomics,
+  hqnow,
+  mangakatana,
   ...madaraSites().map(createMadaraProvider),
+  ...builtinThemesiaSites.map(createThemesiaProvider),
   archive,
   local,
 ];
@@ -106,10 +113,14 @@ export async function searchAll(ids: string[], filters: SearchFilters): Promise<
       // timer limpo quando o provider responde: sem isso cada busca deixava N
       // timers de 10s vivos (e segurava o loop nos testes)
       let timer: ReturnType<typeof setTimeout> | undefined;
+      const controller = new AbortController();
       const deadline = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`tempo esgotado (${Math.round(deadlineMs / 1000)}s)`)), deadlineMs);
+        timer = setTimeout(() => {
+          controller.abort();
+          reject(new Error(`tempo esgotado (${Math.round(deadlineMs / 1000)}s)`));
+        }, deadlineMs);
       });
-      return Promise.race([p.search(filters).finally(() => clearTimeout(timer)), deadline]);
+      return Promise.race([p.search({ ...filters, signal: controller.signal }).finally(() => clearTimeout(timer)), deadline]);
     }),
   );
 

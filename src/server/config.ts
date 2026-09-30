@@ -135,6 +135,17 @@ export function registerImageHost(host: string): void {
   if (h && !imageHostAllowlist.includes(h)) imageHostAllowlist.push(h);
 }
 
+const sourceUserAgents = new Map<string, string>();
+
+/** Some origins reject a browser UA from a non-browser; identify this app honestly. */
+export function registerSourceUserAgent(host: string, userAgent: string): void {
+  sourceUserAgents.set(host.toLowerCase(), userAgent);
+}
+
+export function userAgentForUrl(url: string): string {
+  return sourceUserAgents.get(new URL(url).hostname.toLowerCase()) ?? config.userAgent;
+}
+
 export function hostAllowed(host: string): boolean {
   const h = host.toLowerCase();
   return imageHostAllowlist.some((a) => (a.startsWith('.') ? h.endsWith(a) : h === a));

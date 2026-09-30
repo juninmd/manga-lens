@@ -1,0 +1,852 @@
+{
+  "method": "Local web server API: search -> series -> first available chapter -> signed image proxy for first/middle/last page and cover when present. One readable sample per source, not every chapter or title.",
+  "summary": {
+    "added": 81,
+    "passed": 79,
+    "failed": 2
+  },
+  "results": [
+    {
+      "provider": "manhuaplus",
+      "ok": true,
+      "series": "myriad-realms-gatekeeper",
+      "chapters": 68,
+      "pages": 4,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "mangadistrict",
+      "ok": true,
+      "series": "my-doll-diary-uncensored",
+      "chapters": 21,
+      "pages": 3,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "zinmanga",
+      "ok": true,
+      "series": "contract-marriage-rewritten",
+      "chapters": 1,
+      "pages": 14,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "toonily",
+      "ok": true,
+      "series": "a-dream-escape-82a3f797",
+      "chapters": 78,
+      "pages": 16,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "apollcomics",
+      "ok": true,
+      "series": "young-boss",
+      "chapters": 112,
+      "pages": 15,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "inventariooculto",
+      "ok": true,
+      "series": "jujutsukaisen05",
+      "chapters": 3,
+      "pages": 15,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "hadesnofansub",
+      "ok": true,
+      "series": "silenciar",
+      "chapters": 1,
+      "pages": 22,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "kazokuden",
+      "ok": true,
+      "series": "tsuzura-senpai-wa-moto-kano-dakara",
+      "chapters": 3,
+      "pages": 40,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "manhuaonline",
+      "ok": true,
+      "series": "el-del-heroe-maximo-ultimos-capitulos",
+      "chapters": 3,
+      "pages": 14,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "inmortalscan",
+      "ok": true,
+      "series": "esta-vez-soy-un-archimago-del-decimo-circulo",
+      "chapters": 4,
+      "pages": 66,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "mhscans",
+      "ok": true,
+      "series": "hice-pasar-este-mundo-en-ruinas-por-un-juego",
+      "chapters": 2,
+      "pages": 9,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "monopolyscan",
+      "ok": true,
+      "series": "mientras-mis-discipulos-se-matan-entrenando-yo-me-relajo",
+      "chapters": 203,
+      "pages": 6,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "mundomanhwa",
+      "ok": true,
+      "series": "primavera-para-blossom",
+      "chapters": 35,
+      "pages": 18,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "ragnarokscanlation",
+      "ok": true,
+      "series": "four-knights-of-the-apocalypse",
+      "chapters": 4,
+      "pages": 20,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "richtoscan",
+      "ok": true,
+      "series": "del-combate-a-la-oficina",
+      "chapters": 5,
+      "pages": 33,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "yurionline",
+      "ok": true,
+      "series": "damdam",
+      "chapters": 1,
+      "pages": 51,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "bananascan",
+      "ok": true,
+      "series": "the-novices-frontline",
+      "chapters": 8,
+      "pages": 19,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "vermanhwas",
+      "ok": true,
+      "series": "dulce-venganza-sin-censura",
+      "chapters": 13,
+      "pages": 69,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "euphoriascan",
+      "ok": true,
+      "series": "lights-camera-action",
+      "chapters": 17,
+      "pages": 6,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "cafecomyaoi",
+      "ok": true,
+      "series": "meninos-tambem-podem-ficar-fofos-vestidos-de-maid",
+      "chapters": 4,
+      "pages": 9,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "fleurblanche",
+      "ok": true,
+      "series": "from-your-almighty-cradle",
+      "chapters": 1,
+      "pages": 22,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "amuy",
+      "ok": true,
+      "series": "3970",
+      "chapters": 32,
+      "pages": 13,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "huntersscans",
+      "ok": true,
+      "series": "a-maldicao-perfeita",
+      "chapters": 3,
+      "pages": 2,
+      "images": 3,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "kamisamaexplorer",
+      "ok": true,
+      "series": "dragon-ball-gt-dbgalaxytouring",
+      "chapters": 30,
+      "pages": 1,
+      "images": 2,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "inkapk",
+      "ok": true,
+      "series": "a-magical-girl-never-loses",
+      "chapters": 4,
+      "pages": 8,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "littletyrant",
+      "ok": true,
+      "series": "estou-procurando-o-meu-pai",
+      "chapters": 12,
+      "pages": 1,
+      "images": 2,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "montetai",
+      "ok": true,
+      "series": "era-marcial-minhas-celulas-podem-evoluir-infinitamente",
+      "chapters": 1,
+      "pages": 9,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "ninjascan",
+      "ok": true,
+      "series": "mestre-de-bestas-numero-um",
+      "chapters": 7,
+      "pages": 16,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "nebulosascan",
+      "ok": true,
+      "series": "mojito",
+      "chapters": 18,
+      "pages": 11,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "noindexscan",
+      "ok": true,
+      "series": "fucking-my-friends-mom",
+      "chapters": 1,
+      "pages": 41,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "nocturnesummer",
+      "ok": true,
+      "series": "eu-preciso-ser-um-grande-vilao",
+      "chapters": 2,
+      "pages": 14,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "yuriverso",
+      "ok": true,
+      "series": "a-noite-e-o-mar",
+      "chapters": 19,
+      "pages": 32,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "mrtenzus",
+      "ok": true,
+      "series": "me-ame-mais",
+      "chapters": 2,
+      "pages": 9,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "anisascans",
+      "ok": true,
+      "series": "mr-kim-strikes-it-rich-with-auto-hunting",
+      "chapters": 23,
+      "pages": 4,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "decadencescans",
+      "ok": true,
+      "series": "christmas",
+      "chapters": 1,
+      "pages": 1,
+      "images": 2,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "bunmanga",
+      "ok": true,
+      "series": "bad-dogs-should-be-trained",
+      "chapters": 3,
+      "pages": 2,
+      "images": 3,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "cocomic",
+      "ok": true,
+      "series": "villain_family_039_s_strongest_butler",
+      "chapters": 1,
+      "pages": 6,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "gakamangas",
+      "ok": true,
+      "series": "shonen-omniverse",
+      "chapters": 6,
+      "pages": 2,
+      "images": 3,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "hunlightcomics",
+      "ok": true,
+      "series": "maol-daily-life-of-a-corporate-slave-ol-and-another-worlds-demon-king-who-exchanged-bodies",
+      "chapters": 14,
+      "pages": 27,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "ksgroupscans",
+      "ok": true,
+      "series": "kaiko-sareta-kyutei-renkinjutsu-shi-ha-henkyo-de-dainoen-wo-tsukuriageru-sokoku-wo-retakedo-saikyo-ryochi-de-slow-life-wo-oka-suru",
+      "chapters": 27,
+      "pages": 51,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "lhtranslation",
+      "ok": true,
+      "series": "sayounara-ryuusei-konnichiwa-jinsei",
+      "chapters": 7,
+      "pages": 30,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "likemangain",
+      "ok": true,
+      "series": "i-regressed-so-im-entering-a-fake-engagement-with-my-favorite-grand-duke",
+      "chapters": 20,
+      "pages": 14,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "mangasushi",
+      "ok": true,
+      "series": "academy-saikyou-no-mob-healer-shinigee-sekai-no-mob-ni-tensei-shita-ore-wa-hazure-job-healer-to-gensaku-chishiki-de-musou-suru",
+      "chapters": 7,
+      "pages": 67,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "manhuahot",
+      "ok": true,
+      "series": "prison-breakfast",
+      "chapters": 70,
+      "pages": 13,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "mangaowlio",
+      "ok": true,
+      "series": "the-strongest-player",
+      "chapters": 206,
+      "pages": 59,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "manhuanext",
+      "ok": true,
+      "series": "global-beast-taming-awakening-an-sss-level-talent-at-the-start",
+      "chapters": 3,
+      "pages": 7,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "manhwanex",
+      "ok": true,
+      "series": "high-level-martial-arts-my-cells-can-evolve-infinitely",
+      "chapters": 1,
+      "pages": 49,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "manhwareads",
+      "ok": true,
+      "series": "shut-up-evil-dragon-i-dont-want-to-raise-a-child-with-you-anymore",
+      "chapters": 26,
+      "pages": 20,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "manhwatoon",
+      "ok": true,
+      "series": "c105-mojiya-moja-aki-ane-tyanto%ef%bd%88-na-go-houbi-frame-arms-girldigital",
+      "chapters": 1,
+      "pages": 84,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:45:58.262Z"
+    },
+    {
+      "provider": "s2manga",
+      "ok": true,
+      "series": "my-exclusive-evil-king-skill-is-too-overpowered",
+      "chapters": 10,
+      "pages": 187,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "sleepytranslations",
+      "ok": true,
+      "series": "the-toy-in-the-summer-palace",
+      "chapters": 44,
+      "pages": 1,
+      "images": 2,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "topmanhua",
+      "ok": true,
+      "series": "contract-marriage-rewritten",
+      "chapters": 1,
+      "pages": 14,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "tritiniascans",
+      "ok": true,
+      "series": "kekkon-shiyou-rikon-zentei-de",
+      "chapters": 2,
+      "pages": 1,
+      "images": 2,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "wearehunger",
+      "ok": true,
+      "series": "isekai-gourmet-de-nariagari-musou",
+      "chapters": 54,
+      "pages": 64,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "yakshacomics",
+      "ok": true,
+      "series": "the-calamity-summoner",
+      "chapters": 3,
+      "pages": 11,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "celestialmoon",
+      "ok": true,
+      "series": "el-mayordomo-mas-fuerte-de-la-casa-del-villano",
+      "chapters": 1,
+      "pages": 23,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "asialotus",
+      "ok": true,
+      "series": "manga/linea-de-amor-fantastica",
+      "chapters": 15,
+      "pages": 16,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "bymichiscan",
+      "ok": true,
+      "series": "manga/el-mago-exiliado-y-una-mujer-de-otro-mundo",
+      "chapters": 1,
+      "pages": 29,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "cerberusseries",
+      "ok": true,
+      "series": "wp/manga/el-profesor-genio-quiere-tomarselo-con-calma",
+      "chapters": 5,
+      "pages": 24,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "uchuujinprojects",
+      "ok": true,
+      "series": "manga/relacion-por-diversion",
+      "chapters": 1,
+      "pages": 54,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "lelmanga",
+      "ok": true,
+      "series": "manhwa/peerless-dad",
+      "chapters": 251,
+      "pages": 25,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "tsundokutraducoes",
+      "ok": true,
+      "series": "manga/o-apartamento-onde-ecoam-lamentos-estranhos",
+      "chapters": 1,
+      "pages": 13,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "akazascans",
+      "ok": true,
+      "series": "manga/the-investment-method-of-a-wall-street-genius-on-borrowed-time",
+      "chapters": 7,
+      "pages": 14,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "asterscans",
+      "ok": true,
+      "series": "manga/finding-summer",
+      "chapters": 6,
+      "pages": 22,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "arenascans",
+      "ok": true,
+      "series": "manga/evil-dragon-is-reincarnated-revenge-begins-at-the-age-of-five",
+      "chapters": 309,
+      "pages": 32,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "athreascans",
+      "ok": true,
+      "series": "manga/deep-within-the-jade-curtains",
+      "chapters": 1,
+      "pages": 1,
+      "images": 2,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "culturedworks",
+      "ok": true,
+      "series": "manga/beethoven-reborn",
+      "chapters": 13,
+      "pages": 12,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "elftoon",
+      "ok": false,
+      "error": "Error: upstream 403 (elftoon.com)",
+      "checkedAt": "2026-09-30T20:45:58.262Z"
+    },
+    {
+      "provider": "evascans",
+      "ok": true,
+      "series": "series/i-bought-the-villains-with-money",
+      "chapters": 1,
+      "pages": 20,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "galaxymanga",
+      "ok": true,
+      "series": "manga/in-the-grasp-of-a-loving-yet-possessive-male-lead",
+      "chapters": 43,
+      "pages": 9,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "kingofshojo",
+      "ok": true,
+      "series": "manga/time-turned-back-so-i-ll-choose-a-different-life",
+      "chapters": 42,
+      "pages": 23,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "lagoonscans",
+      "ok": true,
+      "series": "manga/solo-swordmaster",
+      "chapters": 20,
+      "pages": 26,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "mangatrend",
+      "ok": true,
+      "series": "manga/codename-anastasia",
+      "chapters": 6,
+      "pages": 9,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "rackus",
+      "ok": true,
+      "series": "manga/delivery-king",
+      "chapters": 8,
+      "pages": 9,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "ravenscans",
+      "ok": true,
+      "series": "manga/isekai-glory-hole-it-feels-too-good-inside-this-hole-uncensored",
+      "chapters": 5,
+      "pages": 3,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "rokaricomics",
+      "ok": true,
+      "series": "manga/villain-familys-strongest-butler",
+      "chapters": 20,
+      "pages": 23,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "rizzcomic",
+      "ok": false,
+      "error": "Error: proxy: HTTP 526, application/octet-stream",
+      "checkedAt": "2026-09-30T20:45:58.262Z"
+    },
+    {
+      "provider": "thunderscans",
+      "ok": true,
+      "series": "comics/infinite-evolution-my-cells-keep-evolving",
+      "chapters": 1,
+      "pages": 11,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "violetscans",
+      "ok": true,
+      "series": "comics/i-want-to-divorce-my-duke-husband-but-he-wont-stop-doting-on-me",
+      "chapters": 1,
+      "pages": 10,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:43:07.301Z"
+    },
+    {
+      "provider": "hqnow",
+      "ok": true,
+      "series": "2219",
+      "chapters": 147,
+      "pages": 12,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:45:58.262Z"
+    },
+    {
+      "provider": "mangakatana",
+      "ok": true,
+      "series": "aishiteru-uso-dakedo.10797",
+      "chapters": 2,
+      "pages": 51,
+      "images": 4,
+      "checkedAt": "2026-09-30T20:45:58.262Z"
+    }
+  ],
+  "aggregateSearch": {
+    "checkedAt": "2026-09-30T20:52:12.914Z",
+    "milliseconds": 7742,
+    "status": 200,
+    "items": 104,
+    "perProvider": {
+      "mangadex": 24,
+      "weebcentral": 7,
+      "mangapill": 11,
+      "mangakatana": 16,
+      "mangaread": 5,
+      "manhuaplus": 0,
+      "mangadistrict": 0,
+      "zinmanga": 0,
+      "toonily": 0,
+      "apollcomics": 0,
+      "inventariooculto": 1,
+      "hadesnofansub": 0,
+      "kazokuden": 0,
+      "manhuaonline": 0,
+      "inmortalscan": 0,
+      "mhscans": 0,
+      "monopolyscan": 0,
+      "mundomanhwa": 0,
+      "ragnarokscanlation": 0,
+      "richtoscan": 20,
+      "yurionline": 0,
+      "bananascan": 0,
+      "vermanhwas": 12,
+      "euphoriascan": 0,
+      "cafecomyaoi": 0,
+      "fleurblanche": 0,
+      "amuy": 0,
+      "huntersscans": 0,
+      "kamisamaexplorer": 1,
+      "inkapk": 0,
+      "littletyrant": 0,
+      "montetai": 0,
+      "ninjascan": 0,
+      "nebulosascan": 0,
+      "noindexscan": 0,
+      "nocturnesummer": 1,
+      "yuriverso": 0,
+      "mrtenzus": 0,
+      "anisascans": 0,
+      "decadencescans": 0,
+      "bunmanga": 0,
+      "cocomic": 1,
+      "gakamangas": 1,
+      "hunlightcomics": 0,
+      "ksgroupscans": 0,
+      "lhtranslation": 0,
+      "likemangain": 13,
+      "mangasushi": 0,
+      "manhuahot": 0,
+      "mangaowlio": 0,
+      "manhuanext": 0,
+      "manhwanex": 0,
+      "manhwareads": 0,
+      "manhwatoon": 10,
+      "s2manga": 0,
+      "sleepytranslations": 0,
+      "topmanhua": 0,
+      "tritiniascans": 0,
+      "wearehunger": 0,
+      "yakshacomics": 0,
+      "celestialmoon": 0,
+      "asialotus": 0,
+      "bymichiscan": 0,
+      "cerberusseries": 0,
+      "uchuujinprojects": 0,
+      "lelmanga": 1,
+      "tsundokutraducoes": 0,
+      "akazascans": 0,
+      "asterscans": 0,
+      "arenascans": 0,
+      "athreascans": 0,
+      "culturedworks": 0,
+      "elftoon": 0,
+      "evascans": 0,
+      "galaxymanga": 0,
+      "kingofshojo": 0,
+      "lagoonscans": 0,
+      "mangatrend": 0,
+      "rackus": 0,
+      "ravenscans": 1,
+      "rokaricomics": 0,
+      "rizzcomic": 7,
+      "thunderscans": 0,
+      "violetscans": 0
+    },
+    "errors": [
+      {
+        "provider": "elftoon",
+        "message": "upstream 403 (elftoon.com)"
+      }
+    ]
+  },
+  "browser": {
+    "checkedAt": "2026-09-30T20:54:18.213Z",
+    "results": [
+      {
+        "check": "catalogo de mangas mostra fontes novas",
+        "ok": true
+      },
+      {
+        "check": "HQ Now detalhes",
+        "chapters": 120
+      },
+      {
+        "check": "HQ Now leitor renderiza imagem",
+        "ok": true,
+        "image": {
+          "width": 966,
+          "height": 1500
+        }
+      }
+    ]
+  }
+}

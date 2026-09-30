@@ -15,6 +15,7 @@
     "secrets:history": "bun run scripts/secret-scan.ts --all",
     "check": "bun run lint && bun run typecheck && bun run secrets && bun run test",
     "smoke": "bun run scripts/smoke.ts",
+    "smoke:sources": "bun run scripts/source-smoke.ts",
     "smoke:browser": "node scripts/browser-smoke.mjs",
     "smoke:canvas": "node scripts/canvas-fit-check.mjs",
     "smoke:desktop": "node scripts/desktop-smoke.mjs",
