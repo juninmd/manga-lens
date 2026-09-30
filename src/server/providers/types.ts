@@ -2,6 +2,8 @@
 export type ContentType = 'manga' | 'hq' | 'livro';
 
 export interface SearchFilters {
+  /** Internal cancellation, not a catalog filter or client-controlled value. */
+  signal?: AbortSignal;
   q?: string;
   contentType?: ContentType;
   /** idioma da traducao publicada (pt-br, en, ja...) */

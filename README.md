@@ -36,7 +36,7 @@ e um visualizador no estilo Picasa. Nada sai da sua máquina além do texto reco
 
 | | |
 |---|---|
-| 🔍 **Catálogo multi-provider** | MangaDex, Weeb Central, MangaPill, MangaRead, Internet Archive e a sua pasta — busca em paralelo, resultados intercalados |
+| 🔍 **Catálogo multi-provider** | 87 fontes online de mangás e HQs em quatro idiomas, mais a sua pasta — busca em paralelo, resultados intercalados |
 | 📂 **Três abas** | Mangá, HQ e Livro, cada obra classificada pelo formato e pelo `ComicInfo.xml` |
 | 👁️ **OCR na máquina** | detector neural de balões + Tesseract WASM; só o texto reconhecido vai para o LLM |
 | 🎨 **Tradução letreirada** | composta *no lugar* do texto original, na cor do balão e na cor da tinta — não é caixa branca por cima |
@@ -86,12 +86,18 @@ OCR roda na máquina (Tesseract WASM); só o texto reconhecido vai para o LLM.
 | **Weeb Central** | HTML | busca, tags (incluir/excluir), status, tipo, ordenação |
 | **MangaPill** | HTML | busca, gênero, status, tipo |
 | **MangaRead** (tema Madara) | HTML | busca, gênero, status, ordenação |
+| **56 sites Madara + 24 MangaThemesia** | HTML | busca, capítulos e páginas; filtros variam por site |
+| **MangaKatana** | HTML | busca e paginação |
+| **HQ Now** | GraphQL | HQs em português, busca por título |
+| **ReadAllComics** | HTML | busca de HQs |
 | **Internet Archive** | API oficial | HQ da Golden Age em domínio público — ~2.060 edições de 81 séries |
 | **Biblioteca local** | disco | pastas, `.cbz`/`.zip`, `.cbr`/`.rar`, `.pdf`, `.epub` |
 
 A busca vai nos providers em paralelo e intercala os resultados; provider que cai
 vira aviso na barra de status, não erro fatal. O que o provider não filtra no
 upstream é filtrado no servidor (ano em faixa, tipo, tags excluídas).
+
+**81 fontes novas foram integradas; 79 passaram pela leitura de imagens via proxy na validação de 30/09/2026.** Elf Toon (403) e Rizz Fables (CDN 526) estavam indisponíveis no teste final. Consulte a [lista completa e os resultados](docs/sources.md). Para repetir: `bun run smoke:sources` com o servidor aberto.
 
 O provider **Madara** é genérico: um parser atende qualquer site que use esse tema
 WordPress. Para somar outros, sem tocar em código:
@@ -101,13 +107,12 @@ MADARA_SITES=meusite|Meu Site|https://exemplo.org|pt-br;outro|Outro|https://outr
 ```
 
 Cada site declarado vira um provider próprio, com o host já liberado no proxy de
-imagem. (Manganato virou domínio parqueado e o AsuraComic só entrega payload de
-React server component — os dois ficaram de fora por isso.)
+imagem. Consulte [a configuração estendida](docs/sources.md#mais-sites-madara) para caminhos próprios e CDNs.
 
 > **MangaRead bloqueia por volume.** Depois de algumas dezenas de requisições ele
 > passa a responder **403** para o IP, e header de browser não contorna. Por isso
-> a lista de capítulos é cacheada por 6 h, e a homologação trata `403`/`429` de
-> provider como **aviso**, não falha — vermelho continua significando bug nosso.
+> a lista de capítulos é cacheada por 6 h. A busca mostra falhas por fonte, e
+> o teste `smoke:sources` registra `403`/`429` como falha de disponibilidade.
 
 > **O acervo do Archive é uma lista curada**, não a coleção inteira: a coleção
 > `comics` é depósito aberto e devolve edição protegida enviada por usuário. Um

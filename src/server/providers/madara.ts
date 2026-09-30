@@ -1,8 +1,10 @@
 import { fetchText, httpFetch } from '../http.ts';
-import { registerImageHost } from '../config.ts';
+import { registerImageHost, registerSourceUserAgent } from '../config.ts';
 import { cached, defaultTtl } from '../cache.ts';
 import { all, chunks, first, stripTags } from '../scrape.ts';
 import type { ChapterRef, ContentType, PageRef, Provider, SeriesCard, SeriesDetail, TagInfo } from './types.ts';
+import { absoluteUrl, attr, container, imageUrls, pathUrl } from './html.ts';
+import { builtinMadaraSites } from './sites.ts';
 
 export interface MadaraSite {
   id: string;
@@ -12,6 +14,9 @@ export interface MadaraSite {
   lang: string;
   /** tipo de conteudo do site (mangá por padrão; alguns Madara servem HQ) */
   contentType: ContentType;
+  seriesPath?: string;
+  imageHosts?: string[];
+  userAgent?: string;
 }
 
 const STATUS_OUT: Record<string, string> = {
@@ -30,8 +35,6 @@ const ORDER: Record<string, string> = {
   title: 'alphabet',
   year: 'new-manga',
 };
-
-const slugOf = (url: string): string => /\/manga\/([^/]+)/.exec(url)?.[1] ?? '';
 
 /**
  * O Madara publica a nota no card (`<span class="... total_votes">3.3</span>`),
@@ -62,32 +65,40 @@ const field = (block: string, label: string): string | undefined => {
  */
 export function createMadaraProvider(site: MadaraSite): Provider {
   const referer = `${site.base}/`;
+  const root = `${site.base}/${site.seriesPath ?? 'manga'}/`;
+  const seriesUrl = (id: string): string => `${pathUrl(root, id)}/`;
   // as paginas sao servidas pelo proprio dominio do site (wp-content/uploads)
   registerImageHost(new URL(site.base).hostname);
+  for (const host of site.imageHosts ?? []) registerImageHost(host);
+  if (site.userAgent) for (const host of [new URL(site.base).hostname, ...site.imageHosts ?? []]) registerSourceUserAgent(host, site.userAgent);
 
   const parseCards = (html: string): SeriesCard[] =>
-    chunks(html, /<div class="row c-tabs-item__content">/g)
+    chunks(html, /<div\b[^>]*class=["'][^"']*\b(?:c-tabs-item__content|page-item-detail)\b[^"']*["'][^>]*>/g)
       .map((block): SeriesCard | null => {
-        const href = first(block, /<a href="([^"]*\/manga\/[^"]*)"/);
-        const title = first(block, /<a href="[^"]*\/manga\/[^"]*"\s+title="([^"]*)"/);
+        const link = all(block, /<a\b[^>]*>([\s\S]*?)<\/a>/gi).find((m) => absoluteUrl(attr(m[0], 'href'), referer)?.startsWith(root));
+        const href = link ? absoluteUrl(attr(link[0], 'href'), referer) : undefined;
+        const title = link ? attr(link[0].split('>')[0]!, 'title') || stripTags(link[1] ?? '') || attr(first(block, /(<img\b[^>]*>)/i) ?? '', 'alt') : undefined;
         if (!href || !title) return null;
+        if (/\((?:novela?|light novel|web novel)\)/i.test(title)) return null;
+        const id = href.slice(root.length).replace(/\/$/, '');
+        if (!id || id.includes('/') || id === 'feed') return null;
         const status = (field(block, 'Status') ?? '').toLowerCase();
         const year = field(block, 'Release');
         return {
-          id: slugOf(href),
+          id,
           provider: site.id,
           title: stripTags(title),
           altTitles: (field(block, 'Alternative') ?? '')
             .split(/[,;|]/)
             .map((t) => t.trim())
             .filter(Boolean),
-          cover: first(block, /<img[^>]+src="([^"]+)"/),
+          cover: imageUrls(block, referer)[0],
           coverReferer: referer,
           year: year && /^\d{4}$/.test(year) ? Number(year) : undefined,
           rating: ratingOf(block),
           status: STATUS_OUT[status],
-          type: 'manga',
-          origin: 'ja',
+          type: site.contentType === 'hq' ? 'comic' : 'manga',
+          contentType: site.contentType,
           tags: (field(block, 'Genre') ?? '')
             .split(',')
             .map((t) => t.trim())
@@ -127,7 +138,7 @@ export function createMadaraProvider(site: MadaraSite): Provider {
       const page = f.page ?? 1;
       const url = page > 1 ? `${site.base}/page/${page}/?${p}` : `${site.base}/?${p}`;
 
-      const html = await cached(`${site.id}:search:${page}:${p}`, defaultTtl(), () => fetchText(url, { referer }));
+      const html = await cached(`${site.id}:search:v2:${page}:${p}`, defaultTtl(), () => fetchText(url, { referer, signal: f.signal }));
       let items = parseCards(html);
       if (f.yearFrom || f.yearTo) {
         items = items.filter(
@@ -142,34 +153,47 @@ export function createMadaraProvider(site: MadaraSite): Provider {
       // Site Madara bloqueia por volume (403 depois de algumas dezenas de hits);
       // lista de capitulo muda devagar, entao vale cache longo.
       return cached(`${site.id}:series:${id}`, 6 * 60 * 60 * 1000, async () => {
-        const page = await fetchText(`${site.base}/manga/${id}/`, { referer });
+        const url = seriesUrl(id);
+        const page = await fetchText(url, { referer });
 
         // A lista completa vem por AJAX; a pagina so' traz as ultimas.
         let listHtml = page;
-        const ajax = await httpFetch(`${site.base}/manga/${id}/ajax/chapters/`, {
-          referer: `${site.base}/manga/${id}/`,
-          headers: { 'X-Requested-With': 'XMLHttpRequest', 'Content-Length': '0' },
-          timeoutMs: 25_000,
+        const ajax = await httpFetch(`${url}ajax/chapters/`, {
+          method: 'POST',
+          body: '',
+          referer: url,
+          headers: { 'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/x-www-form-urlencoded' },
+          timeoutMs: 12_000,
+          retries: 0,
         }).catch(() => null);
         if (ajax?.ok) {
           const body = await ajax.text();
-          if (body.includes('wp-manga-chapter') || body.includes('/manga/')) listHtml = body;
+          if (/<li\b[^>]*class=["'][^"']*wp-manga-chapter/.test(body)) listHtml = body;
         }
 
-        const chapters: ChapterRef[] = all(listHtml, /<a href="([^"]*\/manga\/[^"]*?\/[^"/]+\/)"[^>]*>([\s\S]*?)<\/a>/g)
+        const mangaId = first(page, /id=["']manga-chapters-holder["'][^>]*data-id=["'](\d+)["']/) ?? first(page, /data-(?:id|post-id)=["'](\d+)["']/);
+        if (mangaId && listHtml === page) {
+          const legacy = await httpFetch(`${site.base}/wp-admin/admin-ajax.php`, {
+            method: 'POST', body: new URLSearchParams({ action: 'manga_get_chapters', manga: mangaId }).toString(),
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, referer: url, retries: 0,
+          }).catch(() => null);
+          if (legacy?.ok) { const body = await legacy.text(); if (body.includes('wp-manga-chapter')) listHtml = body; }
+        }
+
+        const chapters: ChapterRef[] = all(listHtml, /<a\b[^>]*>([\s\S]*?)<\/a>/gi)
           .map((m) => {
-            const href = m[1] ?? '';
-            const label = stripTags(m[2] ?? '');
-            const slug = href.replace(`${site.base}/manga/${id}/`, '').replace(/\/$/, '');
-            return { href, label, slug };
+            const href = absoluteUrl(attr(m[0].split('>')[0]!, 'href'), referer) ?? '';
+            const label = stripTags(m[1] ?? '');
+            const slug = href.startsWith(url) ? href.slice(url.length).replace(/\/$/, '') : '';
+            return { label, slug };
           })
-          .filter((c) => c.slug && !c.slug.includes('/') && /chapter|cap/i.test(c.slug))
+          .filter((c) => c.slug && !/[?#]/.test(c.slug) && !c.slug.startsWith('ajax'))
           .map(
             (c): ChapterRef => ({
               id: `${id}/${c.slug}`,
               provider: site.id,
               seriesId: id,
-              number: /(\d+(?:[.-]\d+)?)/.exec(c.slug)?.[1]?.replace('-', '.'),
+              number: /(?:chapter|cap[ií]tulo|chapitre|#)\s*[-:]?\s*(\d+(?:[.-]\d+)?)/i.exec(c.label)?.[1]?.replace('-', '.'),
               title: c.label || c.slug,
               lang: site.lang,
             }),
@@ -182,12 +206,12 @@ export function createMadaraProvider(site: MadaraSite): Provider {
         const detail: SeriesDetail = {
           id,
           provider: site.id,
-          title: stripTags(first(page, /<div class="post-title">\s*<h1[^>]*>([\s\S]*?)<\/h1>/) ?? id),
+          title: stripTags(first(container(page, ['post-title']) ?? page, /<h1\b[^>]*>([\s\S]*?)<\/h1>/i) ?? id).replace(/\s+/g, ' '),
           altTitles: (field(page, 'Alternative') ?? '')
             .split(/[,;|]/)
             .map((t) => t.trim())
             .filter(Boolean),
-          cover: first(page, /<div class="summary_image">[\s\S]*?<img[^>]+src="([^"]+)"/),
+          cover: imageUrls(container(page, ['summary_image']) ?? '', referer)[0],
           coverReferer: referer,
           description: stripTags(
             first(page, /<div class="description-summary">([\s\S]*?)<\/div>\s*<\/div>/) ??
@@ -197,8 +221,8 @@ export function createMadaraProvider(site: MadaraSite): Provider {
           status: STATUS_OUT[status],
           year: year && /^\d{4}$/.test(year) ? Number(year) : undefined,
           rating: ratingOf(page),
-          origin: 'ja',
-          type: 'manga',
+          contentType: site.contentType,
+          type: site.contentType === 'hq' ? 'comic' : 'manga',
           tags: (field(page, 'Genre') ?? '')
             .split(',')
             .map((t) => t.trim())
@@ -207,7 +231,7 @@ export function createMadaraProvider(site: MadaraSite): Provider {
             .split(',')
             .map((t) => t.trim())
             .filter(Boolean),
-          url: `${site.base}/manga/${id}/`,
+          url,
           chapters,
           availableLangs: [site.lang],
         };
@@ -216,12 +240,12 @@ export function createMadaraProvider(site: MadaraSite): Provider {
     },
 
     async pages(chapterId) {
-      const html = await fetchText(`${site.base}/manga/${chapterId}/`, { referer });
-      const body = /<div class="reading-content">([\s\S]*?)<\/div>\s*<\/div>/.exec(html)?.[1] ?? html;
-      const urls = all(body, /<img[^>]+(?:data-src|src)="([^"]+)"/g)
-        .map((m) => (m[1] ?? '').trim())
-        .filter((u) => /^https?:/.test(u) && !/logo|icon|placeholder/i.test(u));
-      const out: PageRef[] = [...new Set(urls)].map((url) => ({ url, referer }));
+      const url = seriesUrl(chapterId);
+      const html = await fetchText(url, { referer });
+      const body = container(html, ['reading-content', 'read-container']);
+      if (body === undefined) throw new Error(`${site.name}: leitor de paginas nao encontrado`);
+      const out: PageRef[] = imageUrls(body, url).map((image) => ({ url: image, referer: url }));
+      if (!out.length) throw new Error(`${site.name}: capitulo sem paginas`);
       return out;
     },
   };
@@ -229,21 +253,21 @@ export function createMadaraProvider(site: MadaraSite): Provider {
 
 /** Sites embutidos + os que o usuario declarar em MADARA_SITES. */
 export function madaraSites(): MadaraSite[] {
-  const builtin: MadaraSite[] = [
-    { id: 'mangaread', name: 'MangaRead', base: 'https://www.mangaread.org', lang: 'en', contentType: 'manga' },
-  ];
+  const builtin = builtinMadaraSites;
   const extra = (process.env['MADARA_SITES'] ?? '')
     .split(';')
     .map((entry) => entry.trim())
     .filter(Boolean)
     .map((entry): MadaraSite | null => {
       // formato: id|Nome|https://site|lang|tipo (tipo e' opcional, default 'manga')
-      const [id, name, base, lang, type] = entry.split('|').map((s) => s.trim());
+      const [id, name, base, lang, type, seriesPath, hosts] = entry.split('|').map((s) => s.trim());
       if (!id || !base) return null;
+      try { if (new URL(base).protocol !== 'https:') return null; } catch { return null; }
       const contentType: ContentType = type === 'hq' || type === 'livro' ? type : 'manga';
-      return { id, name: name || id, base: base.replace(/\/+$/, ''), lang: lang || 'en', contentType };
+      return { id, name: name || id, base: base.replace(/\/+$/, ''), lang: lang || 'en', contentType,
+        seriesPath: seriesPath || 'manga', imageHosts: hosts?.split(',').filter(Boolean) };
     })
     .filter((s): s is MadaraSite => s !== null);
 
-  return [...builtin, ...extra];
+  return [...new Map([...builtin, ...extra].map((s) => [s.id, s])).values()];
 }

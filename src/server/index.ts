@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { join, extname } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { config, getProviderConfig, hostAllowed, normalizeProvider, saveAiConfig, type AiProvider } from './config.ts';
+import { normalizeProviderImage } from './provider-image.ts';
 import { signUrl, verifyUrl } from './sign.ts';
 import { HttpError, httpFetch } from './http.ts';
 import { enabledProviders, getProvider, searchAll } from './providers/index.ts';
@@ -181,7 +182,7 @@ async function fetchImage(url: string, referer?: string): Promise<Response> {
     if (parsed.protocol !== 'https:' || !hostAllowed(parsed.hostname)) {
       throw new HttpError(`host bloqueado: ${parsed.hostname}`, 403);
     }
-    const res = await httpFetch(current, {
+    let res = await httpFetch(current, {
       referer,
       accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
       timeoutMs: 30_000,
@@ -192,6 +193,7 @@ async function fetchImage(url: string, referer?: string): Promise<Response> {
       current = new URL(location, current).href;
       continue;
     }
+    res = await normalizeProviderImage(res, parsed.hostname);
     const contentType = res.headers.get('content-type') ?? '';
     if (!contentType.toLowerCase().startsWith('image/')) {
       throw new HttpError(`conteudo suspeito ou nao suportado (${contentType})`, 415);
