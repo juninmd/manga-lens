@@ -1,6 +1,6 @@
 # Fontes de HQs e mangás
 
-Foram adicionadas **81 fontes**: 80 de mangás e uma de HQs (HQ Now, em português). O catálogo padrão tem **87 fontes online** e a biblioteca local. As fontes novas e MangaRead cobrem português, inglês, espanhol e francês.
+Foram adicionadas **82 fontes**: 81 de mangás e uma de HQs (HQ Now, em português). O catálogo padrão tem **88 fontes online** e a biblioteca local. As fontes novas e MangaRead cobrem português, inglês, espanhol e francês.
 
 ## Validação real em 30/09/2026
 
@@ -17,6 +17,7 @@ Os testes locais passaram: `bun run check` (280 testes) e `bun run build:client`
 | Fonte | ID | Idioma | Conteúdo | Adaptador | Resultado pelo app |
 |---|---|---|---|---|---|
 | [MangaRead](https://www.mangaread.org) | mangaread | en | Mangá | Madara | Leitura validada |
+| [MangaLivre](https://mangalivre.xyz) | mangalivre | pt-br | Mangá | Madara | Leitura validada |
 | [Manhua Plus](https://manhuaplus.com) | manhuaplus | en | Mangá | Madara | Leitura validada |
 | [Manga District](https://mangadistrict.com) | mangadistrict | en | Mangá | Madara | Leitura validada |
 | [Zinmanga](https://mangazin.org) | zinmanga | en | Mangá | Madara | Leitura validada |
