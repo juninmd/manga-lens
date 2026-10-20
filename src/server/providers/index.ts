@@ -10,6 +10,7 @@ import { createThemesiaProvider } from './themesia.ts';
 import { builtinThemesiaSites } from './sites.ts';
 import { hqnow } from './hqnow.ts';
 import { mangakatana } from './mangakatana.ts';
+import { komiku } from './komiku.ts';
 import type { ContentType, Provider, SearchFilters, SeriesCard } from './types.ts';
 
 export const providers: Provider[] = [
@@ -19,6 +20,7 @@ export const providers: Provider[] = [
   readallcomics,
   hqnow,
   mangakatana,
+  komiku,
   ...madaraSites().map(createMadaraProvider),
   ...builtinThemesiaSites.map(createThemesiaProvider),
   archive,

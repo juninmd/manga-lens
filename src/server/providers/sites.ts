@@ -603,6 +603,16 @@ export const builtinMadaraSites: MadaraSite[] = [
     "seriesPath": "manga",
     "userAgent": "MangaLens/0.1.0",
     "imageHosts": []
+  },
+  {
+    "id": "mangalivre",
+    "name": "MangaLivre",
+    "base": "https://mangalivre.to",
+    "lang": "pt-br",
+    "contentType": "manga",
+    "seriesPath": "manga",
+    "userAgent": "MangaLens/0.1.0",
+    "imageHosts": []
   }
 ];
 
