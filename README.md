@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src=".github/assets/icon.png" alt="Ícone do MangaLens: um livro aberto com uma lupa" width="96" height="96" />
+
 # 📖 MangaLens
 
 **Leia mangá, HQ e livro em qualquer idioma — a tradução aparece dentro do balão, na hora.**
@@ -14,20 +16,29 @@ e um visualizador no estilo Picasa. Nada sai da sua máquina além do texto reco
 ![Tauri](https://img.shields.io/badge/Tauri-v2-24C8DB?logo=tauri&logoColor=white)
 ![Biome](https://img.shields.io/badge/Biome-lint-60A5FA?logo=biome&logoColor=white)
 
+<br/>
+
+<img src=".github/assets/screenshots/home.png" alt="Tela principal do MangaLens com três obras da biblioteca local de teste" width="860" />
+
 </div>
+
+> Comece com `bun install` e `bun run dev`, depois abra http://localhost:7788. Nada sai da sua máquina além do texto reconhecido.
 
 ---
 
-## Sumário
+## 🧭 Sumário
 
 | | |
 |---|---|
 | 🚀 [Rodando](#-rodando) · [Configuração de IA](#-configuração-de-ia) | comece por aqui |
+| 🎬 [Tour](#-tour) | o que se vê na tela |
 | 📚 [Catálogo](#-catálogo) · [Biblioteca local](#biblioteca-local) | de onde vêm as obras |
 | 🔤 [OCR e tradução](#-ocr-e-tradução) · [Motores](#motores-de-tradução) | o coração do app |
 | 🖼️ [Visualizador](#️-visualizador-estilo-picasa) · [Leitor de livro](#leitor-de-livro-epub) | como se lê |
 | 🔖 [Onde você parou](#-onde-você-parou) | progresso, marcadores, backup |
 | ✅ [Verificação](#-verificação) · [Release](#release-automática) | qualidade e entrega |
+| 🤝 [Contribuindo](#-contribuindo) · [Documentação](#-documentação) | regras e onde está a profundidade |
+| 🔐 [Segurança](#-segurança) · [Licença](#-licença) | limites de confiança e termos |
 | ⚠️ [Armadilhas](#armadilhas-já-pagas) · [Limites](#-limites-conhecidos) | o que já custou caro |
 
 ---
@@ -47,10 +58,26 @@ e um visualizador no estilo Picasa. Nada sai da sua máquina além do texto reco
 
 ---
 
+## 🎬 Tour
+
+<table>
+<tr>
+<td width="100%"><img src=".github/assets/screenshots/home.png" alt="Catálogo com três obras da biblioteca local de teste, com só a fonte local marcada" /><br/><b>Catálogo</b> &ndash; a busca percorre as fontes marcadas em <b>Fontes</b>; aqui, só a biblioteca local.</td>
+</tr>
+</table>
+
+TODO(screenshot): leitor com a tradução composta dentro dos balões (modo IA ou automático)
+
+TODO(screenshot): visualizador em modo tira (webtoon) com o navegador em miniatura
+
+<sub>Capturada do app em modo web (`bun run dev`) com a biblioteca local de teste: páginas sintéticas de cor sólida com texto, sem obra real. Fontes online desligadas na captura.</sub>
+
 ## 🚀 Rodando
 
+**Pré-requisitos:** Bun 1.3. Para `bun run desktop` e `desktop:build`, também Rust (`cargo`) e as dependências do Tauri v2 para o seu sistema.
+
 ```powershell
-bun install
+bun install             # dependências (bun.lock)
 copy .env.example .env      # ajuste AI_PROVIDER / AI_MODEL / LOCAL_LIBRARY
 
 # app desktop
@@ -64,12 +91,29 @@ bun run dev                 # http://localhost:7788
 O app escolhe uma porta livre para o sidecar e a entrega ao front pelo comando
 `api_port`; o processo do servidor é morto junto com a janela.
 
+### Primeiro uso
+
+1. Aponte `LOCAL_LIBRARY` para uma pasta (ex.: `LOCAL_LIBRARY=D:\Mangas`); cada subpasta vira uma obra.
+2. Rode `bun run dev` e abra http://localhost:7788. A saída inicial:
+
+```text
+client compilado (2 artefatos, 5 arquivos do tesseract, runtime ONNX)
+manga-lens em http://localhost:7788
+```
+
+3. Em **Fontes**, deixe só a biblioteca local marcada; sem isso a busca vai para os sites.
+
 ### Como roda
 
-```
-Tauri (janela + WebView2)
-  ├─ front  → public/  (bundle Bun: catálogo, visualizador, OCR no browser)
-  └─ sidecar → manga-lens-server (Bun compilado): providers, proxy de imagem, LLM
+```mermaid
+flowchart LR
+  Tauri["src-tauri: janela WebView2"] -->|sidecar + api_port| Srv["src/server/index.ts"]
+  Front["src/client: catalog.ts, reader.ts"] -->|/api/search, /api/pages| Srv
+  Srv --> Prov["src/server/providers/"]
+  Front -->|/api/img assinada| Img["sign.ts: verifyUrl"]
+  Srv --> Img
+  Front -->|OCR local| OCR["src/client/ocr.ts + text-detector.ts"]
+  Front -->|/api/ai/translate| AI["src/server/ai.ts + translators.ts"]
 ```
 
 O front nunca fala direto com os sites: toda imagem passa por `/api/img`, com URL
@@ -333,8 +377,27 @@ O selo no canto inferior mostra o provider e modelo ativo ou o erro de conexão.
 Estar listado em `/v1/models` não prova que o modelo responde — o teste real é
 pedir uma tradução.
 
+> [!NOTE]
 > O `.env` **não é versionado** e a varredura de segredos reprova o build se uma
 > chave escapar para um arquivo que está. Veja [Verificação](#-verificação).
+
+## 🧩 Configuração
+
+Além das variáveis de IA acima, o `.env.example` lista as demais. Valores são lidos
+de `src/server/config.ts` e dos providers.
+
+| Variável | Para quê | Obrigatória / padrão | Exemplo |
+|---|---|---|---|
+| `PORT` | porta HTTP do servidor | padrão `7788` | `PORT=7788` |
+| `LOCAL_LIBRARY` | pastas da biblioteca local, separadas por `;` | padrão vazio (desativada) | `LOCAL_LIBRARY=D:\Mangas;E:\HQ` |
+| `CACHE_DIR` | cache de páginas, memória da obra e modelos | padrão `.cache` | `CACHE_DIR=.cache` |
+| `MADARA_SITES` | sites Madara extras, no formato `nome\|título\|url\|idioma` | padrão vazio | `MADARA_SITES=meusite\|Meu Site\|https://exemplo.org\|pt-br` |
+| `ARCHIVE_SERIES` | séries extras do Internet Archive, separadas por `;` | padrão vazio | `ARCHIVE_SERIES=Serie Um;Serie Dois` |
+| `AI_PROVIDER` | provedor de IA: `ollama`, `openrouter` ou `openaicompatible` | padrão `ollama` | `AI_PROVIDER=openrouter` |
+| `AI_MAX_TOKENS` | teto de tokens da resposta do LLM | padrão `1200` | `AI_MAX_TOKENS=1200` |
+| `AI_TIMEOUT_MS` | tempo máximo de uma chamada ao LLM | padrão `120000` | `AI_TIMEOUT_MS=120000` |
+
+As chaves (`*_API_KEY`) ficam só no `.env` local, nunca no repositório.
 
 ---
 
@@ -388,7 +451,7 @@ node scripts/make-test-cbz.mjs    # cria .testlib com CBZ + pasta para o provide
 
 Todo commit que entra na `main` vira **tag e release**, pelo workflow
 `.github/workflows/release.yml`. A versão sai do prefixo dos commits
-(Conventional Commits, que o `AGENTS.md` já exige):
+(Conventional Commits):
 
 | Prefixo | Sobe |
 |---|---|
@@ -435,6 +498,30 @@ bun run scripts/release-notes.ts
 
 ---
 
+## 🤝 Contribuindo
+
+- Commits em [Conventional Commits](https://www.conventionalcommits.org): o `release.yml` lê o prefixo (`feat:`, `fix:`, `tipo!:`) para decidir a versão.
+- Antes de abrir PR, rode `bun run check` (lint, tipos, varredura de segredos e testes).
+- Regras de agentes e do repositório estão em `AGENTS.md`.
+
+## 📚 Documentação
+
+| Documento | O que tem |
+|---|---|
+| 🌐 [Fontes](docs/sources.md) | os providers, os filtros que cada um aplica no servidor e o resultado da validação de imagens |
+| 🔬 [Pesquisa de OCR e tradução](.workflow/6-ocr-translation-research/research.md) | modelos avaliados para o OCR de balões e as recomendações priorizadas |
+
+## 🔐 Segurança
+
+| Camada | Proteção |
+|---|---|
+| Imagens | `/api/img` só entrega URL **assinada em HMAC** com host em allowlist, conferida a cada redirect |
+| Arquivos locais | caminho fora de `LOCAL_LIBRARY` é recusado, barreira contra travessia de caminho |
+| Segredos | `.env` não é versionado; `bun run secrets` reprova credencial escrita no repositório |
+| Dados | OCR roda na máquina; progresso e backup ficam no `localStorage` e num `.json` local |
+
+---
+
 ## 🚧 Limites conhecidos
 
 - O OCR continua sendo o Tesseract: texto estilizado, japonês horizontal e
@@ -454,3 +541,7 @@ bun run scripts/release-notes.ts
   responde `415` explicando. PDF escaneado funciona.
 - `.cb7` (7-Zip) não é lido: as bibliotecas WASM disponíveis têm licença indefinida
   ou são feitas só para browser.
+
+## 📄 Licença
+
+Sem licença definida: o repositório é privado e ainda não tem arquivo `LICENSE`. Até o autor escolher uma, nenhum direito de uso ou redistribuição está concedido.
