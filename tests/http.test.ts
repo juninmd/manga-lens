@@ -120,3 +120,117 @@ describe('fetchJson / fetchText', () => {
     expect(err.status).toBe(451);
   });
 });
+
+describe('corpo travado, limite de concorrencia e cancelamento', () => {
+  test('servidor que trava o corpo rejeita com HttpError 504 dentro de bodyTimeoutMs', async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('1234567890'));
+            // envia 10 bytes e para/trava
+          },
+        });
+        return new Response(stream, {
+          status: 200,
+          headers: { 'content-length': '1000' },
+        });
+      },
+    });
+
+    try {
+      const url = `http://127.0.0.1:${server.port}/hang`;
+      const t0 = Date.now();
+      const err = (await fetchText(url, { bodyTimeoutMs: 150, retries: 0 }).catch((e) => e)) as HttpError;
+      const elapsed = Date.now() - t0;
+
+      expect(err).toBeInstanceOf(HttpError);
+      expect(err.status).toBe(504);
+      expect(err.message).toContain('timeout lendo corpo');
+      expect(elapsed).toBeGreaterThanOrEqual(100);
+      expect(elapsed).toBeLessThan(1000);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test('20 downloads lentos simultaneos nunca tem mais de 16 em andamento', async () => {
+    let currentInFlight = 0;
+    let maxInFlight = 0;
+
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        currentInFlight++;
+        if (currentInFlight > maxInFlight) maxInFlight = currentInFlight;
+
+        const stream = new ReadableStream({
+          async start(controller) {
+            controller.enqueue(new TextEncoder().encode('part1'));
+            await Bun.sleep(100);
+            controller.enqueue(new TextEncoder().encode('part2'));
+            controller.close();
+          },
+        });
+
+        return new Response(stream, { status: 200 });
+      },
+    });
+
+    try {
+      const url = `http://127.0.0.1:${server.port}/slow`;
+      const downloads = Array.from({ length: 20 }, async () => {
+        const res = await httpFetch(url, { retries: 0, bodyTimeoutMs: 2000 });
+        const text = await res.text();
+        currentInFlight--;
+        return text;
+      });
+
+      const results = await Promise.all(downloads);
+      expect(results).toHaveLength(20);
+      expect(maxInFlight).toBeLessThanOrEqual(16);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test('cancelar o stream libera a vaga do semaforo', async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const u = new URL(req.url);
+        const hang = u.searchParams.has('hang');
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('chunk1'));
+            if (!hang) controller.close();
+          },
+        });
+        return new Response(stream, { status: 200 });
+      },
+    });
+
+    try {
+      const url = `http://127.0.0.1:${server.port}/cancel`;
+      // Primeira requisicao responde 'chunk1' e NAO fecha o corpo no servidor (hang)
+      const res = await httpFetch(`${url}?hang=1`, { retries: 0 });
+      const reader = res.body!.getReader();
+      const firstRead = await reader.read();
+      expect(new TextDecoder().decode(firstRead.value)).toBe('chunk1');
+
+      // Cancela o stream
+      await reader.cancel('usuario mudou de capitulo');
+
+      // Se a vaga nao tivesse sido liberada por cancel(), a 16a das 16 novas requisicoes ficaria presa
+      const requests = Array.from({ length: 16 }, () =>
+        httpFetch(url, { retries: 0, bodyTimeoutMs: 500 }).then((r) => r.text()),
+      );
+      const results = await Promise.all(requests);
+      expect(results).toHaveLength(16);
+      expect(results[0]).toBe('chunk1');
+    } finally {
+      server.stop(true);
+    }
+  });
+});
