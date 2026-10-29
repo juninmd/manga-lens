@@ -76,3 +76,22 @@ describe('chunks', () => {
     expect(chunks('<div>A</div>', /<card>/g)).toEqual([]);
   });
 });
+
+describe('entidades nomeadas (#26)', () => {
+  test('Latin-1 e pontuacao tipografica', () => {
+    expect(decodeEntities('Caf&eacute; &ndash; Vol. 2 &hellip;')).toBe('Café – Vol. 2 …');
+    expect(decodeEntities('&atilde;&ccedil;&yuml;&iexcl;&times;&divide;')).toBe('ãçÿ¡×÷');
+    expect(decodeEntities('&ldquo;a&rdquo; &lsquo;b&rsquo; &mdash; &copy;&reg;&trade;&euro;')).toBe(
+      '“a” ‘b’ — ©®™€',
+    );
+  });
+
+  test('sem ponto e virgula, URL fica intocada; nome de Object.prototype fica literal', () => {
+    expect(decodeEntities('?a=1&copy=2')).toBe('?a=1&copy=2');
+    expect(decodeEntities('&constructor;')).toBe('&constructor;');
+  });
+
+  test('stripTags comprime espacos e nbsp', () => {
+    expect(stripTags('<b>Caf&eacute;</b>&nbsp;&#160; <i>x</i>\n y')).toBe('Café x y');
+  });
+});
