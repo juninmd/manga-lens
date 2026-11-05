@@ -1,0 +1,380 @@
+<title>Rodada de Qualidade — MangaLens</title>
+<meta name="description" content="Relatório visual da rodada de qualidade competitiva do MangaLens: inpainting por difusão, backup de progresso e benchmark de OCR contra manga-ocr e EasyOCR.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@500;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --paper: #f6f4ef;
+    --paper-raised: #ffffff;
+    --ink: #1c1a17;
+    --ink-soft: #55504a;
+    --ink-faint: #918b82;
+    --line: #ddd6cb;
+    --line-strong: #b8afa1;
+    --stamp: #b3341f;
+    --stamp-soft: #f2e2dd;
+    --good: #2f6b4f;
+    --good-soft: #e2ece5;
+    --warn: #8a6a1f;
+    --warn-soft: #f1e8d3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #17161a;
+      --paper-raised: #201e22;
+      --ink: #eeeae2;
+      --ink-soft: #b6afa4;
+      --ink-faint: #7d766c;
+      --line: #37342f;
+      --line-strong: #4c473f;
+      --stamp: #e2624a;
+      --stamp-soft: #3a2420;
+      --good: #74c79b;
+      --good-soft: #1e2f26;
+      --warn: #dcb968;
+      --warn-soft: #332a17;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #17161a;
+    --paper-raised: #201e22;
+    --ink: #eeeae2;
+    --ink-soft: #b6afa4;
+    --ink-faint: #7d766c;
+    --line: #37342f;
+    --line-strong: #4c473f;
+    --stamp: #e2624a;
+    --stamp-soft: #3a2420;
+    --good: #74c79b;
+    --good-soft: #1e2f26;
+    --warn: #dcb968;
+    --warn-soft: #332a17;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'IBM Plex Sans', system-ui, sans-serif;
+    line-height: 1.55;
+  }
+  ::selection { background: var(--stamp); color: #fff; }
+
+  .page {
+    max-width: 840px;
+    margin: 0 auto;
+    padding: 56px 24px 96px;
+    display: flex;
+    flex-direction: column;
+    gap: 52px;
+  }
+
+  h1, h2, h3 {
+    font-family: 'Shippori Mincho B1', 'Hiragino Mincho ProN', serif;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  header.masthead {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    border-bottom: 3px solid var(--ink);
+    padding-bottom: 28px;
+  }
+  .eyebrow {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .eyebrow .tag {
+    border: 1px solid var(--line-strong);
+    border-radius: 3px;
+    padding: 2px 8px;
+    color: var(--ink-soft);
+  }
+  .eyebrow a { color: var(--stamp); text-decoration: none; }
+  .eyebrow a:hover { text-decoration: underline; }
+  header.masthead h1 {
+    font-size: clamp(2.1rem, 5vw, 2.9rem);
+    font-weight: 800;
+    letter-spacing: 0.01em;
+  }
+  header.masthead .dek {
+    font-size: 1.05rem;
+    color: var(--ink-soft);
+    max-width: 62ch;
+  }
+
+  section { display: flex; flex-direction: column; gap: 18px; }
+  .section-head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 10px;
+  }
+  .section-head .num {
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--stamp);
+    font-size: 0.85rem;
+  }
+  .section-head h2 { font-size: 1.5rem; font-weight: 700; }
+  .section-head .status {
+    margin-left: auto;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 3px 9px;
+    border-radius: 999px;
+  }
+  .status.shipped { background: var(--good-soft); color: var(--good); }
+  .status.spike { background: var(--warn-soft); color: var(--warn); }
+
+  p { max-width: 68ch; color: var(--ink-soft); }
+  p.lede { color: var(--ink); font-size: 1.02rem; }
+  strong { color: var(--ink); font-weight: 600; }
+
+  .panel {
+    background: var(--paper-raised);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 18px;
+  }
+  .panel img { display: block; width: 100%; height: auto; border-radius: 2px; }
+  .panel figcaption {
+    margin-top: 12px;
+    font-size: 0.85rem;
+    color: var(--ink-faint);
+    font-family: 'IBM Plex Mono', monospace;
+    line-height: 1.5;
+  }
+
+  .diptych {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 2px;
+    background: var(--ink);
+    border: 3px solid var(--ink);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .diptych .half { background: var(--paper-raised); position: relative; }
+  .diptych .half img { display: block; width: 100%; }
+  .diptych .label {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    background: var(--ink);
+    color: var(--paper);
+    padding: 3px 9px;
+    border-radius: 2px;
+  }
+  .diptych .label.after { background: var(--stamp); }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.86rem;
+  }
+  table caption { text-align: left; font-family: 'IBM Plex Sans'; margin-bottom: 8px; color: var(--ink-faint); font-size: 0.85rem; }
+  th, td {
+    text-align: left;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--line);
+    font-variant-numeric: tabular-nums;
+  }
+  th { color: var(--ink-faint); font-weight: 500; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; }
+  td.num { text-align: right; }
+  tr.highlight td { background: var(--good-soft); }
+  tr.highlight td:first-child { border-left: 3px solid var(--good); }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 4px; background: var(--paper-raised); }
+  .table-wrap table { min-width: 480px; }
+  .table-wrap th:first-child, .table-wrap td:first-child { padding-left: 16px; }
+
+  .verdict {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    padding: 14px 16px;
+    border-left: 3px solid var(--stamp);
+    background: var(--stamp-soft);
+    border-radius: 0 4px 4px 0;
+  }
+  .verdict .mark {
+    font-family: 'Shippori Mincho B1', serif;
+    font-weight: 700;
+    color: var(--stamp);
+    font-size: 1.1rem;
+    flex-shrink: 0;
+  }
+  .verdict p { color: var(--ink); margin: 0; max-width: none; }
+
+  .checklist { display: flex; flex-direction: column; gap: 10px; }
+  .checkitem { display: flex; gap: 12px; align-items: baseline; font-family: 'IBM Plex Mono', monospace; font-size: 0.88rem; }
+  .checkitem .glyph { color: var(--good); flex-shrink: 0; }
+  .checkitem span.desc { color: var(--ink-soft); font-family: 'IBM Plex Sans'; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.78rem;
+    color: var(--ink-soft);
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    padding: 5px 12px;
+  }
+
+  footer {
+    border-top: 1px solid var(--line);
+    padding-top: 20px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.78rem;
+    color: var(--ink-faint);
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  footer a { color: var(--stamp); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+
+  @media (min-width: 620px) {
+    .diptych { grid-template-columns: 1fr; }
+  }
+</style>
+
+<div class="page">
+
+  <header class="masthead">
+    <div class="eyebrow">
+      <span class="tag">issue #5</span>
+      <span class="tag">PR #6</span>
+      <span class="tag">tag v0.4.0</span>
+      <a href="https://github.com/juninmd/manga-lens/pull/6" target="_blank" rel="noopener">github.com/juninmd/manga-lens/pull/6 ↗</a>
+    </div>
+    <h1>Rodada de qualidade competitiva</h1>
+    <p class="dek">MangaLens medido contra Mihon, Suwayomi, Komga/Kavita, BallonsTranslator, comic-translate e manga-image-translator — três entregas fechadas, uma decisão de arquitetura registrada com números reais.</p>
+  </header>
+
+  <section>
+    <div class="section-head">
+      <span class="num">01</span>
+      <h2>Barra de ferramentas</h2>
+      <span class="status shipped">entregue</span>
+    </div>
+    <p class="lede">Dois botões novos ao lado do seletor de IA: <strong>exportar</strong> e <strong>importar</strong> um backup local de favoritos, progresso, marcadores e capítulos lidos — sem conta, sem servidor.</p>
+    <figure class="panel">
+      <img src="data:image/png;base64,__TOOLBAR_B64__" alt="Barra de ferramentas do MangaLens mostrando os botões Backup e Importar ao lado de IA / LLM">
+      <figcaption>src/client/catalog.ts — captura real, servidor local</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <span class="num">02</span>
+      <h2>Inpainting por difusão</h2>
+      <span class="status shipped">entregue</span>
+    </div>
+    <p class="lede">Texto solto sobre arte — sem balão atrás — era descartado por completo assim que o fundo deixava de ser liso. A IA nunca chegava a ver esse texto. Agora uma difusão de quatro vizinhos reconstrói o fundo a partir da moldura ao redor, e o bloco entra na fila de tradução como qualquer outro.</p>
+    <div class="diptych">
+      <div class="half">
+        <span class="label">antes</span>
+        <img src="data:image/png;base64,__INPAINT_B64__" alt="Antes e depois do apagamento por difusão do texto LOOOOSERS!! WANNA-BE'S! sobre a arte de Naruto, cap. 1">
+      </div>
+    </div>
+    <p style="font-family:'IBM Plex Mono',monospace;font-size:0.82rem;color:var(--ink-faint);margin-top:-6px;">Naruto, cap. 1 — "LOOOOSERS!! WANNA-BE'S!" impresso direto sobre o traço, sem balão. Metade de cima: página original. Metade de baixo: a mesma região depois de <code>diffusePixels</code> apagar o texto — pronta para receber a legenda em pt-BR.</p>
+    <div class="verdict">
+      <span class="mark">解</span>
+      <p>Não é reconstrução neural — é a "heurística barata" escolhida no plano. O ganho real não é a qualidade do preenchimento, é que esse bloco <strong>passa a ser traduzido</strong>, onde antes era silenciosamente ignorado.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <span class="num">03</span>
+      <h2>Benchmark de OCR</h2>
+      <span class="status spike">spike — sem integração</span>
+    </div>
+    <p class="lede">Tesseract.js (motor atual) medido contra dois motores mais pesados, em recortes reais de mangá e sintéticos em japonês, com gabarito transcrito à mão e erro por caractere (CER).</p>
+
+    <div class="table-wrap">
+      <table>
+        <caption>Inglês — páginas reais de Naruto cap. 1 (mangapill)</caption>
+        <thead>
+          <tr><th>Motor</th><th class="num">CER médio</th><th class="num">Latência/item</th><th>Infra</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Tesseract.js (atual)</td><td class="num">0.484</td><td class="num">82&nbsp;ms</td><td>WASM, já embutido</td></tr>
+          <tr><td>EasyOCR</td><td class="num">0.232</td><td class="num">2190&nbsp;ms</td><td>Python + PyTorch, sem WASM</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <caption>Japonês — recortes sintéticos (MS Gothic, horizontal e vertical)</caption>
+        <thead>
+          <tr><th>Motor</th><th class="num">CER médio</th><th class="num">Latência/item</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Tesseract.js jpn (horizontal)</td><td class="num">0.559</td><td class="num">43&nbsp;ms</td></tr>
+          <tr><td>Tesseract.js jpn_vert (vertical)</td><td class="num">0.000</td><td class="num">41&nbsp;ms</td></tr>
+          <tr class="highlight"><td>manga-ocr (kha-white)</td><td class="num">0.000</td><td class="num">976&nbsp;ms (CPU)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="verdict">
+      <span class="mark">要</span>
+      <p><strong>manga-ocr zera o erro nos dois estilos testados</strong> — a confirmação direta de que um modelo treinado em mangá bate OCR genérico de forma real, não marginal. EasyOCR corta o erro em inglês pela metade, mas custa 27× mais e não roda no cliente. Nenhum motor foi trocado nesta rodada: os números decidem o tema da próxima.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <span class="num">04</span>
+      <h2>Verificação</h2>
+      <span class="status shipped">verde</span>
+    </div>
+    <div class="checklist">
+      <div class="checkitem"><span class="glyph">✓</span> <code>bun run check</code> <span class="desc">— 130/130 testes (6 novos), lint e typecheck limpos</span></div>
+      <div class="checkitem"><span class="glyph">✓</span> <code>bun run build:client</code> <span class="desc">— compila sem erro</span></div>
+      <div class="checkitem"><span class="glyph">✓</span> <code>tests/ocr-inpaint.test.ts</code> <span class="desc">— difusão converge e preserva o resto da página</span></div>
+      <div class="checkitem"><span class="glyph">✓</span> <code>tests/state-export.test.ts</code> <span class="desc">— round-trip de backup, falha segura em JSON inválido</span></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <span class="num">05</span>
+      <h2>Backlog — próxima rodada</h2>
+    </div>
+    <p>Fora de escopo por decisão explícita, registrado para não se perder:</p>
+    <div class="chips">
+      <span class="chip">integração manga-ocr via ONNX no sidecar</span>
+      <span class="chip">correção manual do OCR/balão</span>
+      <span class="chip">tradução com contexto de página inteira</span>
+      <span class="chip">modo webtoon contínuo</span>
+      <span class="chip">inpainting neural (LaMa/AOT)</span>
+    </div>
+  </section>
+
+  <footer>
+    <span>MangaLens — issue #5 · branch quality/competitive-round-5</span>
+    <a href="https://github.com/juninmd/manga-lens/pull/6" target="_blank" rel="noopener">ver PR #6 no GitHub ↗</a>
+  </footer>
+
+</div>
