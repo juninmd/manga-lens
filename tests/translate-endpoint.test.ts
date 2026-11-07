@@ -24,12 +24,13 @@ const BLOCKS = [{ id: 0, text: 'HELLO THERE FRIEND' }];
 const googleOk = (): Response => new Response(JSON.stringify([[['OLA AMIGO', 'orig']]]));
 
 describe('POST /api/ai/translate', () => {
-  test('motor fixado que responde traduz e diz qual foi', async () => {
-    stubUpstream(googleOk);
-    const res = await post({ engine: 'google', sourceLang: 'en', blocks: BLOCKS });
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ translations: [{ id: 0, pt: 'OLA AMIGO' }], engine: 'google' });
-  });
+    test('motor fixado que responde traduz e diz qual foi', async () => {
+      stubUpstream(googleOk);
+      const res = await post({ engine: 'google', sourceLang: 'en', blocks: BLOCKS });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ translations: [{ id: 0, pt: 'OLA AMIGO' }], engine: 'google' });
+    });
+```
 
   test('limite do provider vira 502, nao 500', async () => {
     // o Google devolve 429 em rajada; sem tratamento a excecao subia para o
