@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Permissoes minimas: o sidecar e' iniciado pelo Rust, nao pelo front.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "shell:allow-open"]
 }

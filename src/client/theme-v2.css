@@ -481,3 +481,106 @@ body.ml-v2 .ml-popover {
     transition: none;
   }
 }
+
+/* ---------- versao e atualizacao ---------- */
+.ml-rail-ver-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.ml-rail-ver-wrap .ml-rail-item {
+  position: relative;
+}
+.ml-ver {
+  font: 600 10px ui-monospace, monospace;
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+.ml-rail-update.has-update {
+  color: var(--accent-text, var(--accent));
+}
+.ml-rail-update.has-update .ml-ico {
+  animation: ml-bob 1.8s ease-in-out infinite;
+}
+.ml-rail-update.has-update::after {
+  content: '';
+  position: absolute;
+  left: 26px;
+  top: 8px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--bg-2);
+}
+@keyframes ml-bob {
+  50% {
+    transform: translateY(-3px);
+  }
+}
+.ml-upd {
+  top: 18vh;
+  padding: 24px;
+}
+.ml-upd h2 {
+  margin: 0 0 16px;
+  font-size: 22px;
+}
+.ml-upd-vers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.ml-upd-vers > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg);
+}
+.ml-upd-vers small {
+  color: var(--fg-dim);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.ml-upd-vers b {
+  font: 700 24px ui-monospace, monospace;
+}
+.ml-upd-vers .is-new {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.ml-upd-status {
+  margin: 14px 0 0;
+  color: var(--fg-dim);
+}
+.ml-upd-notes {
+  margin: 12px 0 0;
+  max-height: 32vh;
+  overflow: auto;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  font: 12.5px/1.5 ui-monospace, monospace;
+  white-space: pre-wrap;
+}
+.ml-upd-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+@media (max-width: 760px) {
+  .ml-rail-ver-wrap {
+    flex-direction: row;
+  }
+  .ml-rail-update.has-update::after {
+    left: auto;
+    right: 6px;
+  }
+}

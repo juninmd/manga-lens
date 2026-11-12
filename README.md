@@ -469,6 +469,24 @@ publicar nada:
 bun run scripts/release-notes.ts
 ```
 
+#### Versão e atualização no app
+
+- A versão instalada aparece sempre no pé do trilho lateral. Rodando do código-fonte
+  (`bun run dev`) ela é `dev` e a checagem não roda; só o build da release tem versão.
+- O app consulta a última release do GitHub (só o número da versão; nada do usuário
+  sai da máquina) ao abrir e a cada 6 h. Quando há versão mais nova, o trilho ganha
+  um selo, um aviso aparece uma vez por versão e **Atualização** (ou Ctrl K →
+  "Versão e atualizações") mostra instalada × disponível, as notas e o botão
+  **Baixar vX.Y.Z**, que abre o instalador `.exe` anexado à release.
+- `UPDATE_CHECK=off` desliga a consulta. `GET /api/version` devolve o mesmo dado.
+- O job `desktop` do `release.yml` carimba a versão da tag (`scripts/set-version.ts` →
+  `src/server/build-info.json` e os manifestos do Tauri; nunca commitado), compila o instalador NSIS e o anexa à release.
+- `commits.yml` confere, no PR, se commits e título seguem Conventional Commits
+  (`bun run commits` roda o mesmo teste localmente).
+- Atualização **sem passar pelo navegador** (plugin updater do Tauri) exige um par
+  de chaves de assinatura: `bunx tauri signer generate`, a chave pública em
+  `tauri.conf.json` e a privada no secret `TAURI_SIGNING_PRIVATE_KEY`.
+
 ### Armadilhas já pagas
 
 - **Detectar o Tauri pelo protocolo não funciona**: na v2 o Windows serve o app em

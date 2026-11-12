@@ -22,6 +22,10 @@ jobs:
   release:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      publish: ${{ steps.plan.outputs.release == 'true' && steps.guard.outputs.ja-existe == 'false' }}
+      tag: ${{ steps.plan.outputs.tag }}
+      version: ${{ steps.plan.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -72,3 +76,42 @@ jobs:
               echo "Nenhum commit novo desde a ultima tag: sem release."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # Instalador do desktop: compila com a versao da tag carimbada e anexa a release.
+  # E' esse .exe que o app oferece em "Atualizar para vX" quando uma release nova
+  # aparece (o app so' consulta o numero da versao; o download e' feito pelo usuario).
+  desktop:
+    needs: release
+    if: needs.release.outputs.publish == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.13'
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: bun install --frozen-lockfile
+
+      # o repositorio guarda 0.1.0; a versao real e' a da tag, so' para este build
+      - name: Carimbar versao
+        run: bun run scripts/set-version.ts ${{ needs.release.outputs.version }}
+
+      - name: Compilar instalador
+        run: bun run desktop:build
+
+      - name: Anexar a release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ needs.release.outputs.tag }}" src-tauri/target/release/bundle/nsis/*.exe --clobber

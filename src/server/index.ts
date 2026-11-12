@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { checkForUpdate } from './version.ts';
 import { join, extname } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { config, getProviderConfig, hostAllowed, normalizeProvider, saveAiConfig, type AiProvider } from './config.ts';
@@ -105,6 +106,8 @@ app.onError((err, c) => {
   // mensagem interna crua chegava no toast sem contexto
   return c.json({ error: status === 500 ? `falha interna: ${err.message}` : err.message }, status as 500);
 });
+
+app.get('/api/version', async (c) => c.json(await checkForUpdate({ force: c.req.query('refresh') === '1' })));
 
 app.get('/api/providers', (c) => {
   const contentType = c.req.query('contentType') as SearchFilters['contentType'];
