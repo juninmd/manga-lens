@@ -125,7 +125,7 @@ describe('corpo travado, limite de concorrencia e cancelamento', () => {
   test('servidor que trava o corpo rejeita com HttpError 504 dentro de bodyTimeoutMs', async () => {
     const server = Bun.serve({
       port: 0,
-      fetch(req) {
+      fetch(_req) {
         const stream = new ReadableStream({
           start(controller) {
             controller.enqueue(new TextEncoder().encode('1234567890'));
@@ -161,7 +161,7 @@ describe('corpo travado, limite de concorrencia e cancelamento', () => {
 
     const server = Bun.serve({
       port: 0,
-      async fetch(req) {
+      async fetch(_req) {
         currentInFlight++;
         if (currentInFlight > maxInFlight) maxInFlight = currentInFlight;
 
@@ -198,7 +198,7 @@ describe('corpo travado, limite de concorrencia e cancelamento', () => {
   test('cancelar o stream libera a vaga do semaforo', async () => {
     const server = Bun.serve({
       port: 0,
-      fetch(req) {
+      fetch(_req) {
         const u = new URL(req.url);
         const hang = u.searchParams.has('hang');
         const stream = new ReadableStream({
