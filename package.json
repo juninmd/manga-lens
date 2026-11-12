@@ -11,6 +11,7 @@
     "lint:fix": "biome lint --write",
     "typecheck": "tsc --noEmit",
     "test": "bun test tests --timeout 30000",
+    "commits": "bun run scripts/check-commits.ts",
     "secrets": "bun run scripts/secret-scan.ts",
     "secrets:history": "bun run scripts/secret-scan.ts --all",
     "check": "bun run lint && bun run typecheck && bun run secrets && bun run test",

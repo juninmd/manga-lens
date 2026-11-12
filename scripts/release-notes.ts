@@ -18,10 +18,10 @@ export interface Commit {
   body?: string;
 }
 
-const CONVENTIONAL = /^(?<type>[a-z]+)(?:\((?<scope>[^)]*)\))?(?<breaking>!)?:\s*(?<desc>.+)$/i;
+export const CONVENTIONAL = /^(?<type>[a-z]+)(?:\((?<scope>[^)]*)\))?(?<breaking>!)?:\s*(?<desc>.+)$/i;
 
 /** Merge do GitHub nao descreve mudanca nenhuma: quem descreve sao os commits dentro dele. */
-const isMerge = (subject: string): boolean => /^Merge (pull request|branch|remote-tracking)\b/i.test(subject);
+export const isMerge = (subject: string): boolean => /^Merge (pull request|branch|remote-tracking)\b/i.test(subject);
 
 export function bumpOf(commits: Commit[]): Bump | null {
   const real = commits.filter((c) => !isMerge(c.subject));

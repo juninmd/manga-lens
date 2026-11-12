@@ -1,4 +1,5 @@
 import { el, toast } from './ui.ts';
+import { fmtVersion, getUpdate, onUpdate, openUpdateDialog, startUpdateChecks } from './update.ts';
 
 /**
  * Casca da nova UI: aurora ambiente, trilho lateral, paleta de comandos (Ctrl K)
@@ -17,6 +18,7 @@ const ICONS: Record<string, string> = {
   ai: '<path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
   backup: '<path d="M12 3v12m0 0-4-4m4 4 4-4M4 17v3h16v-3"/>',
   restore: '<path d="M12 21V9m0 0-4 4m4-4 4 4M4 7V4h16v3"/>',
+  update: '<circle cx="12" cy="12" r="9"/><path d="m8 12 4-4 4 4M12 8v8"/>',
 };
 
 const svg = (key: string): SVGSVGElement => {
@@ -56,6 +58,28 @@ const toggleTheme = (): void => {
   }
 };
 
+/** Item fixo no pe' do trilho: versao instalada sempre visivel e selo quando ha' release nova. */
+function buildVersionItem(): HTMLElement {
+  const label = el('span', {}, 'Atualização');
+  const ver = el('small', { class: 'ml-ver' }, 'v—');
+  const btn = el(
+    'button',
+    { class: 'ml-rail-item ml-rail-update', type: 'button', 'aria-label': 'Versão e atualizações', onclick: openUpdateDialog },
+    svg('update'),
+    label,
+  );
+  const render = (): void => {
+    const i = getUpdate();
+    if (i) ver.textContent = fmtVersion(i.current);
+    btn.classList.toggle('has-update', Boolean(i?.available));
+    label.textContent = i?.available ? `Atualizar para v${i.latest}` : 'Atualização';
+    btn.setAttribute('aria-label', i?.available ? `Versão ${i.latest} disponível` : 'Versão e atualizações');
+    btn.title = i ? `Instalada: ${fmtVersion(i.current)}${i.latest ? ` · Disponível: ${fmtVersion(i.latest)}` : ''}` : '';
+  };
+  onUpdate(render);
+  return el('div', { class: 'ml-rail-ver-wrap' }, btn, ver);
+}
+
 function buildRail(): HTMLElement {
   const item = (icon: string, label: string, run: () => void, act?: string): HTMLButtonElement =>
     el(
@@ -76,6 +100,7 @@ function buildRail(): HTMLElement {
     item('backup', 'Backup', () => press('backup')),
     item('restore', 'Importar backup', () => press('import')),
     el('div', { class: 'ml-rail-grow' }),
+    buildVersionItem(),
     el('button', { class: 'ml-rail-item', type: 'button', 'aria-label': 'Paleta de comandos', onclick: openPalette }, el('kbd', {}, 'Ctrl K'), el('span', {}, 'Comandos')),
   );
   return rail;
@@ -97,6 +122,7 @@ const ACTIONS: Action[] = [
   { label: 'Configurar IA e motores', hint: 'Gaveta', run: () => press('ai') },
   { label: 'Baixar backup', hint: 'Dados', run: () => press('backup') },
   { label: 'Importar backup', hint: 'Dados', run: () => press('import') },
+  { label: 'Versão e atualizações', hint: 'Sobre', run: openUpdateDialog },
   { label: 'Alternar tema claro/escuro', hint: 'Aparência', run: toggleTheme },
 ];
 
@@ -243,6 +269,7 @@ export function mountChrome(): void {
   document.body.append(buildRail());
   wireTilt();
   wireTabPill();
+  startUpdateChecks();
   document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
       e.preventDefault();
