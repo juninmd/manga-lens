@@ -198,7 +198,7 @@ describe('corpo travado, limite de concorrencia e cancelamento', () => {
   test('cancelar o stream libera a vaga do semaforo', async () => {
     const server = Bun.serve({
       port: 0,
-      fetch(_req) {
+      fetch(req) {
         const u = new URL(req.url);
         const hang = u.searchParams.has('hang');
         const stream = new ReadableStream({
