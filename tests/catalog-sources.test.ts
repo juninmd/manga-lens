@@ -126,7 +126,7 @@ test('mais de 16 requisicoes upstream sao enfileiradas; cancelamento nao inicia 
     active--;
     return new Response('ok');
   }) as unknown as typeof fetch;
-  await Promise.all(Array.from({ length: 24 }, (_, i) => httpFetch(`https://fixture.test/${i}`, { retries: 0 })));
+  await Promise.all(Array.from({ length: 24 }, async (_, i) => (await httpFetch(`https://fixture.test/${i}`, { retries: 0 })).text()));
   expect(peak).toBeLessThanOrEqual(16);
   const controller = new AbortController();
   controller.abort();
