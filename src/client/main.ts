@@ -3,6 +3,7 @@ import { Catalog } from './catalog.ts';
 import { SeriesPanel } from './series.ts';
 import { Reader } from './reader.ts';
 import { BookReader } from './book.ts';
+import { mountChrome } from './chrome.ts';
 import { el, qs, toast } from './ui.ts';
 import { getProgress, nextUnreadChapter } from './state.ts';
 import { isDesktop, resolveApiBase, waitForApi } from './base.ts';
@@ -50,6 +51,7 @@ document.addEventListener('drop', (e) => {
   toast('para ler arquivos locais, configure a biblioteca local em Fontes');
 });
 
+mountChrome();
 const app = qs<HTMLElement>('#app');
 const catalogRoot = el('main', { class: 'ml-main' });
 app.append(catalogRoot);

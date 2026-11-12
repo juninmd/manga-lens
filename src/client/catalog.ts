@@ -294,6 +294,7 @@ export class Catalog {
         'button',
         {
           class: 'ml-btn',
+          'data-act': 'filters',
           'aria-label': 'Abrir filtros',
           'aria-expanded': 'false',
           onclick: () => this.openDrawer(!this.drawer.classList.contains('is-open')),
@@ -303,7 +304,7 @@ export class Catalog {
       )),
       (this.providerBtn = el(
         'button',
-        { class: 'ml-btn', 'aria-label': 'Escolher fontes', onclick: () => this.openProviders(true) },
+        { class: 'ml-btn', 'data-act': 'sources', 'aria-label': 'Escolher fontes', onclick: () => this.openProviders(true) },
         '⊞ ',
         (this.providerLabel = el('span', { class: 'ml-btn-label' }, 'Fontes')),
       )),
@@ -311,6 +312,7 @@ export class Catalog {
         'button',
         {
           class: 'ml-btn ml-btn-ai-config',
+          'data-act': 'ai',
           title: 'Configurar IA (Ollama, OpenRouter, OpenAI)',
           'aria-label': 'Configurar IA',
           onclick: () => void this.openAiDrawer(true),
@@ -323,6 +325,7 @@ export class Catalog {
         {
           // acao rara: no celular sai da barra (CSS esconde `.ml-btn-rare`)
           class: 'ml-btn ml-btn-rare',
+          'data-act': 'backup',
           title: 'Baixar um arquivo com favoritos, progresso, marcadores e capitulos lidos',
           'aria-label': 'Baixar backup',
           onclick: () => this.exportBackup(),
@@ -335,6 +338,7 @@ export class Catalog {
         'button',
         {
           class: 'ml-btn',
+          'data-act': 'fav',
           title: 'mostrar so os favoritos',
           'aria-pressed': 'false',
           onclick: () => {
@@ -387,6 +391,7 @@ export class Catalog {
       'label',
       {
         class: 'ml-btn ml-btn-rare',
+        'data-act': 'import',
         title: 'Restaurar favoritos, progresso, marcadores e capitulos lidos de um backup',
         'aria-label': 'Importar backup',
       },

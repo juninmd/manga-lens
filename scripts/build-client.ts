@@ -30,6 +30,7 @@ for (const build of [result, worker]) {
 
 await copyFile('src/client/index.html', 'public/index.html');
 await copyFile('src/client/styles.css', 'public/styles.css');
+await copyFile('src/client/theme-v2.css', 'public/theme-v2.css');
 
 // Worker/core do Tesseract entram no bundle: no app desktop nao existe node_modules.
 await mkdir('public/vendor/tesseract', { recursive: true });
