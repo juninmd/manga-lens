@@ -4,6 +4,9 @@
  * (vira patch), mas some das notas em "Novidades/Correcoes" — entao o PR avisa.
  *
  *   bun run scripts/check-commits.ts [base]      # base padrao: origin/main
+ *
+ * Commits de merge ficam de fora: no Actions o HEAD do PR e' o merge sintetico
+ * "Merge X into Y", que nao descreve mudanca nenhuma.
  */
 import { CONVENTIONAL, isMerge } from './release-notes.ts';
 
@@ -22,7 +25,7 @@ export function problemWith(subject: string): string | null {
 
 if (import.meta.main) {
   const base = process.argv[2] ?? 'origin/main';
-  const proc = Bun.spawn(['git', 'log', `${base}..HEAD`, '--format=%h %s'], { stdout: 'pipe', stderr: 'pipe' });
+  const proc = Bun.spawn(['git', 'log', `${base}..HEAD`, '--no-merges', '--format=%h %s'], { stdout: 'pipe', stderr: 'pipe' });
   const out = await new Response(proc.stdout).text();
   if ((await proc.exited) !== 0) {
     console.error(`nao consegui ler os commits desde ${base}`);
