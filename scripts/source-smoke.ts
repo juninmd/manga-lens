@@ -8,8 +8,8 @@ const output = process.env['SOURCE_SMOKE_REPORT'] ?? '.cache/source-smoke.json';
 // New releases can have no readable chapter yet. Also recheck a previously read title.
 const samples = await Bun.file(new URL('./source-smoke-samples.json', import.meta.url)).json() as Record<string, string>;
 interface Card { id: string; title: string; cover?: string }
-interface Detail extends Card { chapters: { id: string }[] }
-interface Result { provider: string; ok: boolean; series?: string; chapters?: number; pages?: number; images?: number; error?: string }
+interface Detail extends Card { chapters: { id: string; text?: boolean }[] }
+interface Result { provider: string; ok: boolean; series?: string; chapters?: number; pages?: number; images?: number; paragraphs?: number; error?: string }
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${base}${path}`, { signal: AbortSignal.timeout(90_000) });
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 160)}`);
@@ -42,6 +42,17 @@ await Promise.all(Array.from({ length: 3 }, async () => {
         try {
           const detail = await get<Detail>(`/api/series?provider=${provider}&id=${encodeURIComponent(card.id)}`);
           if (!detail.chapters.length) throw new Error('obra sem capitulos');
+          // fonte de livro: o capitulo e' texto, nao pagina — a prova e' o paragrafo chegar pelo /api/book
+          if (detail.chapters[0]!.text) {
+            const middle = detail.chapters[Math.floor(detail.chapters.length / 2)]!;
+            const { blocks } = await get<{ blocks: { text: string }[] }>(`/api/book?provider=${provider}&c=${encodeURIComponent(middle.id)}`);
+            if (!blocks.length || !blocks.some((b) => b.text.trim().length > 20)) throw new Error('capitulo sem texto');
+            const bookCover = detail.cover ?? card.cover;
+            if (bookCover) await image(bookCover);
+            Object.assign(result, { ok: true, series: card.id, chapters: detail.chapters.length, paragraphs: blocks.length, images: bookCover ? 1 : 0 });
+            lastError = undefined;
+            break;
+          }
           const { pages } = await get<{ pages: { url: string }[] }>(`/api/pages?provider=${provider}&chapter=${encodeURIComponent(detail.chapters[0]!.id)}`);
           if (!pages.length) throw new Error('capitulo sem paginas');
           const positions = [...new Set([0, Math.floor(pages.length / 2), pages.length - 1])];
@@ -56,7 +67,8 @@ await Promise.all(Array.from({ length: 3 }, async () => {
       if (lastError) throw lastError;
     } catch (error) { result.error = String(error); }
     results.push(result);
-    console.log(`${result.ok ? 'OK' : 'FALHA'} ${provider}: ${result.ok ? `${result.chapters} capitulos, ${result.pages} paginas, ${result.images} imagens proxiadas` : result.error}`);
+    const read = result.paragraphs === undefined ? `${result.pages} paginas` : `${result.paragraphs} paragrafos`;
+    console.log(`${result.ok ? 'OK' : 'FALHA'} ${provider}: ${result.ok ? `${result.chapters} capitulos, ${read}, ${result.images} imagens proxiadas` : result.error}`);
   }
 }));
 await mkdir(join(output, '..'), { recursive: true });

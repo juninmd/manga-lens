@@ -29,6 +29,7 @@ export interface SeriesCard {
   follows?: number;
   tags?: string[];
   description?: string;
+  authors?: string[];
   url?: string;
   /** origens da mesma obra quando a busca agregada juntou duplicatas */
   sources?: { provider: string; id: string; title: string }[];
@@ -230,7 +231,7 @@ export const getEngines = (): Promise<TranslateEngineInfo[]> => json('/api/trans
 export const getTargets = (): Promise<TargetLangInfo[]> => json('/api/translate/targets');
 
 export const translate = (body: {
-  blocks: { id: number; text: string; x?: number; y?: number; w?: number; h?: number }[];
+  blocks: { id: number; text: string; x?: number; y?: number; w?: number; h?: number; kind?: 'free' }[];
   sourceLang?: string;
   series?: string;
   chapter?: string;
@@ -240,15 +241,30 @@ export const translate = (body: {
   engine?: string;
   target?: string;
   provider?: string;
-}): Promise<{ translations: { id: number; pt: string; orig?: string }[]; engine?: string }> =>
+  /** honorificos, tom e onomatopeia (so' os motores de IA usam) */
+  style?: { honorifics: string; tone: string; sfx: string };
+  /** `prose` = paragrafos de livro: prompt literario no lugar do de baloes */
+  mode?: 'prose';
+  /** livro: paragrafos imediatamente anteriores ao lote, so' contexto */
+  context?: string[];
+}, signal?: AbortSignal): Promise<{ translations: { id: number; pt: string; orig?: string }[]; engine?: string }> =>
   json('/api/ai/translate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal,
   });
 
+export interface GlossaryTerm {
+  orig: string;
+  pt: string;
+  gender: 'm' | 'f' | '?';
+  /** escrito ou corrigido por quem le: a IA nao altera */
+  locked?: boolean;
+}
+
 export interface SeriesMemory {
-  glossary: { orig: string; pt: string; gender: 'm' | 'f' | '?' }[];
+  glossary: GlossaryTerm[];
   notes: { chapter: string; page: number; note: string }[];
 }
 
@@ -261,6 +277,16 @@ export const clearSeriesMemory = (series: string, target: string): Promise<{ ok:
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ series, target }),
   });
+
+const postJson = <T>(path: string, body: unknown): Promise<T> =>
+  json(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+
+/** Cria ou corrige um termo do glossario e o fixa. `was` = a grafia original anterior, ao renomear. */
+export const saveGlossaryTerm = (series: string, target: string, term: { orig: string; pt: string; gender: string; was?: string }): Promise<{ term: GlossaryTerm }> =>
+  postJson('/api/ai/memory/term', { series, target, ...term });
+
+export const removeGlossaryTerm = (series: string, target: string, orig: string): Promise<{ removed: boolean }> =>
+  postJson('/api/ai/memory/term/delete', { series, target, orig });
 
 export const visionTranslate = (body: {
   imageDataUrl: string;
@@ -302,6 +328,6 @@ export async function* explain(body: {
   }
 }
 
-/** Paragrafos de um capitulo de livro (EPUB local). */
-export const getBookChapter = (chapterId: string): Promise<{ blocks: { id: number; text: string }[] }> =>
-  json(`/api/local/book?c=${encodeURIComponent(chapterId)}`);
+/** Paragrafos de um capitulo de livro, de qualquer fonte de texto (biblioteca local ou acervo online). */
+export const getBookChapter = (provider: string, chapterId: string): Promise<{ blocks: { id: number; text: string }[] }> =>
+  json(`/api/book?provider=${encodeURIComponent(provider)}&c=${encodeURIComponent(chapterId)}`);

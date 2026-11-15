@@ -584,3 +584,18 @@ body.ml-v2 .ml-popover {
     right: 6px;
   }
 }
+
+/* trilho recolhido: so' icones. O rotulo comecava 10px antes da borda e deixava uma letra cortada a mostra */
+@media (min-width: 761px) {
+  .ml-rail-item > span,
+  .ml-rail-logo > span {
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  .ml-rail:hover .ml-rail-item > span,
+  .ml-rail:focus-within .ml-rail-item > span,
+  .ml-rail:hover .ml-rail-logo > span,
+  .ml-rail:focus-within .ml-rail-logo > span {
+    opacity: 1;
+  }
+}

@@ -43,6 +43,8 @@ export interface SeriesCard {
   contentType?: ContentType;
   tags?: string[];
   description?: string;
+  /** autores, quando a busca ja' traz (livros): a capa tipografica e o card usam */
+  authors?: string[];
   url?: string;
   /** todas as origens da mesma obra quando a busca agregada juntou duplicatas */
   sources?: { provider: string; id: string; title: string }[];
@@ -64,7 +66,6 @@ export interface ChapterRef {
 }
 
 export interface SeriesDetail extends SeriesCard {
-  authors?: string[];
   chapters: ChapterRef[];
   /** idiomas de traducao disponiveis neste titulo */
   availableLangs?: string[];
@@ -96,4 +97,6 @@ export interface Provider {
   search(f: SearchFilters): Promise<{ items: SeriesCard[]; total?: number }>;
   series(id: string): Promise<SeriesDetail>;
   pages(chapterId: string): Promise<PageRef[]>;
+  /** paragrafos de um capitulo de texto (`ChapterRef.text`); so' providers de livro implementam */
+  book?(chapterId: string): Promise<{ id: number; text: string }[]>;
 }

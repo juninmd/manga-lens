@@ -6,10 +6,14 @@ export interface PageBlock {
   y?: number;
   w?: number;
   h?: number;
+  /** `free` = texto fora de balao (legenda, narracao, placa, onomatopeia): o detector sabe, o LLM nao */
+  kind?: 'free';
 }
 
 export const MAX_BLOCKS = 300;
 export const MAX_BLOCK_CHARS = 400;
+/** Paragrafo de livro: o teto de balao cortava a traducao de todo paragrafo com mais de 400 letras. */
+export const MAX_PROSE_CHARS = 6000;
 
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
@@ -18,11 +22,11 @@ const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFi
  * caractere: queimava tokens e travava o LLM. Tres repeticoes preservam
  * onomatopeia ("AAAH", "ドドド") sem deixar o lixo passar.
  */
-export function collapseRepeats(text: string): string {
+export function collapseRepeats(text: string, max = MAX_BLOCK_CHARS): string {
   return text
     .replace(/(.)\1{3,}/gsu, '$1$1$1')
     .replace(/(\S{2,6}?)\1{3,}/gsu, '$1$1$1')
-    .slice(0, MAX_BLOCK_CHARS);
+    .slice(0, max);
 }
 
 /** chines e japones nao separam palavras; coreano separa, entao Hangul fica de fora */
@@ -38,7 +42,7 @@ const flattenLines = (text: string): string =>
     .trim();
 
 /** Valida o corpo vindo da rede; `null` = recusar com 400. */
-export function sanitizeBlocks(raw: unknown): PageBlock[] | null {
+export function sanitizeBlocks(raw: unknown, maxChars = MAX_BLOCK_CHARS): PageBlock[] | null {
   if (!Array.isArray(raw) || !raw.length || raw.length > MAX_BLOCKS) return null;
   const out: PageBlock[] = [];
   const seen = new Set<number>();
@@ -48,8 +52,9 @@ export function sanitizeBlocks(raw: unknown): PageBlock[] | null {
     if (seen.has(item.id as number)) return null;
     seen.add(item.id as number);
     // corta antes das regex (o corpo vem da rede); a folga deixa o colapso de repeticao encolher o texto
-    const raw = item.text.slice(0, MAX_BLOCK_CHARS * 4);
-    const block: PageBlock = { id: item.id as number, text: collapseRepeats(flattenLines(raw)) };
+    const raw = item.text.slice(0, maxChars * 4);
+    const block: PageBlock = { id: item.id as number, text: collapseRepeats(flattenLines(raw), maxChars) };
+    if (item.kind === 'free') block.kind = 'free';
     if (finite(item.x) && finite(item.y) && finite(item.w) && finite(item.h) && item.w > 0 && item.h > 0) {
       Object.assign(block, { x: item.x, y: item.y, w: item.w, h: item.h });
     }

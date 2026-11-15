@@ -15,7 +15,7 @@ import {
   type SeriesCard,
   type TagInfo,
 } from './api.ts';
-import { debounce, el, langLabel, plural, STATUS_LABEL, toast, TYPE_LABEL } from './ui.ts';
+import { debounce, el, langLabel, plural, STATUS_LABEL, toast, typeCover, TYPE_LABEL } from './ui.ts';
 import {
   bookmarks,
   exportStore,
@@ -97,6 +97,11 @@ const TYPE_TABS: [ContentType, string][] = [
   ['hq', 'HQ'],
   ['livro', 'Livro'],
 ];
+const SEARCH_HINT: Record<ContentType, string> = {
+  manga: 'Buscar manga, manhwa, manhua...',
+  hq: 'Buscar HQ, comic...',
+  livro: 'Buscar livro por titulo ou autor...',
+};
 const SORTS = [
   ['', 'Relevancia'],
   ['follows', 'Mais seguidos'],
@@ -258,7 +263,7 @@ export class Catalog {
     this.searchInput = el('input', {
       class: 'ml-search',
       type: 'search',
-      placeholder: 'Buscar manga, manhwa, HQ...',
+      placeholder: SEARCH_HINT[this.activeType],
       'aria-label': 'Buscar no catalogo',
       value: this.filters.q,
       oninput: (e: Event) => {
@@ -443,6 +448,8 @@ export class Catalog {
   private syncToolbar(): void {
     this.searchInput.value = this.filters.q;
     this.sortSelect.value = this.filters.sort;
+    // na aba Livro a busca tambem acha por autor: o convite da caixa diz o que cabe ali
+    this.searchInput.placeholder = SEARCH_HINT[this.activeType];
   }
 
   private switchType(type: ContentType): void {
@@ -969,7 +976,7 @@ export class Catalog {
                 title: `${r.title} — ${r.chapterLabel}, pagina ${r.page + 1}`,
                 onclick: () => this.handlers.onResume(r.provider, r.seriesId),
               },
-              this.storedCover(r.provider, r.seriesId, r.cover),
+              this.storedCover(r.provider, r.seriesId, r.cover, r.title),
               el('span', {}, `${r.title}`),
               el('small', {}, `${r.chapterLabel} · pag. ${r.page + 1}`),
             ),
@@ -991,7 +998,7 @@ export class Catalog {
                 title: `${m.title} — ${m.chapterLabel}, pagina ${m.page + 1}`,
                 onclick: () => this.handlers.onOpenBookmark(m.provider, m.seriesId, m.chapterId, m.page),
               },
-              this.storedCover(m.provider, m.seriesId, m.cover),
+              this.storedCover(m.provider, m.seriesId, m.cover, m.title),
               el('span', {}, m.title),
               el('small', {}, `🔖 ${m.chapterLabel} · pag. ${m.page + 1}`),
             ),
@@ -1013,7 +1020,7 @@ export class Catalog {
                 title: f.title,
                 onclick: () => this.handlers.onOpenSeries(f.provider, f.id),
               },
-              this.storedCover(f.provider, f.id, f.cover),
+              this.storedCover(f.provider, f.id, f.cover, f.title),
               el('span', {}, f.title),
               el('small', {}, `★ ${f.provider}`),
             ),
@@ -1104,9 +1111,9 @@ export class Catalog {
    * sem imagem ate' o usuario desfavoritar e favoritar de novo. No erro, busca a
    * serie de novo, troca a imagem e regrava — uma vez so' por obra.
    */
-  private storedCover(provider: string, id: string, cover: string | undefined): HTMLElement {
-    if (!cover) return el('div', { class: 'ml-nocover' });
-    const img = el('img', { src: cover, loading: 'lazy', alt: '' });
+  private storedCover(provider: string, id: string, cover: string | undefined, title = ''): HTMLElement {
+    if (!cover) return typeCover(title);
+    const img = el('img', { src: cover, loading: 'lazy', alt: '', dataset: { title } });
     img.addEventListener('error', () => void this.healCover(provider, id, img), { once: true });
     return img;
   }
@@ -1118,7 +1125,7 @@ export class Catalog {
     // mesma URL de volta significa que a capa em si morreu, nao a assinatura:
     // reatribuir dispararia o erro outra vez, em laco
     if (!fresh || fresh === img.getAttribute('src')) {
-      img.replaceWith(el('div', { class: 'ml-nocover' }));
+      img.replaceWith(typeCover(img.dataset['title'] || img.alt));
       return;
     }
     img.src = fresh;
@@ -1217,7 +1224,7 @@ export class Catalog {
       });
       cover.append(img);
     } else {
-      cover.append(el('div', { class: 'ml-nocover' }, '?'));
+      cover.append(typeCover(item.title, item.authors?.slice(0, 2).join(', ')));
     }
     cover.append(
       fav,

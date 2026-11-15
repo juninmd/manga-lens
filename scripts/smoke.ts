@@ -188,6 +188,27 @@ await check('archive so devolve serie de dominio publico', async () => {
   return `franquias vivas barradas, ${ok.items.length} edicoes livres em "plastic"`;
 });
 
+await check('ciclo completo gutenberg (livro)', async () => {
+  const search = await get('/api/search?providers=gutenberg&contentType=livro&q=dracula&limit=4');
+  if (!search.items?.length) throw new Error(`busca vazia: ${JSON.stringify(search.errors)}`);
+  const book = search.items[0];
+  if (book.contentType !== 'livro') throw new Error(`esperava contentType=livro, veio ${book.contentType}`);
+  const detail = await get(`/api/series?provider=gutenberg&id=${encodeURIComponent(book.id)}`);
+  if (!detail.chapters?.length) throw new Error('livro sem capitulo');
+  if (!detail.chapters.every((c: { text?: boolean }) => c.text)) throw new Error('capitulo de livro sem `text`: abriria no leitor de paginas');
+  const middle = detail.chapters[Math.floor(detail.chapters.length / 2)];
+  const { blocks } = await get(`/api/book?provider=gutenberg&c=${encodeURIComponent(middle.id)}`);
+  if (!blocks?.length) throw new Error('capitulo sem paragrafos');
+  return `${detail.title}: ${detail.chapters.length} capitulos, ${blocks.length} paragrafos em "${middle.title}"`;
+});
+
+await check('gutenberg nao mostra literatura adulta sem o filtro', async () => {
+  const res = await get('/api/search?providers=gutenberg&contentType=livro&limit=24');
+  const adult = (res.items ?? []).filter((i: { contentRating?: string }) => i.contentRating !== 'safe');
+  if (adult.length) throw new Error(`${adult.length} titulo(s) adulto(s) na estante padrao: ${adult[0].title}`);
+  return `${res.items?.length ?? 0} livros na estante padrao, todos classificados como livres`;
+});
+
 await check('proxy recusa URL nao assinada', async () => {
   const res = await fetch(`${base}/api/img?u=${Buffer.from('https://example.com/x.jpg').toString('base64url')}&r=&s=falsa`);
   if (res.status !== 403) throw new Error(`esperava 403, veio ${res.status}`);

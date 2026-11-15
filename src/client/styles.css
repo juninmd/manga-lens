@@ -2141,3 +2141,315 @@ body.is-reading #toasts {
   color: var(--fg-dim);
   font-style: italic;
 }
+
+/* ---------- leitor de livro: papel, colunas e progresso ---------- */
+
+/* o papel troca so' a area de leitura; a barra continua nos tokens escuros do leitor */
+.ml-book {
+  --paper: var(--stage);
+  --ink: var(--fg);
+  --ink-strong: var(--fg-strong, #fff);
+  --ink-dim: var(--fg-dim);
+  --paper-mark: var(--bg-3);
+  --paper-veil: rgb(255 255 255 / 4%);
+  --paper-rule: var(--line);
+  background: var(--paper);
+}
+.ml-book[data-theme='sepia'] {
+  --paper: #f3ead7;
+  --ink: #40331f;
+  --ink-strong: #2a2012;
+  --ink-dim: #7a6a50;
+  --paper-mark: #e6d9bd;
+  --paper-veil: rgb(64 51 31 / 6%);
+  --paper-rule: #d8c9a8;
+}
+.ml-book[data-theme='light'] {
+  --paper: #fbfbfa;
+  --ink: #24272c;
+  --ink-strong: #0f1114;
+  --ink-dim: #6a7280;
+  --paper-mark: #eceef1;
+  --paper-veil: rgb(0 0 0 / 5%);
+  --paper-rule: #dcdfe4;
+}
+.ml-book .ml-book-page {
+  color: var(--ink);
+}
+.ml-book[data-font='sans'] .ml-book-page {
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  line-height: 1.65;
+}
+.ml-book .ml-book-p:hover {
+  background: var(--paper-veil);
+}
+.ml-book .ml-book-p.is-translated {
+  color: var(--ink-strong);
+}
+.ml-book .ml-book-p.is-original {
+  color: var(--ink-dim);
+  background: var(--paper-mark);
+}
+.ml-book .ml-book-note {
+  color: var(--ink-dim);
+}
+
+.ml-book-top {
+  position: relative;
+}
+.ml-book-toc {
+  max-width: min(280px, 34vw);
+}
+.ml-book-top .ml-btn.is-active {
+  border-color: var(--accent-2);
+  color: var(--accent-2-soft, var(--accent-2));
+}
+/* quanto do capitulo ja' rolou: um fio na base da barra, sem ocupar linha */
+.ml-book-read {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  pointer-events: none;
+}
+.ml-book-read-fill {
+  height: 100%;
+  width: 0;
+  background: var(--accent-2);
+  transition: width 120ms linear;
+}
+
+.ml-book-row {
+  margin: 0 0 1em;
+}
+.ml-book-row .ml-book-p,
+.ml-book-row .ml-book-src {
+  margin: 0;
+}
+.ml-book-src {
+  display: none;
+  color: var(--ink-dim);
+}
+
+/* bilingue: original a esquerda, traducao a direita, paragrafo alinhado com paragrafo */
+.ml-book.is-bilingual .ml-book-page {
+  max-width: 136ch;
+}
+.ml-book.is-bilingual .ml-book-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  column-gap: 40px;
+  padding-bottom: 1em;
+  border-bottom: 1px solid var(--paper-rule);
+}
+.ml-book.is-bilingual .ml-book-row.has-pair .ml-book-src {
+  display: block;
+}
+.ml-book.is-bilingual .ml-book-p {
+  cursor: default;
+}
+.ml-book.is-bilingual .ml-book-row.has-pair .ml-book-p {
+  grid-column: 2;
+}
+@media (max-width: 900px) {
+  /* sem largura para duas colunas: o original vai em cima, menor, e a traducao embaixo */
+  .ml-book.is-bilingual .ml-book-row {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 0.4em;
+  }
+  .ml-book.is-bilingual .ml-book-row.has-pair .ml-book-p {
+    grid-column: 1;
+  }
+  .ml-book.is-bilingual .ml-book-src {
+    font-size: 0.86em;
+  }
+}
+
+/* ---------- capa tipografica (obra sem imagem) ---------- */
+
+.ml-typecover {
+  --cover-hue: 210;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: stretch;
+  gap: 8px;
+  aspect-ratio: 2 / 3;
+  /* a base fica livre para o selo da fonte, que o card desenha no canto de baixo */
+  padding: 14% 12% 40px 16%;
+  text-align: left;
+  color: #f4efe6;
+  background:
+    linear-gradient(90deg, rgb(0 0 0 / 34%) 0 5%, rgb(255 255 255 / 9%) 5% 6.5%, transparent 6.5%),
+    linear-gradient(155deg, hsl(var(--cover-hue) 34% 30%), hsl(calc(var(--cover-hue) + 34) 42% 15%));
+  overflow: hidden;
+}
+.ml-typecover-title {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: clamp(13px, 1.25vw, 18px);
+  font-weight: 700;
+  line-height: 1.22;
+  letter-spacing: 0.01em;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.ml-typecover-by {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgb(244 239 230 / 78%);
+  border-top: 1px solid rgb(244 239 230 / 35%);
+  padding-top: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ml-series-head .ml-typecover {
+  width: 170px;
+  height: auto;
+  padding-bottom: 12%;
+  border-radius: var(--radius);
+}
+
+/* ---------- glossario da obra ---------- */
+
+.ml-gloss {
+  top: 9vh;
+  width: min(680px, calc(100% - 32px));
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px 22px;
+  color: var(--fg);
+}
+.ml-gloss-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.ml-gloss-head h2 {
+  margin: 0 0 2px;
+  font-size: 19px;
+}
+.ml-gloss-head p,
+.ml-gloss-help {
+  margin: 0;
+}
+.ml-gloss-help {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--fg-desc, var(--fg-dim));
+}
+.ml-pal .ml-gloss-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  max-height: none;
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+}
+.ml-pal .ml-gloss-row,
+.ml-gloss-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 122px auto;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  cursor: default;
+  border-radius: 0;
+}
+.ml-gloss-orig {
+  min-width: 0;
+  padding: 0 4px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ml-gloss-row.is-locked .ml-input {
+  border-color: color-mix(in srgb, var(--accent-2) 55%, var(--line));
+}
+.ml-gloss-add {
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.ml-gloss .ml-input,
+.ml-gloss .ml-select {
+  width: 100%;
+  min-width: 0;
+}
+@media (max-width: 600px) {
+  .ml-pal .ml-gloss-row,
+  .ml-gloss-add {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+/* estilo da traducao: tres escolhas curtas, uma linha cada */
+.ml-style-grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px 10px;
+}
+.ml-style-grid label {
+  font-size: 12.5px;
+  color: var(--fg-dim);
+}
+.ml-gloss-warn {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+/* opcoes de traducao do livro: popover nativo, ancorado abaixo da barra */
+.ml-book-options {
+  position: fixed;
+  inset: 58px 12px auto auto;
+  width: min(340px, calc(100vw - 24px));
+  margin: 0;
+  padding: 14px;
+  display: none;
+  gap: 10px;
+  color: var(--fg);
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong, var(--line));
+  border-radius: 14px;
+  box-shadow: 0 24px 60px -18px rgb(0 0 0 / 70%);
+}
+.ml-book-options:popover-open {
+  display: grid;
+}
+.ml-book-options .ml-btn.is-active {
+  border-color: var(--accent-2);
+  color: var(--accent-2-soft, var(--accent-2));
+}
+
+/* como no leitor de paginas: o selo global de IA ficava por cima do texto do livro */
+.ml-book.is-open ~ .ml-ai-badge {
+  display: none;
+}
+/* papel claro por baixo de uma barra translucida deixava os botoes lavados */
+body.ml-v2 .ml-book[data-theme='sepia'] .ml-book-top,
+body.ml-v2 .ml-book[data-theme='light'] .ml-book-top {
+  background: var(--bar);
+  backdrop-filter: none;
+}
+/* sete controles nao cabem numa linha no celular: quebram em vez de sair da tela */
+.ml-book-top .ml-top-right {
+  flex-wrap: wrap;
+}

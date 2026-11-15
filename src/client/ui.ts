@@ -152,3 +152,21 @@ export const TYPE_LABEL: Record<string, string> = {
 /** `plural(1, 'pagina')` -> '1 pagina'; `plural(2, 'balao', 'baloes')` -> '2 baloes' */
 export const plural = (n: number, sing: string, plur = `${sing}s`): string =>
   `${n.toLocaleString('pt-BR')} ${n === 1 ? sing : plur}`;
+
+/**
+ * Capa tipografica para obra sem imagem (livro em TXT, titulo do acervo sem
+ * capa): titulo e autor sobre uma cor derivada do proprio titulo — a mesma obra
+ * tem sempre a mesma capa, e a estante deixa de ser uma fila de "?".
+ */
+export function typeCover(title: string, byline?: string): HTMLElement {
+  let hash = 0;
+  for (const ch of title) hash = (hash * 31 + (ch.codePointAt(0) ?? 0)) >>> 0;
+  const node = el(
+    'div',
+    { class: 'ml-nocover ml-typecover', 'aria-hidden': 'true' },
+    el('span', { class: 'ml-typecover-title' }, title),
+    byline ? el('span', { class: 'ml-typecover-by' }, byline) : null,
+  );
+  node.style.setProperty('--cover-hue', String(hash % 360));
+  return node;
+}

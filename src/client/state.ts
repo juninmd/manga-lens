@@ -5,6 +5,11 @@ export type TranslateEngine = 'auto' | 'llm' | 'google' | 'mymemory' | 'vision';
 export type LetterFont = 'comic' | 'sans' | 'serif';
 export type TranslateMode = 'ocr' | 'ai' | 'vision';
 export type AiProviderName = 'openrouter' | 'ollama' | 'openaicompatible';
+export type Honorifics = 'keep' | 'adapt';
+export type Tone = 'natural' | 'literal' | 'localized';
+export type SfxMode = 'translate' | 'keep';
+export type BookTheme = 'dark' | 'sepia' | 'light';
+export type BookFont = 'serif' | 'sans';
 
 export interface Settings {
   mode: ReadingMode;
@@ -30,6 +35,17 @@ export interface Settings {
   neuralDetect: boolean;
   /** corpo da letra no leitor de livro (px) */
   bookFontSize: number;
+  /** estilo da traducao por IA: honorificos (-san, senpai) mantidos ou adaptados */
+  honorifics: Honorifics;
+  /** estilo da traducao por IA: natural, colada no original ou localizada */
+  tone: Tone;
+  /** onomatopeia: traduzir, ou deixar a arte original na pagina */
+  sfx: SfxMode;
+  /** leitor de livro: papel escuro, sepia ou claro */
+  bookTheme: BookTheme;
+  /** leitor de livro: original e traducao lado a lado */
+  bookBilingual: boolean;
+  bookFont: BookFont;
 }
 
 export interface Bookmark {
@@ -83,6 +99,12 @@ const DEFAULTS: Store = {
     aiSeesPage: false,
     neuralDetect: true,
     bookFontSize: 18,
+    honorifics: 'keep',
+    tone: 'natural',
+    sfx: 'translate',
+    bookTheme: 'dark',
+    bookBilingual: false,
+    bookFont: 'serif',
   },
   favorites: {},
   progress: {},
@@ -151,6 +173,13 @@ if (typeof window !== 'undefined') {
 }
 
 export const seriesKey = (provider: string, id: string): string => `${provider}:${id}`;
+
+/** O estilo de traducao como vai ao servidor (so' os motores de IA usam). */
+export const translateStyle = (): { honorifics: Honorifics; tone: Tone; sfx: SfxMode } => ({
+  honorifics: store.settings.honorifics,
+  tone: store.settings.tone,
+  sfx: store.settings.sfx,
+});
 
 export function toggleFavorite(s: { provider: string; id: string; title: string; cover?: string }): boolean {
   const k = seriesKey(s.provider, s.id);

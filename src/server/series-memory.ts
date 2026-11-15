@@ -9,6 +9,8 @@ export interface GlossaryEntry {
   orig: string;
   pt: string;
   gender: Gender;
+  /** escrito ou corrigido por quem le: o modelo nunca altera nem descarta */
+  locked?: boolean;
 }
 
 export interface PageNote {
@@ -24,6 +26,8 @@ export interface SeriesMemory {
 
 /** Tetos fixos: o paper de traducao de manga (COLING 2025) mostrou que contexto longo piora. */
 export const MAX_GLOSSARY = 80;
+/** termos fixados a mao ficam fora do teto do modelo, mas tambem vao inteiros ao prompt */
+export const MAX_LOCKED = 60;
 export const MAX_NOTES = 60;
 export const NOTES_IN_PROMPT = 5;
 const MAX_TERM = 40;
@@ -98,7 +102,9 @@ export async function contextFor(
     .filter((n) => before(n, chapter, page))
     .sort((a, b) => position(a) - position(b))
     .slice(-NOTES_IN_PROMPT);
-  return { glossary: mem.glossary, notes };
+  // os fixados primeiro: se o modelo truncar a atencao no fim da lista, o que quem le corrigiu ja' passou
+  const glossary = [...mem.glossary.filter((g) => g.locked), ...mem.glossary.filter((g) => !g.locked)];
+  return { glossary, notes };
 }
 
 /**
@@ -125,11 +131,12 @@ export function remember(
       const gender: Gender = raw.gender === 'm' || raw.gender === 'f' ? raw.gender : '?';
       const known = mem.glossary.find((g) => g.orig.toLowerCase() === orig.toLowerCase());
       if (known) {
-        if (known.gender === '?' && gender !== '?') {
+        // termo fixado e' decisao de quem le: nem o genero o modelo completa
+        if (!known.locked && known.gender === '?' && gender !== '?') {
           known.gender = gender;
           changed = true;
         }
-      } else if (mem.glossary.length < MAX_GLOSSARY) {
+      } else if (mem.glossary.filter((g) => !g.locked).length < MAX_GLOSSARY) {
         mem.glossary.push({ orig, pt, gender });
         changed = true;
       }
@@ -146,6 +153,64 @@ export function remember(
   const settled = run.catch((err) => console.error(`[memoria] falha ao gravar: ${(err as Error).message}`));
   writes.set(key, settled);
   return settled;
+}
+
+/** Enfileira uma edicao manual atras das gravacoes do modelo: as duas nao se atropelam no mesmo arquivo. */
+function edit<T>(key: string, change: (mem: SeriesMemory) => T): Promise<T> {
+  const run = (writes.get(key) ?? Promise.resolve()).then(async () => {
+    const mem = await load(key);
+    const result = change(mem);
+    await persist(key, mem);
+    return result;
+  });
+  writes.set(
+    key,
+    run.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return run;
+}
+
+/**
+ * Termo escrito por quem le: cria ou corrige a entrada e a FIXA. E' a saida para
+ * o erro que a memoria congelava ("OCEMON FOX"): antes so' dava para apagar tudo.
+ * `was` e' a grafia original anterior, quando a correcao muda o proprio termo.
+ */
+export function setTerm(
+  series: string,
+  target: string,
+  term: { orig: unknown; pt: unknown; gender?: unknown; was?: unknown },
+): Promise<GlossaryEntry> {
+  const orig = cleanText(term.orig, MAX_TERM);
+  const pt = cleanText(term.pt, MAX_TERM);
+  if (!orig || !pt) return Promise.reject(new Error('termo e traducao sao obrigatorios'));
+  const gender: Gender = term.gender === 'm' || term.gender === 'f' ? term.gender : '?';
+  const was = cleanText(term.was, MAX_TERM).toLowerCase();
+  return edit(keyOf(series, target), (mem) => {
+    const same = (g: GlossaryEntry, name: string): boolean => g.orig.toLowerCase() === name;
+    const index = mem.glossary.findIndex((g) => same(g, was || orig.toLowerCase()));
+    const entry: GlossaryEntry = { orig, pt, gender, locked: true };
+    if (index >= 0) mem.glossary[index] = entry;
+    else {
+      if (mem.glossary.filter((g) => g.locked).length >= MAX_LOCKED) throw new Error(`o glossario aceita ate ${MAX_LOCKED} termos fixados`);
+      mem.glossary.push(entry);
+    }
+    // renomear para um termo que ja' existia deixaria duas entradas para o mesmo nome
+    mem.glossary = mem.glossary.filter((g) => g === entry || !same(g, orig.toLowerCase()));
+    return entry;
+  });
+}
+
+export function removeTerm(series: string, target: string, orig: unknown): Promise<boolean> {
+  const name = cleanText(orig, MAX_TERM).toLowerCase();
+  if (!name) return Promise.reject(new Error('termo obrigatorio'));
+  return edit(keyOf(series, target), (mem) => {
+    const before = mem.glossary.length;
+    mem.glossary = mem.glossary.filter((g) => g.orig.toLowerCase() !== name);
+    return mem.glossary.length < before;
+  });
 }
 
 export async function memorySummary(series: string, target: string): Promise<SeriesMemory> {

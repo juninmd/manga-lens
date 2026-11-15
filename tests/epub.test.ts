@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
-import { readEpub, readEpubChapter, xhtmlToBlocks } from '../src/server/epub.ts';
+import { epubChapters, epubToTextBook, readEpub, readEpubChapter, stripGutenbergBoilerplate, tocTitles, xhtmlToBlocks, xhtmlToItems } from '../src/server/epub.ts';
 
 const EPUB = join(import.meta.dir, 'fixtures', 'livro.epub');
 
@@ -60,5 +60,78 @@ describe('xhtmlToBlocks', () => {
   test('bloco e a unidade que vai ao tradutor: um por linha logica', () => {
     const blocks = xhtmlToBlocks('<body><h1>T</h1><p>um<br/>dois</p><ul><li>tres</li></ul></body>');
     expect(blocks.map((b) => b.text)).toEqual(['T', 'um', 'dois', 'tres']);
+  });
+});
+
+describe('sumario do EPUB', () => {
+  test('NCX (EPUB 2): o titulo de cada arquivo, resolvido contra a pasta do sumario', () => {
+    const ncx = `<ncx><navMap>
+      <navPoint id="a"><navLabel><text>Capitulo &amp; Um</text></navLabel><content src="text/c1.xhtml"/></navPoint>
+      <navPoint id="b"><navLabel><text> A  volta </text></navLabel><content src="text/c1.xhtml#parte2"/></navPoint>
+      <navPoint id="c"><navLabel><text>Dois</text></navLabel><content src="text/c2.xhtml"/></navPoint>
+    </navMap></ncx>`;
+    const titles = tocTitles(ncx, 'OEBPS/toc.ncx');
+    // duas entradas no mesmo arquivo (ancora): vale a primeira, que e' a que abre o arquivo
+    expect([...titles]).toEqual([
+      ['OEBPS/text/c1.xhtml', 'Capitulo & Um'],
+      ['OEBPS/text/c2.xhtml', 'Dois'],
+    ]);
+  });
+
+  test('nav (EPUB 3): so a lista `toc`, nao os landmarks do mesmo arquivo', () => {
+    const nav = `<html><body>
+      <nav epub:type="toc"><ol><li><a href="../text/c1.xhtml"><span>Primeiro</span> capitulo</a></li><li><a href="../text/c2.xhtml">Segundo</a></li></ol></nav>
+      <nav epub:type="landmarks"><ol><li><a href="../text/capa.xhtml">Capa</a></li></ol></nav>
+    </body></html>`;
+    expect([...tocTitles(nav, 'OEBPS/nav/nav.xhtml')]).toEqual([
+      ['OEBPS/text/c1.xhtml', 'Primeiro capitulo'],
+      ['OEBPS/text/c2.xhtml', 'Segundo'],
+    ]);
+  });
+
+  test('`%` solto no nome do arquivo nao derruba a leitura do livro', () => {
+    expect([...tocTitles('<nav epub:type="toc"><a href="100%.xhtml">Cem</a></nav>', 'nav.xhtml')]).toEqual([['100%.xhtml', 'Cem']]);
+  });
+
+  test('capitulos: titulo vem do primeiro cabecalho quando o livro nao tem sumario', async () => {
+    const chapters = await epubChapters(EPUB, await readEpub(EPUB));
+    expect(chapters.map((c) => c.href)).toEqual(['OEBPS/text/cap1.xhtml', 'OEBPS/text/cap2.xhtml']);
+    expect(chapters[0]!.title).toBe('Chapter One');
+  });
+});
+
+describe('texto do EPUB', () => {
+  test('quebra de linha do ARQUIVO nao e paragrafo (HTML antigo, coluna de 70)', () => {
+    const blocks = xhtmlToBlocks('<body><p>Someone must have been telling lies about Josef K., he knew he had\ndone nothing wrong but, one morning,\n   he was arrested.</p><p>Outro.</p></body>');
+    expect(blocks.map((b) => b.text)).toEqual(['Someone must have been telling lies about Josef K., he knew he had done nothing wrong but, one morning, he was arrested.', 'Outro.']);
+  });
+
+  test('itens marcam o que era titulo; titulo menor so vale colado em outro', () => {
+    const items = xhtmlToItems('<body><h5>I</h5><h4>Do titulo.</h4><p>Uma noite destas.</p><h5>P. S.</h5><p>Carta.</p><h2>Capitulo\nDois</h2><p>Fim.</p></body>');
+    expect(items).toEqual([
+      { text: 'I', heading: true, minor: true },
+      { text: 'Do titulo.', heading: true },
+      { text: 'Uma noite destas.', heading: false },
+      // <h5> sozinho antes de um paragrafo enfeita carta e poema: e' texto, nao capitulo
+      { text: 'P. S.', heading: false },
+      { text: 'Carta.', heading: false },
+      { text: 'Capitulo Dois', heading: true },
+      { text: 'Fim.', heading: false },
+    ]);
+  });
+
+  test('cabecalho e licenca do Gutenberg ficam fora do livro', () => {
+    const p = (text: string) => ({ text, heading: false });
+    const items = [p('The Project Gutenberg eBook of Dracula'), p('*** START OF THE PROJECT GUTENBERG EBOOK DRACULA ***'), p('CHAPTER I'), p('Left Munich at 8:35 P. M.'), p('*** END OF THE PROJECT GUTENBERG EBOOK DRACULA ***'), p('Updated editions will replace the previous one.')];
+    expect(stripGutenbergBoilerplate(items).map((i) => i.text)).toEqual(['CHAPTER I', 'Left Munich at 8:35 P. M.']);
+    // livro sem os marcadores passa intacto
+    expect(stripGutenbergBoilerplate([p('a'), p('b')])).toHaveLength(2);
+  });
+
+  test('livro inteiro cortado pelos titulos, nao pelos arquivos do spine', async () => {
+    const book = await epubToTextBook(EPUB, await readEpub(EPUB));
+    expect(book.title).toBe('O Livro de Teste');
+    expect(book.chapters.length).toBeGreaterThan(0);
+    expect(book.chapters.flatMap((c) => c.paragraphs)).toContain('Café & jornal <velho>.');
   });
 });

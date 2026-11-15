@@ -24,9 +24,10 @@ import {
   visionBlocks,
   visionTranslate,
 } from './ai.ts';
-import { sanitizeBlocks } from './page-text.ts';
+import { MAX_PROSE_CHARS, sanitizeBlocks } from './page-text.ts';
+import { parseStyle } from './translate-prompt.ts';
 import { modelBytes } from './models.ts';
-import { forget, memorySummary } from './series-memory.ts';
+import { forget, memorySummary, removeTerm, setTerm } from './series-memory.ts';
 import { engines, targets, translateWithEngine, type Engine } from './translators.ts';
 
 const app = new Hono();
@@ -245,7 +246,23 @@ const MIME: Record<string, string> = {
   '.bmp': 'image/bmp',
 };
 
-/** Paragrafos de um capitulo de livro (EPUB). O leitor de livro pede daqui e manda ao tradutor. */
+/**
+ * Paragrafos de um capitulo de texto, de qualquer provider de livro (EPUB/TXT/FB2
+ * locais, PDF de texto, acervo online). O leitor de livro pede daqui e manda ao tradutor.
+ */
+app.get('/api/book', async (c) => {
+  const provider = getProvider(c.req.query('provider') ?? '');
+  if (!provider.book) return c.json({ error: 'esta fonte nao tem livros de texto' }, 400);
+  try {
+    return c.json({ blocks: await provider.book(c.req.query('c') ?? '') });
+  } catch (err) {
+    const message = (err as Error).message;
+    // fora da biblioteca e' recusa; entrada inexistente e' capitulo quebrado, nao erro do servidor
+    return c.text(message, /fora da biblioteca/.test(message) ? 403 : 422);
+  }
+});
+
+/** Paragrafos de um capitulo de livro (EPUB). Mantida para links e clientes antigos: `/api/book` cobre todas as fontes. */
 app.get('/api/local/book', async (c) => {
   try {
     return c.json({ blocks: await localBookBlocks(c.req.query('c') ?? '') });
@@ -435,9 +452,16 @@ const runEngine = (engine: Exclude<Engine, 'auto'>, body: TranslateBody): Promis
 
 app.post('/api/ai/translate', async (c) => {
   const body = (await c.req.json()) as TranslateBody;
-  const blocks = sanitizeBlocks(body?.blocks);
+  // `mode`, `style` e `context` vem da rede e entram no prompt: so' passam ja' validados
+  const prose = body?.mode === 'prose';
+  const blocks = sanitizeBlocks(body?.blocks, prose ? MAX_PROSE_CHARS : undefined);
   if (!blocks) return c.json({ error: 'blocks vazio ou invalido' }, 400);
   body.blocks = blocks;
+  body.mode = prose ? 'prose' : undefined;
+  body.style = parseStyle(body.style);
+  body.context = Array.isArray(body.context)
+    ? (body.context as unknown[]).filter((t): t is string => typeof t === 'string').slice(-3).map((t) => oneLine(t).slice(-400)).filter(Boolean)
+    : undefined;
   if (body.pageImage !== undefined && (typeof body.pageImage !== 'string' || body.pageImage.length > MAX_PAGE_IMAGE || !PAGE_IMAGE_RE.test(body.pageImage))) {
     return c.json({ error: 'imagem da pagina invalida' }, 400);
   }
@@ -490,6 +514,29 @@ app.get('/api/ai/memory', async (c) => {
   const key = memoryKey(c.req.query('series'), c.req.query('target'));
   if (!key) return c.json({ error: 'series obrigatorio' }, 400);
   return c.json(await memorySummary(key.series, key.target));
+});
+
+/** Corrige ou cria um termo do glossario e o fixa: o modelo deixa de poder muda-lo. */
+app.post('/api/ai/memory/term', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { series?: unknown; target?: unknown; orig?: unknown; pt?: unknown; gender?: unknown; was?: unknown } | null;
+  const key = memoryKey(body?.series, body?.target);
+  if (!key) return c.json({ error: 'series obrigatorio' }, 400);
+  try {
+    return c.json({ term: await setTerm(key.series, key.target, { orig: body?.orig, pt: body?.pt, gender: body?.gender, was: body?.was }) });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+});
+
+app.post('/api/ai/memory/term/delete', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { series?: unknown; target?: unknown; orig?: unknown } | null;
+  const key = memoryKey(body?.series, body?.target);
+  if (!key) return c.json({ error: 'series obrigatorio' }, 400);
+  try {
+    return c.json({ removed: await removeTerm(key.series, key.target, body?.orig) });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
 });
 
 app.post('/api/ai/memory/clear', async (c) => {
