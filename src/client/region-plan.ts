@@ -41,6 +41,12 @@ const TEXT_MARGIN = 0.06;
  * e' folgado (o que cai fora da mascara e' branqueado antes da leitura).
  */
 const OCR_MARGIN = 0.15;
+/**
+ * Regiao muitas vezes maior que o unico texto dentro dela nao e' o balao desse
+ * texto: e' um painel claro com uma legenda ou onomatopeia. Usada inteira, o
+ * letreiramento repintava o painel todo (arte inclusa) para trocar uma palavra.
+ */
+const OVERSIZE = 12;
 
 const area = (r: Rect): number => Math.max(0, r.w) * Math.max(0, r.h);
 
@@ -84,6 +90,69 @@ export function cropMask(region: HeuristicRegion, sub: Rect): { box: Rect; mask:
   return { box: { x: x0, y: y0, w, h }, mask: { w, h, data } };
 }
 
+const MERGE_RATIO = 0.45; // fracao do menor bbox que precisa estar coberta para virar um so'
+
+/**
+ * Quanto do MENOR dos dois bboxes esta' dentro do outro. Encostar nao basta: numa
+ * pagina cheia os baloes vizinhos se tocam pelas bordas, e fundir nesse toque
+ * juntava quatro falas num bloco so' — o OCR lia tudo grudado e a traducao saia
+ * empilhada num balao enquanto os outros ficavam no idioma original.
+ */
+function overlapRatio(a: HeuristicRegion, b: HeuristicRegion): number {
+  const ix = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+  const iy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+  if (ix <= 0 || iy <= 0) return 0;
+  return (ix * iy) / Math.min(a.w * a.h, b.w * b.h);
+}
+
+/**
+ * Uma regiao inteira dentro de outra bem maior: balao sobre painel de fundo claro
+ * (pagina colorida, webtoon pastel), nao dois pedacos do mesmo balao.
+ */
+function nested(a: HeuristicRegion, b: HeuristicRegion): boolean {
+  const [small, big] = a.w * a.h <= b.w * b.h ? [a, b] : [b, a];
+  // quase todo dentro, nao 100%: o balao costuma passar uns pixels da borda do painel ou encostar num objeto
+  return small.w * small.h < big.w * big.h * 0.5 && overlapRatio(small, big) >= 0.85;
+}
+
+/**
+ * Ao juntar dois baloes encostados, as mascaras tambem precisam ser unidas.
+ *
+ * `keepNested` (caminho com detector neural): balao contido num painel claro NAO e'
+ * fundido com o painel. Fundido, ele herdava a cor do painel e era repintado de
+ * cinza/azul em vez do proprio branco; separado, `planTargets` da' cada texto a
+ * menor regiao que o contem. Sem o detector a fusao antiga continua valendo: la'
+ * toda regiao e' lida, e o painel solto viraria um segundo OCR por cima dos baloes.
+ */
+export function mergeOverlaps(regions: HeuristicRegion[], keepNested = false): HeuristicRegion[] {
+  const out: HeuristicRegion[] = [];
+  for (const r of regions) {
+    const hit = out.find((o) => overlapRatio(o, r) >= MERGE_RATIO && !(keepNested && nested(o, r)));
+    if (!hit) {
+      out.push({ ...r });
+      continue;
+    }
+    const x = Math.min(hit.x, r.x);
+    const y = Math.min(hit.y, r.y);
+    const w = Math.max(hit.x + hit.w, r.x + r.w) - x;
+    const h = Math.max(hit.y + hit.h, r.y + r.h) - y;
+    const mask = new Uint8Array(w * h);
+    for (const src of [hit, r]) {
+      for (let sy = 0; sy < src.h; sy++) {
+        for (let sx = 0; sx < src.w; sx++) {
+          if (src.mask[sy * src.w + sx]) mask[(sy + src.y - y) * w + (sx + src.x - x)] = 1;
+        }
+      }
+    }
+    hit.x = x;
+    hit.y = y;
+    hit.w = w;
+    hit.h = h;
+    hit.mask = mask;
+  }
+  return out;
+}
+
 /**
  * Funde o detector neural com a heuristica. O modelo sabe ONDE ha texto (inclusive
  * fora de balao e em pagina colorida); a heuristica sabe o formato exato do balao
@@ -109,14 +178,27 @@ export function planTargets(
     if (!texts.some((k) => iou(k, t) > DUP_IOU)) texts.push(t);
   }
 
+  // Cada texto pertence a MENOR regiao que o contem. Painel de fundo claro (pagina
+  // colorida, webtoon pastel) tambem e' uma "mancha clara fechada", e a caixa dele
+  // contem todos os baloes de dentro: por ordem de chegada ele ficava com os textos,
+  // e o balao era repintado com a cor do painel em vez do proprio branco.
+  const owner = new Map<Detection, HeuristicRegion>();
+  for (const t of texts) {
+    let best: HeuristicRegion | undefined;
+    for (const r of regions) {
+      if (coverage(t, toImage(r, scale)) >= INSIDE && (!best || area(r) < area(best))) best = r;
+    }
+    if (best) owner.set(t, best);
+  }
+
   const used = new Set<Detection>();
   const out: OcrTarget[] = [];
   for (const r of regions) {
     const rImg = toImage(r, scale);
-    const inside = texts.filter((t) => !used.has(t) && coverage(t, rImg) >= INSIDE);
+    const inside = texts.filter((t) => owner.get(t) === r);
     // o modelo leu a pagina e nao viu texto aqui: trama/borda (ou texto que so' atravessa, lido como livre)
     if (!inside.length && texts.length > 0) continue;
-    if (inside.length <= 1) {
+    if (inside.length <= 1 && !(inside[0] && area(rImg) > OVERSIZE * area(inside[0]))) {
       const t = inside[0];
       if (t) used.add(t);
       out.push({ ocr: t ? grow(t, OCR_MARGIN, page) : rImg, block: rImg, mask: { w: r.w, h: r.h, data: r.mask }, bg: r.bg, fg: r.fg, free: false });

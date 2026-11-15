@@ -5,7 +5,17 @@ import { realign } from './align.ts';
 import { config, getProviderConfig, normalizeProvider, type AiProvider } from './config.ts';
 import { readingOrder, type PageBlock } from './page-text.ts';
 import { contextFor, remember } from './series-memory.ts';
-import { parseReply, systemPrompt, userPrompt, visionSystemPrompt, visionUserPrompt } from './translate-prompt.ts';
+import {
+  DEFAULT_STYLE,
+  parseReply,
+  proseSystemPrompt,
+  proseUserPrompt,
+  systemPrompt,
+  userPrompt,
+  visionSystemPrompt,
+  visionUserPrompt,
+  type TranslateStyle,
+} from './translate-prompt.ts';
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -170,6 +180,12 @@ export interface TranslateInput {
   /** idioma de chegada (pt-BR, en, es...); ausente = portugues do Brasil */
   target?: string;
   provider?: AiProvider | string;
+  /** honorificos, tom e onomatopeia: preferencias de quem le, ja' validadas (`parseStyle`) */
+  style?: TranslateStyle;
+  /** `prose` = paragrafos de livro: prompt literario, sem ordem de leitura nem imagem */
+  mode?: 'prose';
+  /** livro: paragrafos imediatamente anteriores ao lote, so' contexto */
+  context?: string[];
 }
 
 /** Uma pagina cabe num lote so': quebrar em 12 escondia do LLM metade da conversa. */
@@ -185,15 +201,17 @@ export async function translateBlocks(input: TranslateInput): Promise<{ id: numb
   const dst = TARGET_NAME[target.toLowerCase()] ?? 'portugues do Brasil';
   const providerName = normalizeProvider(input.provider, config.ai.provider);
   const visionModel = getProviderConfig(providerName).visionModel;
+  const prose = input.mode === 'prose';
+  const style = input.style ?? DEFAULT_STYLE;
   const image =
-    visionModel && input.pageImage && input.pageImage.length <= MAX_PAGE_IMAGE && PAGE_IMAGE_RE.test(input.pageImage)
+    !prose && visionModel && input.pageImage && input.pageImage.length <= MAX_PAGE_IMAGE && PAGE_IMAGE_RE.test(input.pageImage)
       ? input.pageImage
       : undefined;
   const model = getLanguageModel(providerName, image ? visionModel! : await resolveModel(providerName));
   const series = input.series?.trim();
   const chapter = input.chapter ?? '';
   const memory = series ? await contextFor(series, target, chapter, input.page ?? 0) : { glossary: [], notes: [] };
-  const blocks = readingOrder(input.blocks, input.rtl ?? true);
+  const blocks = prose ? input.blocks : readingOrder(input.blocks, input.rtl ?? true);
 
   let batches = 0;
   let failed = 0;
@@ -202,16 +220,18 @@ export async function translateBlocks(input: TranslateInput): Promise<{ id: numb
   for (let i = 0; i < blocks.length; i += PAGE_BATCH) {
     const batch = blocks.slice(i, i + PAGE_BATCH);
     const neighbours = blocks.length > PAGE_BATCH ? blocks.filter((b) => !batch.includes(b)) : [];
-    const prompt = userPrompt(
-      { series, chapter: input.chapter, page: input.page, sourceName: src, ...memory, neighbours, withImage: Boolean(image) },
-      batch,
-    );
+    const ctx = { series, chapter: input.chapter, page: input.page, sourceName: src, ...memory, neighbours, withImage: Boolean(image) };
+    // so' o primeiro lote continua do trecho que o cliente mandou; os seguintes continuam do lote anterior
+    const previous = i === 0 ? input.context : blocks.slice(Math.max(0, i - 2), i).map((b) => b.text.slice(-400));
+    const prompt = prose ? proseUserPrompt({ ...ctx, previous }, batch) : userPrompt(ctx, batch);
+    // paragrafo e' longo: o orcamento por balao (160 tokens) cortava a resposta no meio do lote
+    const budget = prose ? Math.ceil(batch.reduce((n, b) => n + b.text.length, 0) / 2) + 900 : batch.length * 160 + 900;
     batches++;
     let raw = '';
     try {
       const result = await generateText({
         model,
-        system: systemPrompt(dst, target),
+        system: prose ? proseSystemPrompt(dst, target, style) : systemPrompt(dst, target, style),
         ...(image
           ? {
               messages: [
@@ -226,7 +246,7 @@ export async function translateBlocks(input: TranslateInput): Promise<{ id: numb
             }
           : { prompt }),
         temperature: 0.2,
-        maxOutputTokens: Math.max(config.ai.maxTokens, batch.length * 160 + 900),
+        maxOutputTokens: Math.max(config.ai.maxTokens, budget),
         ...ollamaOptions(providerName, true),
         maxRetries: 0,
         abortSignal: AbortSignal.timeout(config.ai.timeoutMs),
@@ -292,7 +312,7 @@ export async function visionBlocks(input: TranslateInput): Promise<{ id: number;
   );
   const result = await generateText({
     model,
-    system: visionSystemPrompt(dst, target),
+    system: visionSystemPrompt(dst, target, input.style ?? DEFAULT_STYLE),
     messages: [
       {
         role: 'user' as const,

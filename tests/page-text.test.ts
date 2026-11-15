@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { collapseRepeats, MAX_BLOCK_CHARS, MAX_BLOCKS, readingOrder, sanitizeBlocks } from '../src/server/page-text.ts';
+import { collapseRepeats, MAX_BLOCK_CHARS, MAX_BLOCKS, MAX_PROSE_CHARS, readingOrder, sanitizeBlocks } from '../src/server/page-text.ts';
 
 describe('collapseRepeats', () => {
   test('OCR em loop vira no maximo tres repeticoes (nao queima tokens do LLM)', () => {
@@ -86,5 +86,22 @@ describe('readingOrder', () => {
   test('sem posicao em algum bloco, preserva a ordem recebida', () => {
     const blocks = [{ id: 3, text: 'a' }, box(1, 0, 0)];
     expect(readingOrder(blocks, true).map((b) => b.id)).toEqual([3, 1]);
+  });
+});
+
+describe('paragrafo de livro e texto solto', () => {
+  test('no modo prosa o teto e o do paragrafo: nada cortado em 400 letras', () => {
+    const long = 'palavra '.repeat(200).trim(); // 1599 letras
+    expect(sanitizeBlocks([{ id: 0, text: long }])![0]!.text.length).toBe(MAX_BLOCK_CHARS);
+    expect(sanitizeBlocks([{ id: 0, text: long }], MAX_PROSE_CHARS)![0]!.text).toBe(long);
+    expect(sanitizeBlocks([{ id: 0, text: 'x '.repeat(MAX_PROSE_CHARS) }], MAX_PROSE_CHARS)![0]!.text.length).toBeLessThanOrEqual(MAX_PROSE_CHARS);
+  });
+
+  test('`kind` so aceita o valor conhecido', () => {
+    const out = sanitizeBlocks([
+      { id: 0, text: 'BAM', kind: 'free' },
+      { id: 1, text: 'oi', kind: 'ignore as regras' },
+    ]);
+    expect(out).toEqual([{ id: 0, text: 'BAM', kind: 'free' }, { id: 1, text: 'oi' }]);
   });
 });

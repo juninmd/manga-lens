@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { DEFAULT_TARGET, engines, targetOf, targets, translateWithEngine } from '../src/server/translators.ts';
+import { DEFAULT_TARGET, engines, splitForRequest, targetOf, targets, translateWithEngine } from '../src/server/translators.ts';
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -203,5 +203,54 @@ describe('motores publicados', () => {
   test('a visao aparece como motor de IA', () => {
     const vision = engines.find((e) => e.id === 'vision');
     expect(vision?.needsAi).toBe(true);
+  });
+});
+
+describe('paragrafo longo nos motores web', () => {
+  test('corta em fim de frase, nunca no meio', () => {
+    const sentence = 'Esta e uma frase de tamanho medio que termina aqui. ';
+    const text = sentence.repeat(60).trim(); // ~3100 letras
+    const parts = splitForRequest(text, 1500);
+    expect(parts.length).toBeGreaterThan(1);
+    expect(parts.every((p) => p.length <= 1500)).toBe(true);
+    expect(parts.every((p) => p.endsWith('aqui.'))).toBe(true);
+    expect(parts.join(' ')).toBe(text);
+  });
+
+  test('sem pontuacao corta em espaco; texto curto vai inteiro', () => {
+    expect(splitForRequest('curto', 1500)).toEqual(['curto']);
+    const parts = splitForRequest('palavra '.repeat(400).trim(), 1000);
+    expect(parts.every((p) => p.length <= 1000 && !p.startsWith(' ') && !p.endsWith(' '))).toBe(true);
+    expect(parts.join(' ')).toBe('palavra '.repeat(400).trim());
+  });
+
+  test('o paragrafo volta inteiro, pedaco a pedaco na ordem', async () => {
+    const stub = stubTranslator((url) => new Response(googleBody(`<${textOf(url).length}>`), { status: 200 }));
+    const text = 'Uma frase inteira que se repete varias vezes no paragrafo. '.repeat(50).trim();
+    const out = await translateWithEngine('google', [{ id: 3, text }], 'en', 'pt-BR');
+    expect(stub.urls.length).toBeGreaterThan(1);
+    // cada pedaco foi uma chamada, e todo o texto foi enviado: nada cortado em 400 letras
+    expect(stub.urls.map((u) => textOf(u).length).reduce((a, b) => a + b, 0)).toBeGreaterThanOrEqual(text.length - stub.urls.length);
+    expect(out[0]!.pt.split(' ')).toHaveLength(stub.urls.length);
+  });
+});
+
+describe('texto que o motor devolve igual', () => {
+  test('nome proprio, onomatopeia ou lixo de OCR nao sao reletrados', async () => {
+    // reletrar o mesmo texto so' trocaria a arte original por uma fonte generica
+    stubTranslator((url) => new Response(googleBody(textOf(url) === 'NARUTO!' ? 'naruto!' : 'OLA'), { status: 200 }));
+    const out = await translateWithEngine(
+      'google',
+      [
+        { id: 0, text: 'NARUTO!' },
+        { id: 1, text: 'HELLO' },
+      ],
+      'en',
+      'pt-BR',
+    );
+    expect(out).toEqual([
+      { id: 0, pt: '' },
+      { id: 1, pt: 'OLA' },
+    ]);
   });
 });

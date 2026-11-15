@@ -2,7 +2,7 @@ import { createWorker, type Worker } from 'tesseract.js';
 import { translate } from './api.ts';
 import { api } from './base.ts';
 import { langLabel } from './ui.ts';
-import { planTargets, type Detection, type OcrTarget, type Rect } from './region-plan.ts';
+import { mergeOverlaps, planTargets, type Detection, type OcrTarget, type Rect } from './region-plan.ts';
 import { detectText } from './text-detector.ts';
 
 /** Mascara do balao em coordenadas reduzidas, relativa ao bbox do bloco. */
@@ -366,6 +366,7 @@ const throwIfAborted = (signal?: AbortSignal): void => {
 async function detectBalloons(
   img: HTMLImageElement,
   signal?: AbortSignal,
+  keepNested = false,
 ): Promise<{ regions: Region[]; scale: number }> {
   const scale = Math.min(1, DETECT_WIDTH / (img.naturalWidth || DETECT_WIDTH));
   const w = Math.max(Math.round(img.naturalWidth * scale), 1);
@@ -513,52 +514,7 @@ async function detectBalloons(
     });
   }
 
-  return { regions: mergeOverlaps(regions).sort((a, b) => a.y - b.y || a.x - b.x), scale };
-}
-
-const MERGE_RATIO = 0.45; // fracao do menor bbox que precisa estar coberta para virar um so'
-
-/**
- * Quanto do MENOR dos dois bboxes esta' dentro do outro. Encostar nao basta: numa
- * pagina cheia os baloes vizinhos se tocam pelas bordas, e fundir nesse toque
- * juntava quatro falas num bloco so' — o OCR lia tudo grudado e a traducao saia
- * empilhada num balao enquanto os outros ficavam no idioma original.
- */
-function overlapRatio(a: Region, b: Region): number {
-  const ix = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
-  const iy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
-  if (ix <= 0 || iy <= 0) return 0;
-  return (ix * iy) / Math.min(a.w * a.h, b.w * b.h);
-}
-
-/** Ao juntar dois baloes encostados, as mascaras tambem precisam ser unidas. */
-function mergeOverlaps(regions: Region[]): Region[] {
-  const out: Region[] = [];
-  for (const r of regions) {
-    const hit = out.find((o) => overlapRatio(o, r) >= MERGE_RATIO);
-    if (!hit) {
-      out.push({ ...r });
-      continue;
-    }
-    const x = Math.min(hit.x, r.x);
-    const y = Math.min(hit.y, r.y);
-    const w = Math.max(hit.x + hit.w, r.x + r.w) - x;
-    const h = Math.max(hit.y + hit.h, r.y + r.h) - y;
-    const mask = new Uint8Array(w * h);
-    for (const src of [hit, r]) {
-      for (let sy = 0; sy < src.h; sy++) {
-        for (let sx = 0; sx < src.w; sx++) {
-          if (src.mask[sy * src.w + sx]) mask[(sy + src.y - y) * w + (sx + src.x - x)] = 1;
-        }
-      }
-    }
-    hit.x = x;
-    hit.y = y;
-    hit.w = w;
-    hit.h = h;
-    hit.mask = mask;
-  }
-  return out;
+  return { regions: mergeOverlaps(regions, keepNested).sort((a, b) => a.y - b.y || a.x - b.x), scale };
 }
 
 interface Box {
@@ -787,6 +743,11 @@ function diffuseFill(img: HTMLImageElement, box: Box): HTMLCanvasElement {
 export function cleanOcrText(raw: string): string {
   return raw
     .trim()
+    // o "I" de letra de HQ e' um traco sem serifa, e o Tesseract devolve "|". Entre duas
+    // palavras nao ha' borda de balao possivel: e' o pronome ("THEN | WILL GO" -> "THEN I WILL GO")
+    .replace(/(?<=\p{L}[,.!?]?[ \t]+)\|(?=[ \t]+\p{L})/gu, 'I')
+    // no comeco so' vale quando o que segue e' o que segue um "I": "| AM", "| WILL", "|'M"
+    .replace(/^\|(?=(?:'(?:M|LL|VE|D)\b)|[ \t]+(?:AM|WILL|WAS|HAVE|HAD|CAN|CANNOT|COULD|DO|DID|DON'T|DIDN'T|CAN'T|WON'T|WOULD|SHOULD|MUST|THINK|KNOW|NEED|WANT|SEE|SAID)\b)/iu, 'I')
     .replace(/^[|:;~^`'"\\/_-]+|[|:;~^`'"\\/_-]+$/g, '')
     .replace(/\r\n|\r/g, '\n')
     .replace(/[ \t]+/g, ' ')
@@ -805,6 +766,17 @@ export function isOcrNoise(text: string, confidence: number): boolean {
   // Proporcao de caracteres legiveis vs simbolos de ruido
   const nonSpace = cleaned.replace(/\s/g, '').length;
   if (nonSpace > 0 && letters.length / nonSpace < 0.45) return true;
+  // Letras soltas ("W H Oo OSM"): e' o que sai de onomatopeia desenhada ou de trama. Palavra de
+  // uma letra que existe (I, A, O, E, Y) nao conta, e CJK nao separa por espaco — nunca cai aqui.
+  const tokens = cleaned.split(/\s+/).map((t) => t.replace(/[^\p{L}]/gu, '')).filter(Boolean);
+  const upperText = (cleaned.match(/\p{Lu}/gu)?.length ?? 0) >= letters.length * 0.6;
+  const stray = tokens.filter(
+    (t) =>
+      (t.length === 1 && !/^[IAOEYiaoey\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]$/u.test(t)) ||
+      // fala em caixa alta com um pedaco em minuscula ("Oo", "ct"): letra que o OCR inventou
+      (upperText && t.length <= 3 && /\p{Ll}/u.test(t)),
+  );
+  if (tokens.length >= 3 && stray.length * 2 >= tokens.length) return true;
   // Confianca baixa: texto curto (<=3 letras) precisa de confianca maior (>=45) para nao ser falso positivo
   if (letters.length <= 3 && confidence < 45) return true;
   if (confidence < 28) return true;
@@ -976,7 +948,8 @@ async function recognize(
   throwIfAborted(signal);
   const page = preprocess(img);
   await yieldToUi();
-  const { regions, scale } = await detectBalloons(img, signal);
+  // com o detector neural cada texto escolhe a menor regiao que o contem: balao dentro de painel claro fica separado
+  const { regions, scale } = await detectBalloons(img, signal, neural);
   const detections = neural ? await neuralDetections(img, onProgress) : null;
   throwIfAborted(signal);
   const targets = detections
@@ -1054,12 +1027,22 @@ export async function translateBlocks(
     page?: number;
     rtl?: boolean;
     pageImage?: string;
+    style?: { honorifics: string; tone: string; sfx: string };
   },
 ): Promise<OcrBlock[]> {
   if (!blocks.length) return blocks;
   const { translations } = await translate({
     // a posicao deixa o servidor montar a ordem de leitura (RTL/LTR) para o LLM
-    blocks: blocks.map((b) => ({ id: b.id, text: b.text, x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.w), h: Math.round(b.h) })),
+    // sem mascara de balao = texto solto (legenda, placa, onomatopeia): o LLM traduz diferente de uma fala
+    blocks: blocks.map((b) => ({
+      id: b.id,
+      text: b.text,
+      x: Math.round(b.x),
+      y: Math.round(b.y),
+      w: Math.round(b.w),
+      h: Math.round(b.h),
+      ...(b.mask ? {} : { kind: 'free' as const }),
+    })),
     ...meta,
   });
   const map = new Map(translations.map((t) => [t.id, t]));

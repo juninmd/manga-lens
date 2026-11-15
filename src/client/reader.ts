@@ -17,6 +17,7 @@ import {
   type TranslateEngineInfo,
 } from './api.ts';
 import { el, langLabel, toast } from './ui.ts';
+import { openGlossary } from './glossary.ts';
 import {
   hasBookmark,
   isFavorite,
@@ -27,6 +28,7 @@ import {
   store,
   toggleBookmark,
   toggleFavorite,
+  translateStyle,
   type AiProviderName,
   type FitMode,
   type LetterFont,
@@ -971,7 +973,15 @@ export class Reader {
 
     this.popoverEl.append(head);
     if (this.compact) this.popoverEl.append(this.readingSection());
-    this.popoverEl.append(modeSection, providerSection, ...(isAi || isVision ? [this.contextSection()] : []), targetSection, ocrLangSection, fontSection, foot);
+    this.popoverEl.append(
+      modeSection,
+      providerSection,
+      ...(isAi || isVision ? [this.contextSection(), this.styleSection()] : []),
+      targetSection,
+      ocrLangSection,
+      fontSection,
+      foot,
+    );
   }
 
   /**
@@ -1017,6 +1027,21 @@ export class Reader {
       s.translateMode === 'vision' ? null : seesPage,
       info,
       el('button', {
+        class: 'ml-btn ml-btn-sm',
+        disabled: !series,
+        title: 'Corrija, fixe ou adicione nomes e termos: o que voce fixar a IA nao muda mais',
+        onclick: () => {
+          if (!series) return;
+          this.togglePopover(false);
+          openGlossary(series, s.targetLang, { usesAi: true }, () => {
+            // traduzido com o glossario antigo: some da pagina ate' refazer com R
+            this.translatedAs.clear();
+            this.invalidateTranslations();
+            showMemory();
+          });
+        },
+      }, '📖 editar glossario'),
+      el('button', {
         class: 'ml-btn ml-btn-sm ml-btn-ghost',
         disabled: !series,
         title: 'Apaga os nomes e o resumo aprendidos nesta obra (use se a IA gravou um nome ou genero errado)',
@@ -1030,6 +1055,57 @@ export class Reader {
             .catch((err) => toast(`nao consegui apagar a memoria: ${humanizeError(err)}`, 'error'));
         },
       }, 'limpar memoria da obra'),
+    );
+  }
+
+  /**
+   * Estilo da traducao por IA. Sao as tres decisoes em que tradutor e leitor mais
+   * discordam — sufixo de tratamento, o quanto adaptar e o que fazer com efeito
+   * sonoro — e nenhuma tem resposta certa: vira preferencia, e vai no prompt.
+   */
+  private styleSection(): HTMLElement {
+    const s = store.settings;
+    const pick = <K extends 'tone' | 'honorifics' | 'sfx'>(key: K, label: string, title: string, options: [(typeof s)[K], string][]): HTMLElement[] => {
+      const id = `ml-style-${key}`;
+      return [
+        el('label', { for: id }, label),
+        el(
+          'select',
+          {
+            id,
+            class: 'ml-select ml-select-sm',
+            title,
+            onchange: (e: Event) => {
+              s[key] = (e.target as HTMLSelectElement).value as (typeof s)[K];
+              persist();
+              this.invalidateTranslations();
+            },
+          },
+          ...options.map(([value, text]) => el('option', { value, selected: value === s[key] }, text)),
+        ),
+      ];
+    };
+    return el(
+      'div',
+      { class: 'ml-popover-section' },
+      el('span', { class: 'ml-popover-label' }, 'Estilo da traducao'),
+      el(
+        'div',
+        { class: 'ml-style-grid' },
+        ...pick('tone', 'Tom', 'Natural: fluida, como scanlation. Literal: colada no original. Localizada: adapta piada, giria e referencia cultural', [
+          ['natural', 'Natural'],
+          ['literal', 'Literal (colada no original)'],
+          ['localized', 'Localizada (adapta referencias)'],
+        ]),
+        ...pick('honorifics', 'Honorificos', '-san, -kun, senpai, oppa: manter como no original ou trocar pelo tratamento do idioma de chegada', [
+          ['keep', 'Manter (-san, senpai)'],
+          ['adapt', 'Adaptar (senhor, dona)'],
+        ]),
+        ...pick('sfx', 'Onomatopeias', 'Traduzir o efeito sonoro, ou deixar a arte original na pagina', [
+          ['translate', 'Traduzir'],
+          ['keep', 'Manter a arte original'],
+        ]),
+      ),
     );
   }
 
@@ -1613,7 +1689,13 @@ export class Reader {
   private stamp(): string {
     const mode = store.settings.translateMode;
     const prov = mode === 'ocr' ? store.settings.engine : store.settings.aiProvider;
-    return `${mode}|${prov}|${store.settings.targetLang}`;
+    return `${mode}|${prov}|${store.settings.targetLang}${this.styleTag(mode)}`;
+  }
+
+  /** O estilo so' muda a traducao por IA; nos motores web ele nao entra no carimbo. */
+  private styleTag(mode: TranslateMode): string {
+    const s = store.settings;
+    return mode === 'ocr' ? '' : `|${s.tone}|${s.honorifics}|${s.sfx}`;
   }
 
   /**
@@ -1772,7 +1854,7 @@ export class Reader {
         engine,
         provider,
         target,
-        stamp: `${mode}|${provider}|${target}`,
+        stamp: `${mode}|${provider}|${target}${this.styleTag(mode)}`,
         modeLabel: MODE_LABEL[mode],
         signal,
       };
@@ -1986,6 +2068,7 @@ export class Reader {
       engine: ctx.mode === 'ocr' ? ctx.engine : ctx.mode === 'vision' ? 'vision' : 'llm',
       target: ctx.target,
       provider: ctx.mode === 'ocr' ? undefined : ctx.provider,
+      style: ctx.mode === 'ocr' ? undefined : translateStyle(),
     });
     // a chamada nao e' abortavel; o resultado de um capitulo que ja' ficou para tras e' descartado
     this.throwIfAborted(ctx.signal);

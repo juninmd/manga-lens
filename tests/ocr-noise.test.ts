@@ -40,3 +40,29 @@ describe('OCR text cleaner and noise detection', () => {
     expect(isNoise('Ola, tudo bem?')).toBe(false);
   });
 });
+
+describe('erros classicos do Tesseract em letra de HQ', () => {
+  test('"|" entre duas palavras e o pronome I, nao borda de balao', () => {
+    expect(cleanOcrText('THEN | WILL GO TONIGHT.')).toBe('THEN I WILL GO TONIGHT.');
+    expect(cleanOcrText('NO, | CAN\'T')).toBe("NO, I CAN'T");
+  });
+
+  test('"|" no comeco so vira I antes do que segue um I', () => {
+    expect(cleanOcrText('| AM THE ONE WHO LIT THIS LAMP')).toBe('I AM THE ONE WHO LIT THIS LAMP');
+    expect(cleanOcrText("|'M HERE")).toBe("I'M HERE");
+    // borda dos dois lados continua sendo borda
+    expect(cleanOcrText('| HELLO WORLD |')).toBe('HELLO WORLD');
+  });
+
+  test('letras soltas de onomatopeia desenhada sao ruido, nao fala', () => {
+    // "WHOOSH" em letra inclinada e contornada, como o Tesseract devolveu
+    expect(isOcrNoise('W H Oo OSM', 74)).toBe(true);
+    expect(isOcrNoise('(ct W H Oo OSH', 70)).toBe(true);
+  });
+
+  test('fala curta de verdade nao cai na regra das letras soltas', () => {
+    for (const text of ['I AM A HERO', 'HA HA HA', 'GO GO GO', 'NO NO NO!', 'O QUE E ISSO', 'Y A-T-IL', 'McDONALD IS OPEN', 'ドドド ドド ド']) {
+      expect(isOcrNoise(text, 85)).toBe(false);
+    }
+  });
+});

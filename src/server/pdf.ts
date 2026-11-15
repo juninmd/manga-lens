@@ -38,7 +38,6 @@ interface PdfPage {
 interface Doc {
   numPages: number;
   getPage(n: number): Promise<PdfPage>;
-  destroy(): Promise<void>;
 }
 
 /**
@@ -46,18 +45,22 @@ interface Doc {
  * a leitura e' sequencial dentro do mesmo arquivo e manter varios PDFs abertos
  * seguraria o buffer de cada um.
  */
-let open: { path: string; mtimeMs: number; size: number; doc: Doc } | null = null;
+let open: { path: string; mtimeMs: number; size: number; doc: Doc; close: () => Promise<void> } | null = null;
 
 async function document(path: string): Promise<Doc> {
   const st = await stat(path);
   if (open && open.path === path && open.mtimeMs === st.mtimeMs && open.size === st.size) return open.doc;
-  await open?.doc.destroy().catch(() => undefined);
+  // quem se fecha e' a TAREFA de carga: no pdf.js 6 o documento nao tem `destroy`, e
+  // chama-lo ali estourava ao trocar de arquivo — o segundo PDF da sessao nunca abria
+  await open?.close().catch(() => undefined);
+  open = null;
   const { getDocument } = await lib();
   const data = new Uint8Array(await Bun.file(path).arrayBuffer());
   // sem fonte do sistema e sem converter fonte embutida: o PDF e' arquivo de
   // terceiro e aqui so' se extrai pixel e texto — nada precisa ser renderizado
-  const doc = (await getDocument({ data, useSystemFonts: false, disableFontFace: true }).promise) as unknown as Doc;
-  open = { path, mtimeMs: st.mtimeMs, size: st.size, doc };
+  const task = getDocument({ data, useSystemFonts: false, disableFontFace: true });
+  const doc = (await task.promise) as unknown as Doc;
+  open = { path, mtimeMs: st.mtimeMs, size: st.size, doc, close: () => task.destroy() };
   return doc;
 }
 
@@ -148,4 +151,29 @@ export async function pdfPageText(path: string, index: number): Promise<string> 
     .map((i) => (i.str ?? '') + (i.hasEOL ? '\n' : ''))
     .join('')
     .trim();
+}
+
+/** Linhas de texto nativo da pagina, na ordem do PDF. */
+export async function pdfPageLines(path: string, index: number): Promise<string[]> {
+  return (await pdfPageText(path, index)).split('\n');
+}
+
+/**
+ * PDF de TEXTO (livro exportado, artigo) x PDF escaneado. O escaneado tem um
+ * bitmap por pagina e vai ao leitor de paginas com OCR; o de texto nao tem
+ * imagem nenhuma para extrair e abre no leitor de livro. Amostra ate' 5 paginas
+ * espalhadas: capa ilustrada ou figura isolada nao podem decidir pelo livro todo.
+ */
+export async function pdfIsText(path: string): Promise<boolean> {
+  const doc = await document(path);
+  const total = doc.numPages;
+  const sample = [...new Set(Array.from({ length: Math.min(5, total) }, (_, i) => Math.floor((i * (total - 1)) / Math.max(1, Math.min(5, total) - 1))))];
+  let textual = 0;
+  for (const index of sample) {
+    const page = await doc.getPage(index + 1);
+    const hasImage = (await imagesOf(page)).length > 0;
+    const chars = (await page.getTextContent()).items.reduce((n, i) => n + (i.str?.trim().length ?? 0), 0);
+    if (!hasImage && chars >= 80) textual++;
+  }
+  return textual * 2 > sample.length;
 }

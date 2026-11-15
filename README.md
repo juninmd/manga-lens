@@ -34,7 +34,7 @@ e um visualizador no estilo Picasa. Nada sai da sua máquina além do texto reco
 | 🎬 [Tour](#-tour) | o que se vê na tela |
 | 📚 [Catálogo](#-catálogo) · [Biblioteca local](#biblioteca-local) | de onde vêm as obras |
 | 🔤 [OCR e tradução](#-ocr-e-tradução) · [Motores](#motores-de-tradução) | o coração do app |
-| 🖼️ [Visualizador](#️-visualizador-estilo-picasa) · [Leitor de livro](#leitor-de-livro-epub) | como se lê |
+| 🖼️ [Visualizador](#️-visualizador-estilo-picasa) · [Leitor de livro](#leitor-de-livro) | como se lê |
 | 🔖 [Onde você parou](#-onde-você-parou) | progresso, marcadores, backup |
 | ✅ [Verificação](#-verificação) · [Release](#release-automática) | qualidade e entrega |
 | 🤝 [Contribuindo](#-contribuindo) · [Documentação](#-documentação) | regras e onde está a profundidade |
@@ -47,12 +47,13 @@ e um visualizador no estilo Picasa. Nada sai da sua máquina além do texto reco
 
 | | |
 |---|---|
-| 🔍 **Catálogo multi-provider** | 87 fontes online de mangás e HQs em quatro idiomas, mais a sua pasta — busca em paralelo, resultados intercalados |
+| 🔍 **Catálogo multi-provider** | 89 fontes online de mangás e HQs em quatro idiomas, ~37 mil livros em domínio público (Project Gutenberg), mais a sua pasta — busca em paralelo, resultados intercalados |
 | 📂 **Três abas** | Mangá, HQ e Livro, cada obra classificada pelo formato e pelo `ComicInfo.xml` |
 | 👁️ **OCR na máquina** | detector neural de balões + Tesseract WASM; só o texto reconhecido vai para o LLM |
 | 🎨 **Tradução letreirada** | composta *no lugar* do texto original, na cor do balão e na cor da tinta — não é caixa branca por cima |
 | ⚡ **Capítulo inteiro** | fila em segundo plano com barra de progresso, três páginas em paralelo, seguindo pelos próximos capítulos |
-| 🧠 **Memória da obra** | glossário de nomes com gênero e resumo das páginas anteriores, por obra e idioma |
+| 🧠 **Memória da obra** | glossário de nomes com gênero (editável: o que você corrige fica fixado) e resumo das páginas anteriores, por obra e idioma |
+| 📚 **Leitor de livro** | EPUB, TXT, Markdown, FB2 e PDF de texto, com tradução em prosa, modo bilíngue lado a lado, sumário e papel escuro/sépia/claro |
 | 🖼️ **Visualizador Picasa** | zoom ancorado no cursor, arrasto com inércia, navegador em miniatura |
 | 🔒 **Local por padrão** | progresso no `localStorage`, imagens por proxy assinado em HMAC, backup em `.json` |
 
@@ -66,11 +67,20 @@ e um visualizador no estilo Picasa. Nada sai da sua máquina além do texto reco
 </tr>
 </table>
 
-TODO(screenshot): leitor com a tradução composta dentro dos balões (modo IA ou automático)
+<table>
+<tr>
+<td width="50%"><img src=".github/assets/screenshots/reader-original.png" alt="Página de HQ de teste no leitor, com os balões em inglês" /><br/><b>Original</b> &ndash; a página como veio do arquivo.</td>
+<td width="50%"><img src=".github/assets/screenshots/reader-translated.png" alt="A mesma página com os balões e a legenda em português, na letra e na cor do balão original" /><br/><b>Traduzido</b> &ndash; a fala letreirada dentro do balão; a onomatopeia desenhada fica como arte.</td>
+</tr>
+<tr>
+<td width="50%"><img src=".github/assets/screenshots/books-shelf.png" alt="Aba Livro com títulos do Project Gutenberg em capas tipográficas" /><br/><b>Livros</b> &ndash; acervo em domínio público e a sua pasta, na aba <b>Livro</b>.</td>
+<td width="50%"><img src=".github/assets/screenshots/book-bilingual.png" alt="Leitor de livro em papel sépia com o original à esquerda e a tradução à direita" /><br/><b>Bilíngue</b> &ndash; original e tradução lado a lado, parágrafo a parágrafo.</td>
+</tr>
+</table>
 
 TODO(screenshot): visualizador em modo tira (webtoon) com o navegador em miniatura
 
-<sub>Capturada do app em modo web (`bun run dev`) com a biblioteca local de teste: páginas sintéticas de cor sólida com texto, sem obra real. Fontes online desligadas na captura.</sub>
+<sub>Capturas do app em modo web (`bun run dev`). A primeira usa a biblioteca local de teste, com fontes online desligadas. A HQ das capturas do leitor é sintética (desenhada para o teste, sem obra real) e foi traduzida pelo motor Google; o livro é <i>Dracula</i> (1897), em domínio público, vindo do Project Gutenberg.</sub>
 
 ## 🚀 Rodando
 
@@ -135,7 +145,8 @@ OCR roda na máquina (Tesseract WASM); só o texto reconhecido vai para o LLM.
 | **HQ Now** | GraphQL | HQs em português, busca por título |
 | **ReadAllComics** | HTML | busca de HQs |
 | **Internet Archive** | API oficial | HQ da Golden Age em domínio público — ~2.060 edições de 81 séries |
-| **Biblioteca local** | disco | pastas, `.cbz`/`.zip`, `.cbr`/`.rar`, `.pdf`, `.epub` |
+| **Project Gutenberg** | API oficial (espelho no Internet Archive) | ~37 mil **livros** em domínio público, em EPUB — busca por título ou autor, idioma, ordenação |
+| **Biblioteca local** | disco | pastas, `.cbz`/`.zip`, `.cbr`/`.rar`, `.pdf`, `.epub`, `.txt`, `.md`, `.fb2` |
 
 A busca vai nos providers em paralelo e intercala os resultados; provider que cai
 vira aviso na barra de status, não erro fatal. O que o provider não filtra no
@@ -165,6 +176,15 @@ imagem. Consulte [a configuração estendida](docs/sources.md#mais-sites-madara)
 > em uso por editora viva ("Strange Adventures") arrasta obra protegida. Para
 > ampliar por conta própria: `ARCHIVE_SERIES=Serie Um;Serie Dois`.
 
+> **Livros vêm do espelho do Project Gutenberg no Internet Archive** (coleção
+> `gutenberg`). Diferente da coleção `comics`, ela é fechada: só entra o que o
+> próprio Gutenberg publicou, e ele só publica obra em domínio público nos EUA —
+> por isso não precisa de lista curada. O EPUB é baixado uma vez para
+> `.cache/books` e cortado em capítulos **pelos títulos do texto**, não pelos
+> arquivos do EPUB (que o Gutenberg parte por tamanho: 8 arquivos para os 148
+> capítulos de <i>Dom Casmurro</i>). Literatura adulta do acervo só aparece com
+> a classificação correspondente marcada no filtro.
+
 ### Biblioteca local
 
 Aponte `LOCAL_LIBRARY` para uma ou mais pastas (separadas por `;`). Cada subpasta
@@ -175,8 +195,10 @@ vira uma obra; arquivos e subpastas viram capítulos.
 | pasta de imagens | capítulo único | ordem natural (`2.jpg` antes de `10.webp`) |
 | `.cbz` / `.zip` | capítulo | parser de ZIP próprio, sem dependência externa |
 | `.cbr` / `.rar` | capítulo | aba **HQ** e leitura da esquerda para a direita |
-| `.pdf` | obra na aba **Livro** | página extraída como bitmap e codificada em PNG no servidor, sem canvas nativo |
-| `.epub` | obra na aba **Livro** | abre no [leitor de texto](#leitor-de-livro-epub), com título e autor lidos do OPF |
+| `.pdf` escaneado | obra na aba **Livro** | página extraída como bitmap e codificada em PNG no servidor, sem canvas nativo |
+| `.pdf` de texto | obra na aba **Livro** | sem bitmap para mostrar: abre no [leitor de texto](#leitor-de-livro), 10 páginas por capítulo, com as linhas remontadas em parágrafos |
+| `.epub` | obra na aba **Livro** | abre no [leitor de texto](#leitor-de-livro), com título e autor do OPF e os nomes dos capítulos do sumário (`nav`/NCX) |
+| `.txt` / `.md` / `.fb2` | obra na aba **Livro** | só na raiz da biblioteca (dentro da pasta de uma obra, `leia-me.txt` não vira capítulo); capítulos saem dos títulos do texto — "Capítulo 3", `##`, `<section>` |
 
 Quando o arquivo traz **`ComicInfo.xml`** (o padrão que Calibre, Komga e Kavita
 escrevem), o que ele *declara* vence o palpite pela extensão: série, número, ano,
@@ -200,7 +222,9 @@ todo CBZ para a aba errada.
 
 Balão com um texto usa a máscara da heurística; balão que a heurística fundiu
 com o vizinho é **dividido** pelas caixas do modelo; texto sem balão vira região
-própria. Sem o modelo (offline, ou o toggle **Detector neural** desligado nas
+própria. Cada texto fica com a **menor** região que o contém: painel de fundo
+claro (página colorida, webtoon pastel) também é uma mancha clara, e sem essa
+regra o balão de dentro era repintado com a cor do painel. Sem o modelo (offline, ou o toggle **Detector neural** desligado nas
 opções), a heurística trabalha sozinha.
 
 **2. Reconhecimento** — cada texto é recortado da página pré-processada (2×,
@@ -250,6 +274,12 @@ requisição desperdiçada e uma legenda sem sentido na página. O teto de requi
 simultâneas é **do processo**, não da requisição: com três páginas em paralelo, um
 teto por chamada viraria uma rajada e o Google responderia `429`.
 
+Três guardas valem para todos os motores, porque o erro nasce no OCR: o `|` que
+o Tesseract devolve no lugar do "I" de letra de HQ volta a ser pronome
+(`THEN | WILL GO` → `THEN I WILL GO`); letras soltas de onomatopeia desenhada
+(`W H Oo OSM`) são descartadas como ruído; e, nos motores web, texto que volta
+**igual** (nome próprio, onomatopeia) não é reletrado — a arte original fica na página.
+
 Há ainda **`explicar`** — chat em streaming sobre a cena, com a sinopse e o texto
 já reconhecido como contexto, instruído a não dar spoiler além do ponto atual.
 
@@ -276,6 +306,10 @@ No modo **IA**, as opções do leitor mostram a seção **Contexto da obra**:
 
 - quantos nomes e páginas a memória já tem, e **limpar memória da obra** — um nome
   ou gênero gravado errado se repetiria no resto da obra, então dá para zerar;
+- **editar glossário** — cada termo pode ser corrigido, removido ou criado à mão.
+  Termo que você toca fica **fixado** (🔒): a IA não muda mais a forma nem o
+  gênero, e ele vai primeiro no prompt. É a saída para o erro de OCR que a
+  memória congelava ("OCEMON FOX") sem ter de apagar tudo;
 - **IA vê a página** (desligado por padrão): manda junto a página reduzida com o
   `id` desenhado em cada balão ao **modelo de visão** do provedor. Acerta melhor quem
   fala e o gênero (no paper de referência, xCOMET 0,758 → 0,776 em JA→EN), mas
@@ -285,6 +319,18 @@ A memória é por obra **e** idioma de chegada, local (`.cache/series-memory`), 
 teto de 80 nomes e 60 notas; o prompt usa só as 5 notas mais recentes antes da
 página atual — contexto longo piora a tradução. Só entra no glossário termo que
 aparece no texto da página (o modelo pequeno inventava personagens).
+
+A seção **Estilo da tradução** traz as três decisões em que tradutor e leitor
+mais discordam, e que viram regra do prompt:
+
+| Opção | Valores |
+|---|---|
+| **Tom** | natural (scanlation fluida) · literal (colada no original) · localizada (adapta piada, gíria e referência cultural) |
+| **Honoríficos** | manter (`-san`, `senpai`, `oppa`) · adaptar ao tratamento do idioma de chegada |
+| **Onomatopeias** | traduzir · manter a arte original (o balão volta vazio e nada é repintado) |
+
+Texto **fora de balão** (legenda, placa, onomatopeia — o detector sabe qual é)
+vai marcado ao modelo, para não ser traduzido como fala de personagem.
 
 Cada tradução volta com o eco do começo do original (`src`): quando o modelo pula
 uma fala curta e escorrega as seguintes, o servidor devolve cada fala ao balão
@@ -306,18 +352,32 @@ errado. Resposta cortada no limite de tokens aproveita os pares que fecharam.
 O sentido de leitura segue a obra: HQ ocidental e PDF abrem da esquerda para a
 direita; mangá, da direita para a esquerda.
 
-### Leitor de livro (EPUB)
+### Leitor de livro
 
-EPUB não tem página nem balão, então o OCR não entra. O capítulo chega como
-parágrafos numerados e abre num leitor próprio — coluna de leitura com medida fixa,
-corpo da letra ajustável em `A−`/`A+`, `[` e `]` para trocar de capítulo.
+Livro não tem página nem balão, então o OCR não entra. O capítulo chega como
+parágrafos numerados e abre num leitor próprio — coluna de leitura com medida fixa.
 
-A tradução usa o **mesmo endpoint** do mangá, em lotes de 10 parágrafos, três em
-paralelo, com a mesma barra de progresso. **Clicar num parágrafo volta ao original** —
-o equivalente ao `t` do leitor de páginas.
+| Controle | O que faz |
+|---|---|
+| **sumário** | o capítulo atual na barra é um seletor: troca de capítulo num clique (`[` e `]` no teclado) |
+| **◫ bilíngue** (`B`) | original à esquerda, tradução à direita, parágrafo alinhado com parágrafo; no celular, um em cima do outro |
+| **📖 glossário** (`G`) | o mesmo [glossário editável](#memória-da-obra-e-página-para-o-modelo-de-visão) do leitor de páginas |
+| **⚙ tradução** | motor (Tradutor Web ou IA), idioma de chegada, tom e honoríficos |
+| **papel** / **Aa** / `A−` `A+` | escuro, sépia ou claro · serifada ou sem serifa · corpo da letra |
 
-A ordem de leitura vem do *spine* do OPF, e item marcado `linear="no"` (notas da
-editora, propaganda) fica fora do fio principal.
+A tradução usa o **mesmo endpoint** do mangá, em modo **prosa**: prompt de
+tradutor literário (parágrafo inteiro, voz do narrador, travessão de diálogo em
+português) no lugar do de scanlation, que mandava encurtar para caber no balão.
+Os lotes são cortados por quantidade **e** por tamanho (10 parágrafos ou ~3.600
+letras), três em paralelo, e cada lote leva o fim do trecho anterior como
+contexto. O teto de balão (400 letras) não vale aqui — ele cortava a tradução de
+todo parágrafo comprido; nos motores web o parágrafo longo vai em pedaços, sempre
+em fim de frase. **Clicar num parágrafo volta ao original** — o equivalente ao `t`
+do leitor de páginas. O que já foi traduzido na sessão fica guardado: voltar a um
+capítulo não paga a tradução de novo.
+
+No EPUB a ordem de leitura vem do *spine* do OPF, e item marcado `linear="no"`
+(notas da editora, propaganda) fica fora do fio principal.
 
 ---
 
@@ -418,7 +478,8 @@ bun run typecheck       # tsc --noEmit sobre src, scripts e tests
 bun run secrets         # credenciais e dados pessoais nos arquivos versionados
 bun run secrets:history # o mesmo, em todo blob de todo commit (auditoria)
 bun run test            # bun test: assinatura HMAC, allowlist de host, travessia
-                        # de caminho, CBZ/CBR, EPUB, retry/backoff, tradutores,
+                        # de caminho, CBZ/CBR, EPUB/TXT/FB2/PDF de texto, acervo de
+                        # livros, glossário, prompts, retry/backoff, tradutores,
                         # agregação, versão da release
 ```
 
@@ -435,7 +496,8 @@ segredo escrito no código e caminho pessoal. Placeholder de documentação
 
 ```powershell
 bun run smoke           # API: providers, filtros, ciclo busca→série→páginas→imagem,
-                        # recusa de URL não assinada, tessdata, health da IA
+                        # ciclo busca→livro→parágrafos, recusa de URL não assinada,
+                        # tessdata, health da IA
 bun run smoke:browser   # UI real no chromium: zoom no scroll, arrasto, duplo clique,
                         # navegador em miniatura, OCR de verdade, modo tira, EPUB
 bun run smoke:desktop   # app Tauri compilado, inspecionado por CDP: porta do sidecar,
@@ -555,8 +617,13 @@ bun run scripts/release-notes.ts
 - MangaPill e Weeb Central são HTML: mudança de layout no site quebra o parser
   (o provider cai sozinho, sem derrubar a busca).
 - Capítulo do MangaDex com `pages: 0` é link externo e fica fora da lista.
-- PDF de **texto** (sem bitmap na página) ainda não renderiza no leitor — a rota
-  responde `415` explicando. PDF escaneado funciona.
+- PDF de **texto** abre no leitor de livro em blocos de 10 páginas, não pelos
+  capítulos do documento (o sumário do PDF ainda não é lido). PDF **misto** — texto
+  com páginas escaneadas no meio — é tratado pelo que predomina na amostra.
+- O acervo do Gutenberg é majoritariamente em inglês (~483 títulos em português);
+  título sem EPUB no espelho (~21 mil, só TXT ou áudio) fica fora da busca.
+- Glossário, tom e honoríficos só valem nos motores de IA: Google e MyMemory
+  traduzem frase a frase, sem contexto.
 - `.cb7` (7-Zip) não é lido: as bibliotecas WASM disponíveis têm licença indefinida
   ou são feitas só para browser.
 

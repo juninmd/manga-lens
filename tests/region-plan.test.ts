@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { cropMask, planTargets, type Detection, type HeuristicRegion } from '../src/client/region-plan.ts';
+import { cropMask, mergeOverlaps, planTargets, type Detection, type HeuristicRegion } from '../src/client/region-plan.ts';
 
 const PAGE = { w: 1000, h: 1600 };
 const det = (label: 0 | 1 | 2, x: number, y: number, w: number, h: number, score = 0.9): Detection => ({ label, score, x, y, w, h });
@@ -85,5 +85,47 @@ describe('cropMask', () => {
       mask: { w: 2, h: 2, data: Uint8Array.from([1, 0, 0, 1]) },
     });
     expect(cropMask(r, { x: 100, y: 100, w: 5, h: 5 })).toBeNull();
+  });
+});
+
+describe('balao dentro de painel de fundo claro', () => {
+  // painel pastel (pagina colorida, webtoon): tambem e' uma "mancha clara fechada"
+  const panel = (): HeuristicRegion => ({ ...region(0, 0, 500, 300), bg: 'rgb(207, 214, 223)' });
+  const balloon = (): HeuristicRegion => region(60, 100, 150, 90);
+
+  test('o texto fica com a MENOR regiao que o contem: o balao, nao o painel', () => {
+    // por ordem de chegada o painel ficava com o texto e o balao era repintado de cinza
+    const targets = planTargets([det(1, 160, 240, 200, 80)], [panel(), balloon()], 0.5, PAGE);
+    expect(targets).toHaveLength(1);
+    expect(targets[0]!.bg).toBe('rgb(255, 255, 255)');
+    expect(targets[0]!.block).toEqual({ x: 120, y: 200, w: 300, h: 180 });
+  });
+
+  test('com o detector neural o balao aninhado nao e fundido ao painel', () => {
+    expect(mergeOverlaps([panel(), balloon()], true)).toHaveLength(2);
+    // sem o detector toda regiao e' lida: a fusao antiga continua, senao o painel viraria um segundo OCR
+    const merged = mergeOverlaps([panel(), balloon()], false);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toMatchObject({ x: 0, y: 0, w: 500, h: 300 });
+  });
+
+  test('balao que passa uns pixels da borda do painel continua separado', () => {
+    const poking = region(420, 100, 90, 90); // 10 px para fora do painel
+    expect(mergeOverlaps([panel(), poking], true)).toHaveLength(2);
+  });
+
+  test('dois pedacos do mesmo balao (tamanho parecido) ainda se fundem', () => {
+    const a = region(100, 100, 100, 80);
+    const b = region(110, 110, 100, 80);
+    expect(mergeOverlaps([a, b], true)).toHaveLength(1);
+  });
+
+  test('painel inteiro com uma legenda so nao e repintado para trocar uma palavra', () => {
+    // regiao 12x maior que o texto nao e' o balao dele: o alvo e' recortado em volta do texto
+    const [t] = planTargets([det(2, 100, 100, 120, 40)], [panel()], 0.5, PAGE);
+    expect(t!.free).toBe(false);
+    expect(t!.block.w).toBeLessThan(200);
+    expect(t!.block.h).toBeLessThan(80);
+    expect(t!.bg).toBe('rgb(207, 214, 223)');
   });
 });

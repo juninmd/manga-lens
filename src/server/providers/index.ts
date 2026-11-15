@@ -4,6 +4,7 @@ import { mangapill } from './mangapill.ts';
 import { weebcentral } from './weebcentral.ts';
 import { local } from './local.ts';
 import { archive } from './archive.ts';
+import { gutenberg } from './gutenberg.ts';
 import { readallcomics } from './readallcomics.ts';
 import { createMadaraProvider, madaraSites } from './madara.ts';
 import { createThemesiaProvider } from './themesia.ts';
@@ -24,6 +25,7 @@ export const providers: Provider[] = [
   ...madaraSites().map(createMadaraProvider),
   ...builtinThemesiaSites.map(createThemesiaProvider),
   archive,
+  gutenberg,
   local,
 ];
 

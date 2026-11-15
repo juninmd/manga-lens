@@ -1,5 +1,5 @@
 import { errorStatus, getSeries, humanizeError, type ChapterRef, type SeriesDetail } from './api.ts';
-import { appendAll, el, langLabel, plural, STATUS_LABEL, toast, TYPE_LABEL } from './ui.ts';
+import { appendAll, el, langLabel, plural, STATUS_LABEL, toast, typeCover, TYPE_LABEL } from './ui.ts';
 import {
   getProgress,
   isChapterRead,
@@ -118,7 +118,7 @@ export class SeriesPanel {
       el(
         'div',
         { class: 'ml-series-head' },
-        d.cover ? el('img', { src: d.cover, alt: d.title }) : el('div', { class: 'ml-nocover' }),
+        d.cover ? el('img', { src: d.cover, alt: d.title }) : typeCover(d.title, d.authors?.slice(0, 2).join(', ')),
         el(
           'div',
           {},

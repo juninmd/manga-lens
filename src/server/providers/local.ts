@@ -4,8 +4,9 @@ import { config } from '../config.ts';
 import { readZipEntry, readZipIndex } from '../zip.ts';
 import { readRarEntry, readRarIndex } from '../rar.ts';
 import { COMIC_INFO_RE, parseComicInfo, type ComicInfo } from '../comic-info.ts';
-import { pdfPageCount } from '../pdf.ts';
-import { readEpub, readEpubChapter, type TextBlock } from '../epub.ts';
+import { pdfIsText, pdfPageCount, pdfPageLines } from '../pdf.ts';
+import { epubChapters, readEpub, readEpubChapter, type TextBlock } from '../epub.ts';
+import { chapterBlocks, linesToParagraphs, readTextBook, textFormatOf } from '../text-book.ts';
 import type { ChapterRef, ContentType, PageRef, Provider, SeriesCard, SeriesDetail } from './types.ts';
 
 const IMAGE_RE = /\.(jpe?g|png|webp|gif|bmp|avif)$/i;
@@ -16,6 +17,13 @@ const EPUB_RE = /\.epub$/i;
 const ARCHIVE_RE = /\.(cbz|zip|cbr|rar)$/i;
 /** tudo que e' um capitulo num arquivo so' (compactado ou documento) */
 const FILE_RE = /\.(cbz|zip|cbr|rar|pdf|epub)$/i;
+/**
+ * Livro em texto puro. So' vale na RAIZ da biblioteca: dentro da pasta de uma
+ * obra, `leia-me.txt` e `creditos.md` do scan virariam capitulos do manga.
+ */
+const TEXT_RE = /\.(txt|md|markdown|fb2)$/i;
+/** paginas de PDF de texto por capitulo: o PDF nao tem divisao que o leitor possa usar */
+const PDF_TEXT_PAGES = 10;
 
 export const encodePath = (p: string): string => Buffer.from(p, 'utf8').toString('base64url');
 export const decodePath = (t: string): string => Buffer.from(t, 'base64url').toString('utf8');
@@ -144,8 +152,25 @@ const bookChapterId = (path: string, href: string): string => `${encodePath(path
 export async function localBookBlocks(chapterId: string): Promise<TextBlock[]> {
   const [raw = '', href = ''] = chapterId.split('.');
   const path = assertInsideLibrary(decodePath(raw));
-  if (!EPUB_RE.test(path)) throw new Error('este capitulo nao pertence a um livro');
-  return readEpubChapter(path, decodePath(href));
+  if (EPUB_RE.test(path)) return readEpubChapter(path, decodePath(href));
+  // TXT/MD/FB2 e PDF de texto: a segunda metade e' so' um indice, nunca um caminho
+  const index = Number(decodePath(href));
+  if (!href || !Number.isInteger(index) || index < 0) throw new Error('este capitulo nao pertence a um livro');
+  if (textFormatOf(path)) return chapterBlocks((await readTextBook(path)).chapters[index]);
+  if (PDF_RE.test(path)) return pdfTextBlocks(path, index);
+  throw new Error('este capitulo nao pertence a um livro');
+}
+
+/** Um "capitulo" de PDF de texto: `PDF_TEXT_PAGES` paginas a partir de `first`, ja' em paragrafos. */
+async function pdfTextBlocks(path: string, first: number): Promise<TextBlock[]> {
+  const total = await pdfPageCount(path);
+  const lines: string[] = [];
+  for (let i = first; i < Math.min(total, first + PDF_TEXT_PAGES); i++) {
+    // numero de pagina sozinho na linha e' rodape, nao texto do livro
+    lines.push(...(await pdfPageLines(path, i)).filter((l) => !/^\s*\d{1,4}\s*$/.test(l)));
+  }
+  // paragrafo que atravessa a quebra de pagina continua inteiro: as linhas sao juntadas antes de separar
+  return linesToParagraphs(lines).map((text, id) => ({ id, text }));
 }
 
 async function seriesDirs(): Promise<string[]> {
@@ -154,7 +179,7 @@ async function seriesDirs(): Promise<string[]> {
     const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
     for (const e of entries) {
       if (e.isDirectory()) out.push(join(root, e.name));
-      else if (FILE_RE.test(e.name)) out.push(join(root, e.name));
+      else if (FILE_RE.test(e.name) || TEXT_RE.test(e.name)) out.push(join(root, e.name));
     }
   }
   return out.sort(natural);
@@ -171,7 +196,7 @@ function guessFromName(path: string): { contentType: ContentType; type?: string;
   // abre da esquerda para a direita, que e' o certo para a maioria esmagadora
   if (PDF_RE.test(path)) return { contentType: 'livro', type: 'comic', origin: 'unknown' };
   // EPUB e' texto corrido: nao tem pagina para o OCR, entao o leitor de livro assume
-  if (EPUB_RE.test(path)) return { contentType: 'livro', type: 'book', origin: 'unknown' };
+  if (EPUB_RE.test(path) || TEXT_RE.test(path)) return { contentType: 'livro', type: 'book', origin: 'unknown' };
   return RAR_RE.test(path)
     ? { contentType: 'hq', type: 'comic', origin: 'en' }
     : { contentType: 'manga', origin: 'unknown' };
@@ -199,6 +224,20 @@ async function cardFor(path: string, info?: ComicInfo | null): Promise<SeriesCar
       provider: 'local',
       title: book?.title || basename(path, extname(path)),
       cover: book?.cover ? `/api/local/page?c=${encodePath(path)}&i=0` : undefined,
+      contentType: 'livro',
+      type: 'book',
+      origin: book?.lang ?? 'unknown',
+      tags: [],
+    };
+  }
+  if (TEXT_RE.test(path)) {
+    // so' o FB2 traz titulo dentro do arquivo; TXT e Markdown valem pelo nome
+    const book = /\.fb2$/i.test(path) ? await readTextBook(path).catch(() => null) : null;
+    return {
+      id: encodePath(path),
+      provider: 'local',
+      title: book?.title || basename(path, extname(path)),
+      description: book?.description,
       contentType: 'livro',
       type: 'book',
       origin: book?.lang ?? 'unknown',
@@ -234,7 +273,8 @@ async function cardFor(path: string, info?: ComicInfo | null): Promise<SeriesCar
  */
 async function epubDetail(path: string, id: string): Promise<SeriesDetail> {
   const info = await readEpub(path);
-  const chapters: ChapterRef[] = info.spine.map((ref, i) => ({
+  // sem os arquivos so' de imagem (capa, folha de rosto) e com o titulo do sumario
+  const chapters: ChapterRef[] = (await epubChapters(path, info)).map((ref, i) => ({
     id: bookChapterId(path, ref.href),
     provider: 'local',
     seriesId: id,
@@ -251,9 +291,65 @@ async function epubDetail(path: string, id: string): Promise<SeriesDetail> {
     title: info.title || basename(path, extname(path)),
     authors: info.author ? [info.author] : undefined,
     cover: info.cover ? `/api/local/page?c=${id}&i=0` : undefined,
+    description: info.description,
     contentType: 'livro',
     type: 'book',
     origin: info.lang ?? 'unknown',
+    tags: info.subjects ?? [],
+    chapters,
+    availableLangs: ['local'],
+  };
+}
+
+const textChapter = (path: string, id: string, index: number, title: string): ChapterRef => ({
+  id: `${encodePath(path)}.${encodePath(String(index))}`,
+  provider: 'local',
+  seriesId: id,
+  number: String(index + 1),
+  title,
+  lang: 'local',
+  text: true,
+});
+
+/** TXT, Markdown e FB2: os capitulos saem dos titulos do proprio texto (ou de partes de tamanho fixo). */
+async function textDetail(path: string, id: string): Promise<SeriesDetail> {
+  const book = await readTextBook(path);
+  return {
+    id,
+    provider: 'local',
+    title: book.title || basename(path, extname(path)),
+    authors: book.author ? [book.author] : undefined,
+    description: book.description,
+    contentType: 'livro',
+    type: 'book',
+    origin: book.lang ?? 'unknown',
+    tags: [],
+    chapters: book.chapters.map((c, i) => textChapter(path, id, i, c.title)),
+    availableLangs: ['local'],
+  };
+}
+
+/**
+ * PDF de texto (livro exportado, nao escaneado): nao ha' bitmap para o leitor de
+ * paginas mostrar, entao ele abre no leitor de livro, de `PDF_TEXT_PAGES` em
+ * `PDF_TEXT_PAGES` paginas. `null` = PDF escaneado, que segue no leitor de paginas.
+ */
+async function pdfTextDetail(path: string, id: string): Promise<SeriesDetail | null> {
+  if (!(await pdfIsText(path).catch(() => false))) return null;
+  const total = await pdfPageCount(path);
+  const chapters: ChapterRef[] = [];
+  for (let first = 0; first < total; first += PDF_TEXT_PAGES) {
+    const last = Math.min(total, first + PDF_TEXT_PAGES);
+    const chapter = textChapter(path, id, first, last - first > 1 ? `Paginas ${first + 1}–${last}` : `Pagina ${first + 1}`);
+    chapters.push({ ...chapter, number: String(chapters.length + 1) });
+  }
+  return {
+    id,
+    provider: 'local',
+    title: basename(path, extname(path)),
+    contentType: 'livro',
+    type: 'book',
+    origin: 'unknown',
     tags: [],
     chapters,
     availableLangs: ['local'],
@@ -291,6 +387,11 @@ export const local: Provider = {
   async series(id) {
     const path = assertInsideLibrary(decodePath(id));
     if (EPUB_RE.test(path)) return epubDetail(path, id);
+    if (TEXT_RE.test(path)) return textDetail(path, id);
+    if (PDF_RE.test(path)) {
+      const asText = await pdfTextDetail(path, id);
+      if (asText) return asText;
+    }
     const chapters = FILE_RE.test(path) ? null : await chaptersOf(path);
     // o ComicInfo mora no arquivo do capitulo, nao na pasta da obra
     const infoSource = chapters?.length ? decodePath(chapters[0]!.id) : path;
@@ -308,4 +409,6 @@ export const local: Provider = {
     const out: PageRef[] = names.map((_, i) => ({ url: `/api/local/page?c=${chapterId}&i=${i}` }));
     return out;
   },
+
+  book: localBookBlocks,
 };

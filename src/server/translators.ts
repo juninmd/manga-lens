@@ -182,6 +182,32 @@ async function mapPool<T, R>(items: T[], fn: (item: T) => Promise<R>): Promise<R
   );
 }
 
+const fold = (s: string): string => s.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
+const sameText = (a: string, b: string): boolean => fold(a) === fold(b);
+
+/** Teto por requisicao aos motores web: o texto vai na URL, e paragrafo de livro passa disso. */
+const MAX_REQUEST_CHARS = 1500;
+
+/**
+ * Corta texto longo em pedacos que cabem numa requisicao, sempre em fim de
+ * frase (ou, sem pontuacao, em espaco): cortar no meio da frase faria o motor
+ * traduzir duas metades sem sentido.
+ */
+export function splitForRequest(text: string, max = MAX_REQUEST_CHARS): string[] {
+  if (text.length <= max) return [text];
+  const out: string[] = [];
+  let rest = text;
+  while (rest.length > max) {
+    const window = rest.slice(0, max);
+    const sentence = Math.max(...['. ', '! ', '? ', '… ', '。', '！', '？', '; '].map((mark) => window.lastIndexOf(mark) + mark.trimEnd().length));
+    const cut = sentence > max * 0.4 ? sentence : window.lastIndexOf(' ') > 0 ? window.lastIndexOf(' ') : max;
+    out.push(rest.slice(0, cut).trim());
+    rest = rest.slice(cut).trim();
+  }
+  if (rest) out.push(rest);
+  return out;
+}
+
 /**
  * Tradutores classicos nao sabem ignorar ruido de OCR nem juntar contexto, entao
  * o filtro de lixo e a limpeza acontecem aqui antes de gastar requisicao.
@@ -202,7 +228,13 @@ export async function translateWithEngine(
     // ruido nao gasta requisicao — e tambem nao conta como tentativa
     if (isNoise(text)) return { id: block.id, pt: '', attempted: false, failed: false };
     try {
-      return { id: block.id, pt: await translate(text, source, target), attempted: true, failed: false };
+      // balao cabe numa chamada; paragrafo de livro vai em pedacos, na ordem, e volta colado
+      const parts: string[] = [];
+      for (const piece of splitForRequest(text)) parts.push(await translate(piece, source, target));
+      const pt = parts.join(' ').trim();
+      // o motor devolveu o proprio texto (nome proprio, onomatopeia, lixo de OCR): reletrar o
+      // mesmo conteudo so' trocaria a arte original por uma fonte generica
+      return { id: block.id, pt: sameText(pt, text) ? '' : pt, attempted: true, failed: false };
     } catch (err) {
       console.error(`[traducao/${engine}] bloco ${block.id}: ${(err as Error).message}`);
       lastError = engineErrorMessage(engine, err);
