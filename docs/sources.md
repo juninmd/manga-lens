@@ -1,6 +1,20 @@
-# Fontes de HQs e mangás
+# Fontes de HQs, mangás e livros
 
-Foram adicionadas **82 fontes**: 81 de mangás e uma de HQs (HQ Now, em português). O catálogo padrão tem **88 fontes online** e a biblioteca local. As fontes novas e MangaRead cobrem português, inglês, espanhol e francês.
+Foram adicionadas **82 fontes**: 81 de mangás e uma de HQs (HQ Now, em português). Com a fonte de livros (Project Gutenberg), o catálogo padrão tem **90 fontes online** — 86 de mangá, 3 de HQ e 1 de livros — e a biblioteca local. As fontes novas e MangaRead cobrem português, inglês, espanhol e francês.
+
+## Livros: Project Gutenberg
+
+| Fonte | ID | Idioma | Conteúdo | Adaptador | Resultado pelo app |
+|---|---|---|---|---|---|
+| [Project Gutenberg](https://archive.org/details/gutenberg) (espelho no Internet Archive) | gutenberg | en, pt, es, fr, de, it, nl, fi, ja, zh, la | Livro | API do Archive + EPUB | Leitura validada em 15/11/2026 |
+
+A fonte aparece na aba **Livro**. A busca vai à coleção `gutenberg` do Internet Archive, restrita a itens com EPUB (~37,6 mil de ~56 mil). O livro é baixado uma vez para `CACHE_DIR/books` e servido em parágrafos por `GET /api/book`.
+
+- **Por que o espelho e não gutenberg.org**: na validação, feita de um IP de datacenter, o site respondeu 403 e a API Gutendex não respondeu; o Archive respondeu, guarda os mesmos arquivos e tem busca por título, autor e idioma.
+- **Direitos**: a coleção é fechada — só o que o Project Gutenberg publicou, que é domínio público nos EUA. Um identificador que não pertença à coleção é recusado antes de qualquer download.
+- **Segurança do download**: o redirect de `/download/` é seguido um salto por vez e cada destino tem de ser `archive.org`; resposta que não começa com a assinatura de ZIP não entra no cache.
+- **Classificação**: títulos com assunto erótico (são os mais baixados do espelho) ficam fora da busca, a menos que a classificação adulta esteja marcada no filtro.
+- **Validação**: `SOURCE_SMOKE_IDS=gutenberg bun run smoke:sources` percorre busca → obra → capítulo de texto; `bun run smoke` tem o ciclo com *Dracula* (30 capítulos).
 
 ## Validação real em 30/09/2026
 
