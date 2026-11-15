@@ -500,7 +500,7 @@ batem em provider de verdade: provam a integração, mas dependem de site de
 terceiro no ar, então nunca entram no CI.
 
 ```powershell
-bun run check           # lint + typecheck + segredos + testes (sem rede, ~25s)
+bun run check           # lint + typecheck + segredos + testes (sem rede, ~10s)
 
 bun run lint            # biome: correctness, suspicious, complexity, performance,
                         # security — aviso conta como erro

@@ -429,11 +429,9 @@ export function createOpdsProvider(catalog: OpdsCatalog): OpdsProvider {
       await mkdir(dir, { recursive: true });
       const tmp = `${path}.${process.pid}.tmp`;
       try {
-        await Bun.write(tmp, res);
-        const file = Bun.file(tmp);
-        if (file.size > MAX_DOWNLOAD) throw new Error('arquivo grande demais para baixar');
+        const head = await streamToFile(res, tmp, MAX_DOWNLOAD);
         // pagina de login em HTML com status 200 nao pode virar um CBZ corrompido no cache
-        if (!MAGIC[kind](new Uint8Array(await file.slice(0, 8).arrayBuffer()))) throw new Error(`o catalogo nao devolveu um arquivo ${kind.toUpperCase()} valido`);
+        if (!MAGIC[kind](head)) throw new Error(`o catalogo nao devolveu um arquivo ${kind.toUpperCase()} valido`);
         await rename(tmp, path);
       } finally {
         await rm(tmp, { force: true });
@@ -515,6 +513,36 @@ export function createOpdsProvider(catalog: OpdsCatalog): OpdsProvider {
     archive,
     cover,
   };
+}
+
+/**
+ * Grava o corpo da resposta no disco em blocos, parando no teto de tamanho, e
+ * devolve os primeiros bytes (para conferir o formato). `Bun.write(caminho,
+ * response)` travava para sempre no Bun do CI (1.3) com o corpo que o httpFetch
+ * embrulha — o job inteiro morria no timeout de 10 minutos.
+ */
+export async function streamToFile(res: Response, path: string, max: number): Promise<Uint8Array> {
+  const writer = Bun.file(path).writer();
+  const head: number[] = [];
+  let size = 0;
+  const reader = res.body?.getReader();
+  try {
+    for (;;) {
+      if (!reader) break;
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > max) throw new Error('arquivo grande demais para baixar');
+      for (let i = 0; i < value.length && head.length < 8; i++) head.push(value[i]!);
+      writer.write(value);
+    }
+  } catch (err) {
+    await reader?.cancel().catch(() => undefined);
+    throw err;
+  } finally {
+    await writer.end();
+  }
+  return Uint8Array.from(head);
 }
 
 /** Mantem o cache de arquivos baixados com no maximo `MAX_CACHED` itens, apagando os mais antigos. */
