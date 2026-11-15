@@ -4,9 +4,9 @@ import { config } from '../config.ts';
 import { readZipEntry, readZipIndex } from '../zip.ts';
 import { readRarEntry, readRarIndex } from '../rar.ts';
 import { COMIC_INFO_RE, parseComicInfo, type ComicInfo } from '../comic-info.ts';
-import { pdfIsText, pdfPageCount, pdfPageLines } from '../pdf.ts';
+import { pdfInfo, pdfIsText, pdfOutline, pdfPageCount, pdfPageLines } from '../pdf.ts';
 import { epubChapters, readEpub, readEpubChapter, type TextBlock } from '../epub.ts';
-import { chapterBlocks, linesToParagraphs, readTextBook, textFormatOf } from '../text-book.ts';
+import { chapterBlocks, linesToParagraphs, parsePdfRange, pdfSections, readTextBook, textFormatOf } from '../text-book.ts';
 import type { ChapterRef, ContentType, PageRef, Provider, SeriesCard, SeriesDetail } from './types.ts';
 
 const IMAGE_RE = /\.(jpe?g|png|webp|gif|bmp|avif)$/i;
@@ -153,19 +153,23 @@ export async function localBookBlocks(chapterId: string): Promise<TextBlock[]> {
   const [raw = '', href = ''] = chapterId.split('.');
   const path = assertInsideLibrary(decodePath(raw));
   if (EPUB_RE.test(path)) return readEpubChapter(path, decodePath(href));
-  // TXT/MD/FB2 e PDF de texto: a segunda metade e' so' um indice, nunca um caminho
-  const index = Number(decodePath(href));
-  if (!href || !Number.isInteger(index) || index < 0) throw new Error('este capitulo nao pertence a um livro');
+  // TXT/MD/FB2 e PDF de texto: a segunda metade e' so' um indice (ou faixa de paginas), nunca um caminho
+  const token = href ? decodePath(href) : '';
+  if (PDF_RE.test(path)) {
+    const range = parsePdfRange(token, await pdfPageCount(path), PDF_TEXT_PAGES);
+    if (!range) throw new Error('este capitulo nao pertence a um livro');
+    return pdfTextBlocks(path, range.first, range.end);
+  }
+  const index = Number(token);
+  if (!token || !Number.isInteger(index) || index < 0) throw new Error('este capitulo nao pertence a um livro');
   if (textFormatOf(path)) return chapterBlocks((await readTextBook(path)).chapters[index]);
-  if (PDF_RE.test(path)) return pdfTextBlocks(path, index);
   throw new Error('este capitulo nao pertence a um livro');
 }
 
-/** Um "capitulo" de PDF de texto: `PDF_TEXT_PAGES` paginas a partir de `first`, ja' em paragrafos. */
-async function pdfTextBlocks(path: string, first: number): Promise<TextBlock[]> {
-  const total = await pdfPageCount(path);
+/** Um "capitulo" de PDF de texto: as paginas `[first, end)`, ja' em paragrafos. */
+async function pdfTextBlocks(path: string, first: number, end: number): Promise<TextBlock[]> {
   const lines: string[] = [];
-  for (let i = first; i < Math.min(total, first + PDF_TEXT_PAGES); i++) {
+  for (let i = first; i < end; i++) {
     // numero de pagina sozinho na linha e' rodape, nao texto do livro
     lines.push(...(await pdfPageLines(path, i)).filter((l) => !/^\s*\d{1,4}\s*$/.test(l)));
   }
@@ -337,19 +341,26 @@ async function textDetail(path: string, id: string): Promise<SeriesDetail> {
 async function pdfTextDetail(path: string, id: string): Promise<SeriesDetail | null> {
   if (!(await pdfIsText(path).catch(() => false))) return null;
   const total = await pdfPageCount(path);
-  const chapters: ChapterRef[] = [];
-  for (let first = 0; first < total; first += PDF_TEXT_PAGES) {
-    const last = Math.min(total, first + PDF_TEXT_PAGES);
-    const chapter = textChapter(path, id, first, last - first > 1 ? `Paginas ${first + 1}–${last}` : `Pagina ${first + 1}`);
-    chapters.push({ ...chapter, number: String(chapters.length + 1) });
-  }
+  // o sumario (marcadores) do PDF vira a lista de capitulos; sem ele, blocos de paginas
+  const sections = pdfSections(await pdfOutline(path), total, PDF_TEXT_PAGES);
+  const chapters: ChapterRef[] = sections.map((sec, i) => ({
+    id: `${encodePath(path)}.${encodePath(`${sec.first}-${sec.end}`)}`,
+    provider: 'local',
+    seriesId: id,
+    number: String(i + 1),
+    title: sec.title,
+    lang: 'local',
+    text: true,
+  }));
+  const info = await pdfInfo(path);
   return {
     id,
     provider: 'local',
-    title: basename(path, extname(path)),
+    title: info.title || basename(path, extname(path)),
+    authors: info.author ? [info.author] : undefined,
     contentType: 'livro',
     type: 'book',
-    origin: 'unknown',
+    origin: info.lang?.split('-')[0] ?? 'unknown',
     tags: [],
     chapters,
     availableLangs: ['local'],
@@ -360,6 +371,7 @@ export const local: Provider = {
   id: 'local',
   name: 'Biblioteca local',
   kind: 'local',
+  mixed: true,
   // padrao: pastas/CBZ locais sao mangá/HQ por convenção do app; itens
   // .epub/.pdf sobrescrevem para 'livro' no SeriesCard (ver passo 5 do plano)
   contentType: 'manga',

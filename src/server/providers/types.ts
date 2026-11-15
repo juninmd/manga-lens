@@ -90,6 +90,8 @@ export interface Provider {
   kind: 'online' | 'local';
   /** categoria de conteúdo servida por este provider — define em que aba do catálogo ele aparece */
   contentType: ContentType;
+  /** acervo misto (biblioteca local, catalogo OPDS): aparece em toda aba e cada obra decide a sua */
+  mixed?: boolean;
   /** filtros que este provider realmente aplica no upstream */
   supports: Array<keyof SearchFilters>;
   languages?: string[];

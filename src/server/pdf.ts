@@ -35,9 +35,19 @@ interface PdfPage {
   commonObjs?: PdfObjs;
 }
 
+interface OutlineItem {
+  title?: string;
+  dest?: string | unknown[] | null;
+  items?: OutlineItem[];
+}
+
 interface Doc {
   numPages: number;
   getPage(n: number): Promise<PdfPage>;
+  getOutline(): Promise<OutlineItem[] | null>;
+  getDestination(name: string): Promise<unknown[] | null>;
+  getPageIndex(ref: unknown): Promise<number>;
+  getMetadata(): Promise<{ info?: { Title?: unknown; Author?: unknown; Language?: unknown } }>;
 }
 
 /**
@@ -177,3 +187,47 @@ export async function pdfIsText(path: string): Promise<boolean> {
   }
   return textual * 2 > sample.length;
 }
+
+/**
+ * Sumario do PDF (marcadores) como `{titulo, pagina}`, na ordem do documento. So'
+ * o primeiro nivel — e, quando ele e' um item so' (o titulo do livro), o nivel de
+ * baixo. Destino que nao resolve para uma pagina e' ignorado: sumario quebrado nao
+ * pode impedir o livro de abrir.
+ */
+export async function pdfOutline(path: string): Promise<{ title: string; page: number }[]> {
+  const doc = await document(path);
+  let items = (await doc.getOutline().catch(() => null)) ?? [];
+  if (items.length === 1 && items[0]?.items?.length) items = items[0].items;
+  const out: { title: string; page: number }[] = [];
+  for (const item of items.slice(0, 500)) {
+    try {
+      const dest = typeof item.dest === 'string' ? await doc.getDestination(item.dest) : item.dest;
+      if (!Array.isArray(dest) || dest[0] === undefined) continue;
+      // destino por numero de pagina direto (raro) ou por referencia ao objeto da pagina (o comum)
+      const page = typeof dest[0] === 'number' ? dest[0] : await doc.getPageIndex(dest[0]);
+      const title = (item.title ?? '').replace(/\s+/g, ' ').trim();
+      if (title && Number.isInteger(page)) out.push({ title, page });
+    } catch {
+      /* marcador com destino invalido: fica de fora */
+    }
+  }
+  return out;
+}
+
+/** Titulo, autor e idioma que o PDF declara nos metadados, quando declara. */
+export async function pdfInfo(path: string): Promise<{ title?: string; author?: string; lang?: string }> {
+  const { info } = await (await document(path)).getMetadata().catch(() => ({ info: undefined }));
+  const text = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.replace(/\s+/g, ' ').trim().slice(0, 200) : undefined);
+  const title = text(info?.Title);
+  return { title: title && !junkTitle(title) ? title : undefined, author: text(info?.Author), lang: text(info?.Language)?.toLowerCase() };
+}
+
+/**
+ * Titulo que o programa que gerou o PDF carimbou, nao o do livro: "about:blank"
+ * (navegador), "Microsoft Word - cap1.docx", "Untitled". Com ele o nome do
+ * arquivo — que quem guardou o PDF escolheu — e' bem melhor.
+ */
+export const junkTitle = (title: string): boolean =>
+  /^(about:blank|untitled\d*|sem t[ií]tulo|document\d*|documento\d*|title|titulo|título)$/i.test(title) ||
+  /^microsoft (word|powerpoint|excel)\b/i.test(title) ||
+  /\.(docx?|odt|rtf|pdf|indd|tex|pages|html?)$/i.test(title);

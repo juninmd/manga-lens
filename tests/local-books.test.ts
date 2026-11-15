@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { config } from '../src/server/config.ts';
 import { encodePath, local, localBookBlocks } from '../src/server/providers/local.ts';
-import { pdfIsText, pdfPageCount } from '../src/server/pdf.ts';
+import { junkTitle, pdfIsText, pdfPageCount } from '../src/server/pdf.ts';
 
 const box = await mkdtemp(join(tmpdir(), 'manga-lens-books-'));
 const root = join(box, 'biblioteca');
@@ -13,6 +13,7 @@ const md = join(root, 'Caderno.md');
 const fb2 = join(root, 'conto.fb2');
 const textPdf = join(root, 'Livro de Texto.pdf');
 const scanPdf = join(root, 'Livro Escaneado.pdf');
+const outlinePdf = join(root, 'Livro Com Sumario.pdf');
 const saved = [...config.localRoots];
 
 beforeAll(async () => {
@@ -26,6 +27,7 @@ beforeAll(async () => {
   );
   await copyFile(join(import.meta.dir, 'fixtures', 'livro-texto.pdf'), textPdf);
   await copyFile(join(import.meta.dir, 'fixtures', 'livro.pdf'), scanPdf);
+  await copyFile(join(import.meta.dir, 'fixtures', 'livro-sumario.pdf'), outlinePdf);
   // dentro da pasta de uma obra, TXT e' leia-me do scan, nao livro
   await writeFile(join(root, 'Manga Com Leiame', '001.png'), 'x');
   await writeFile(join(root, 'Manga Com Leiame', 'leiame.txt'), 'creditos do scan');
@@ -41,7 +43,7 @@ describe('livro em texto puro na biblioteca local', () => {
   test('TXT, Markdown e FB2 na raiz aparecem na aba Livro', async () => {
     const { items } = await local.search({ contentType: 'livro' });
     const titles = items.map((i) => i.title).sort();
-    expect(titles).toEqual(['Caderno', 'Livro Escaneado', 'Livro de Texto', 'O Conto', 'O Farol']);
+    expect(titles).toEqual(['Caderno', 'Livro Com Sumario', 'Livro Escaneado', 'Livro de Texto', 'O Conto', 'O Farol']);
     expect(items.every((i) => i.contentType === 'livro')).toBe(true);
     // FB2 traz o titulo dentro do arquivo; o nome do arquivo ("conto") e' so' o slug
     expect(items.find((i) => i.title === 'O Conto')?.origin).toBe('pt');
@@ -127,5 +129,36 @@ describe('PDF de texto', () => {
     const detail = await local.series(encodePath(scanPdf));
     expect(detail.type).toBe('comic');
     expect(detail.chapters[0]!.text).toBeUndefined();
+  });
+});
+
+describe('PDF com sumario', () => {
+  test('os marcadores do PDF viram os capitulos, cada um com as suas paginas', async () => {
+    const detail = await local.series(encodePath(outlinePdf));
+    expect(detail.chapters.map((c) => c.title)).toEqual(['Parte 1', 'Parte 2', 'Parte 3']);
+    // o PDF de teste foi gerado pelo navegador e carimba "about:blank" como titulo: vale o nome do arquivo
+    expect(detail.title).toBe('Livro Com Sumario');
+    const blocks = await localBookBlocks(detail.chapters[1]!.id);
+    const texts = blocks.map((b) => b.text);
+    expect(texts[0]).toBe('Parte 2');
+    expect(texts).toContain('Fim da pagina 2.');
+    // so' a pagina do capitulo: nada da pagina seguinte
+    expect(texts.join(' ')).not.toContain('pagina 3');
+  });
+
+  test('faixa de paginas forjada no id e recusada', async () => {
+    const tok = (range: string) => `${encodePath(outlinePdf)}.${encodePath(range)}`;
+    expect(localBookBlocks(tok('0-999999'))).rejects.toThrow('nao pertence a um livro');
+    expect(localBookBlocks(tok('2-1'))).rejects.toThrow('nao pertence a um livro');
+    expect(localBookBlocks(tok('../x'))).rejects.toThrow('nao pertence a um livro');
+    // o formato antigo (so' a pagina inicial) continua abrindo
+    expect((await localBookBlocks(tok('2'))).map((b) => b.text)).toContain('Fim da pagina 3.');
+  });
+});
+
+describe('titulo carimbado pelo programa que gerou o PDF', () => {
+  test('lixo e descartado; titulo de verdade passa', () => {
+    for (const t of ['about:blank', 'Untitled', 'Microsoft Word - cap1.docx', 'relatorio final.pdf', 'Documento1']) expect(junkTitle(t)).toBe(true);
+    for (const t of ['Dom Casmurro', 'O Guarani', 'Manual do Farol: Volume 2']) expect(junkTitle(t)).toBe(false);
   });
 });

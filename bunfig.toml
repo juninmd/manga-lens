@@ -1,0 +1,3 @@
+[test]
+# o recuo entre tentativas e' de producao (400 ms, 800 ms...): nos testes so' alonga a espera
+preload = ["./tests/setup.ts"]

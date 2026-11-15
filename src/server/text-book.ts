@@ -272,3 +272,59 @@ export function linesToParagraphs(lines: string[]): string[] {
   if (current) out.push(current);
   return out;
 }
+
+export interface PdfSection {
+  title: string;
+  /** primeira pagina (base 0) */
+  first: number;
+  /** pagina seguinte a ultima (exclusivo) */
+  end: number;
+}
+
+/**
+ * Capitulos de um PDF de texto. Com sumario de verdade (2+ marcadores), cada
+ * marcador vai ate' o seguinte; o que vem antes do primeiro vira "Inicio", e
+ * secao maior que `maxPages` e' fatiada (um capitulo de 200 paginas travava o
+ * leitor e mandava tudo de uma vez ao tradutor). Sem sumario, blocos de `chunk` paginas.
+ */
+export function pdfSections(outline: { title: string; page: number }[], total: number, chunk = 10, maxPages = 30): PdfSection[] {
+  const seen = new Set<number>();
+  const marks = outline
+    .filter((o) => Number.isInteger(o.page) && o.page >= 0 && o.page < total && o.title.trim())
+    .sort((a, b) => a.page - b.page)
+    // dois marcadores na mesma pagina: vale o primeiro, senao um dos dois seria capitulo vazio
+    .filter((o) => !seen.has(o.page) && seen.add(o.page));
+  const blocks = (title: (first: number, end: number) => string, first: number, end: number, size: number): PdfSection[] => {
+    const out: PdfSection[] = [];
+    for (let at = first; at < end; at += size) out.push({ title: title(at, Math.min(end, at + size)), first: at, end: Math.min(end, at + size) });
+    return out;
+  };
+  const pages = (first: number, end: number): string => (end - first > 1 ? `Paginas ${first + 1}–${end}` : `Pagina ${first + 1}`);
+  if (marks.length < 2) return blocks(pages, 0, total, chunk);
+
+  const out: PdfSection[] = [];
+  if (marks[0]!.page > 0) out.push({ title: 'Inicio', first: 0, end: marks[0]!.page });
+  marks.forEach((mark, i) => {
+    const end = marks[i + 1]?.page ?? total;
+    const title = mark.title.slice(0, MAX_TITLE);
+    if (end - mark.page <= maxPages) {
+      out.push({ title, first: mark.page, end });
+      return;
+    }
+    const parts = Math.ceil((end - mark.page) / maxPages);
+    let n = 0;
+    out.push(...blocks(() => `${title} (${++n}/${parts})`, mark.page, end, maxPages));
+  });
+  return out;
+}
+
+/** `first-end` no id do capitulo; o formato antigo (so' a pagina inicial) continua valendo, com `chunk` paginas. */
+export function parsePdfRange(token: string, total: number, chunk = 10): { first: number; end: number } | null {
+  const m = /^(\d{1,6})(?:-(\d{1,6}))?$/.exec(token);
+  if (!m) return null;
+  const first = Number(m[1]);
+  const end = m[2] === undefined ? first + chunk : Number(m[2]);
+  // teto: id forjado com "0-999999" nao pode mandar extrair o PDF inteiro de uma vez
+  if (first >= total || end <= first || end - first > 60) return null;
+  return { first, end: Math.min(end, total) };
+}

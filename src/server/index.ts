@@ -6,7 +6,8 @@ import { config, getProviderConfig, hostAllowed, normalizeProvider, saveAiConfig
 import { normalizeProviderImage } from './provider-image.ts';
 import { signUrl, verifyUrl } from './sign.ts';
 import { HttpError, httpFetch } from './http.ts';
-import { enabledProviders, getProvider, searchAll } from './providers/index.ts';
+import { enabledProviders, getProvider, providers, searchAll } from './providers/index.ts';
+import type { OpdsProvider } from './providers/opds.ts';
 import type { SearchFilters, SeriesCard } from './providers/types.ts';
 import { assertInsideLibrary, localBookBlocks, localPagePaths } from './providers/local.ts';
 import { readZipEntry, readZipIndex } from './zip.ts';
@@ -118,6 +119,7 @@ app.get('/api/providers', (c) => {
       name: p.name,
       kind: p.kind,
       contentType: p.contentType,
+      ...(p.mixed ? { mixed: true } : {}),
       supports: p.supports,
       languages: p.languages ?? [],
     })),
@@ -328,6 +330,58 @@ app.get('/api/local/page', async (c) => {
   if (!entry) return c.text('pagina inexistente no CBZ', 404);
   const buf = await readZipEntry(base, entry);
   return new Response(new Uint8Array(buf), { headers: imageHeaders });
+});
+
+/** Provider OPDS pelo id: rota de pagina/capa nao aceita outro tipo de provider. */
+function opdsProvider(id: string): OpdsProvider | null {
+  const p = providers.find((x) => x.id === id) as OpdsProvider | undefined;
+  return p && typeof p.archive === 'function' ? p : null;
+}
+
+/**
+ * Pagina de uma edicao baixada de um catalogo OPDS. Sai do arquivo no cache, como
+ * a biblioteca local — o proxy de imagem nao serve aqui: o servidor do catalogo
+ * costuma estar em http na rede local e pede credencial em toda requisicao.
+ */
+app.get('/api/opds/page', async (c) => {
+  const provider = opdsProvider(c.req.query('p') ?? '');
+  if (!provider) return c.text('catalogo desconhecido', 404);
+  const index = Number(c.req.query('i') ?? '0');
+  let located: Awaited<ReturnType<OpdsProvider['archive']>>;
+  try {
+    located = await provider.archive(c.req.query('c') ?? '');
+  } catch (err) {
+    return c.text(`edicao indisponivel: ${(err as Error).message}`, 422);
+  }
+  const name = located.names[index];
+  if (!Number.isInteger(index) || !name) return c.text('pagina inexistente', 404);
+  const headers = { 'Content-Type': MIME[extname(name).toLowerCase()] ?? 'application/octet-stream', 'Cache-Control': 'public, max-age=3600', 'Cross-Origin-Resource-Policy': 'cross-origin' };
+  try {
+    if (located.kind === 'pdf') {
+      const png = await pdfPageImage(located.path, index);
+      return png ? new Response(png, { headers }) : c.text('esta pagina do PDF e texto, nao imagem', 415);
+    }
+    if (located.kind === 'cbr') return new Response(await readRarEntry(located.path, name), { headers });
+    const entry = (await readZipIndex(located.path)).find((e) => e.name === name);
+    if (!entry) return c.text('pagina inexistente', 404);
+    return new Response(new Uint8Array(await readZipEntry(located.path, entry)), { headers });
+  } catch (err) {
+    return c.text(`pagina indisponivel: ${(err as Error).message}`, 422);
+  }
+});
+
+/** Capa de uma obra do catalogo OPDS, buscada com a credencial dele (o <img> do app nao a tem). */
+app.get('/api/opds/cover', async (c) => {
+  const provider = opdsProvider(c.req.query('p') ?? '');
+  if (!provider) return c.text('catalogo desconhecido', 404);
+  try {
+    const res = await provider.cover(Buffer.from(c.req.query('u') ?? '', 'base64url').toString('utf8'));
+    return new Response(res.body, {
+      headers: { 'Content-Type': res.headers.get('content-type') ?? 'image/jpeg', 'Cache-Control': 'public, max-age=86400', 'Cross-Origin-Resource-Policy': 'cross-origin' },
+    });
+  } catch (err) {
+    return c.text((err as Error).message, 502);
+  }
 });
 
 /** Modelos do Tesseract proxiados e cacheados em disco: primeira pagina paga, o resto e' local. */

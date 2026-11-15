@@ -16,6 +16,16 @@ A fonte aparece na aba **Livro**. A busca vai à coleção `gutenberg` do Intern
 - **Classificação**: títulos com assunto erótico (são os mais baixados do espelho) ficam fora da busca, a menos que a classificação adulta esteja marcada no filtro.
 - **Validação**: `SOURCE_SMOKE_IDS=gutenberg bun run smoke:sources` percorre busca → obra → capítulo de texto; `bun run smoke` tem o ciclo com *Dracula* (30 capítulos).
 
+## Catálogos OPDS (Komga, Kavita, Calibre)
+
+Cada entrada de `OPDS_CATALOGS` vira uma fonte `opds-<id>`, presente em todas as abas (cada obra vai para a aba do seu formato: EPUB em **Livro**, HQ no tipo do catálogo). Formato e regras de segurança no [README](../README.md#catálogo-opds-komga-kavita-calibre).
+
+| Servidor | Feed raiz | Validação |
+|---|---|---|
+| Komga | `/opds/v1.2/catalog` | servidor OPDS local no formato do Komga (Basic auth, OpenSearch, séries paginadas, CBZ e EPUB) em 15/11/2026 |
+| Kavita | `/api/opds/<chave>` | não testado contra um servidor real |
+| Calibre / Calibre-Web | `/opds` | não testado contra um servidor real |
+
 ## Validação real em 30/09/2026
 
 **79 das 81 fontes novas passaram** por busca, detalhes da obra, capítulo e imagens via proxy assinado do app. As páginas inicial, intermediária e final do capítulo foram baixadas, além da capa quando disponível. O teste usa uma obra legível por fonte; não comprova todo o acervo. [Resultados com horários e amostras](sources-validation.json).

@@ -146,6 +146,7 @@ OCR roda na máquina (Tesseract WASM); só o texto reconhecido vai para o LLM.
 | **ReadAllComics** | HTML | busca de HQs |
 | **Internet Archive** | API oficial | HQ da Golden Age em domínio público — ~2.060 edições de 81 séries |
 | **Project Gutenberg** | API oficial (espelho no Internet Archive) | ~37 mil **livros** em domínio público, em EPUB — busca por título ou autor, idioma, ordenação |
+| **Catálogo OPDS** | OPDS 1.x | o seu Komga, Kavita, Calibre/Calibre-Web ou qualquer biblioteca OPDS — busca, séries, HQ em CBZ/CBR/PDF e livro em EPUB |
 | **Biblioteca local** | disco | pastas, `.cbz`/`.zip`, `.cbr`/`.rar`, `.pdf`, `.epub`, `.txt`, `.md`, `.fb2` |
 
 A busca vai nos providers em paralelo e intercala os resultados; provider que cai
@@ -163,6 +164,29 @@ MADARA_SITES=meusite|Meu Site|https://exemplo.org|pt-br;outro|Outro|https://outr
 
 Cada site declarado vira um provider próprio, com o host já liberado no proxy de
 imagem. Consulte [a configuração estendida](docs/sources.md#mais-sites-madara) para caminhos próprios e CDNs.
+
+### Catálogo OPDS (Komga, Kavita, Calibre)
+
+O servidor de biblioteca que você já usa entra como fonte, em todas as abas:
+
+```
+OPDS_CATALOGS=komga|Minha Komga|http://192.168.0.10:25600/opds/v1.2/catalog|usuario:senha|hq|en
+```
+
+Campos: `id|nome|URL do feed|usuario:senha|tipo|idioma` — credencial, tipo
+(`manga`, `hq`, `livro`) e idioma dos scans são opcionais; vários catálogos vão
+separados por `;`. Sem busca a aba abre a estante de **recentes** do catálogo; a
+busca usa o OpenSearch dele. Série vira obra com uma edição por capítulo; HQ em
+CBZ/CBR/PDF é baixada uma vez para `.cache/opds` (até 30 arquivos) e lida como a
+biblioteca local; EPUB abre no leitor de livro. O **idioma** escolhe o modelo do
+OCR — o OPDS quase nunca informa, e sem ele o scan seria lido como japonês
+(catálogo de `hq` assume inglês).
+
+> **Todo link do feed tem de ficar no servidor do catálogo**, inclusive a cada
+> salto de redirect: a credencial vai em toda requisição, e um feed adulterado
+> apontando para outro host a levaria junto. Capa e página saem por
+> `/api/opds/cover` e `/api/opds/page`, porque o servidor costuma estar em `http`
+> na rede local e o proxy de imagem só aceita `https`.
 
 > **MangaRead bloqueia por volume.** Depois de algumas dezenas de requisições ele
 > passa a responder **403** para o IP, e header de browser não contorna. Por isso
@@ -196,7 +220,7 @@ vira uma obra; arquivos e subpastas viram capítulos.
 | `.cbz` / `.zip` | capítulo | parser de ZIP próprio, sem dependência externa |
 | `.cbr` / `.rar` | capítulo | aba **HQ** e leitura da esquerda para a direita |
 | `.pdf` escaneado | obra na aba **Livro** | página extraída como bitmap e codificada em PNG no servidor, sem canvas nativo |
-| `.pdf` de texto | obra na aba **Livro** | sem bitmap para mostrar: abre no [leitor de texto](#leitor-de-livro), 10 páginas por capítulo, com as linhas remontadas em parágrafos |
+| `.pdf` de texto | obra na aba **Livro** | sem bitmap para mostrar: abre no [leitor de texto](#leitor-de-livro); o **sumário (marcadores) do PDF vira a lista de capítulos** — sem sumário, 10 páginas por capítulo — com as linhas remontadas em parágrafos |
 | `.epub` | obra na aba **Livro** | abre no [leitor de texto](#leitor-de-livro), com título e autor do OPF e os nomes dos capítulos do sumário (`nav`/NCX) |
 | `.txt` / `.md` / `.fb2` | obra na aba **Livro** | só na raiz da biblioteca (dentro da pasta de uma obra, `leia-me.txt` não vira capítulo); capítulos saem dos títulos do texto — "Capítulo 3", `##`, `<section>` |
 
@@ -332,6 +356,12 @@ mais discordam, e que viram regra do prompt:
 Texto **fora de balão** (legenda, placa, onomatopeia — o detector sabe qual é)
 vai marcado ao modelo, para não ser traduzido como fala de personagem.
 
+**Corrigir um balão à mão** — clique no balão (toque, no celular) para fixar o
+original e use **✎ editar tradução**. A correção fica guardada no aparelho, por
+obra, capítulo, página e idioma, e **vence a tradução automática** sempre que a
+página for traduzida de novo; texto vazio deixa a arte original naquele balão.
+**desfazer correção** volta ao automático.
+
 Cada tradução volta com o eco do começo do original (`src`): quando o modelo pula
 uma fala curta e escorrega as seguintes, o servidor devolve cada fala ao balão
 que o eco identifica — balão vazio (refeito com **R**) em vez de fala no balão
@@ -453,6 +483,7 @@ de `src/server/config.ts` e dos providers.
 | `CACHE_DIR` | cache de páginas, memória da obra e modelos | padrão `.cache` | `CACHE_DIR=.cache` |
 | `MADARA_SITES` | sites Madara extras, no formato `nome\|título\|url\|idioma` | padrão vazio | `MADARA_SITES=meusite\|Meu Site\|https://exemplo.org\|pt-br` |
 | `ARCHIVE_SERIES` | séries extras do Internet Archive, separadas por `;` | padrão vazio | `ARCHIVE_SERIES=Serie Um;Serie Dois` |
+| `OPDS_CATALOGS` | [catálogos OPDS](#catálogo-opds-komga-kavita-calibre), no formato `id\|nome\|url\|usuario:senha\|tipo\|idioma` | padrão vazio | `OPDS_CATALOGS=komga\|Komga\|http://nas:25600/opds/v1.2/catalog\|eu:senha\|hq` |
 | `AI_PROVIDER` | provedor de IA: `ollama`, `openrouter` ou `openaicompatible` | padrão `ollama` | `AI_PROVIDER=openrouter` |
 | `AI_MAX_TOKENS` | teto de tokens da resposta do LLM | padrão `1200` | `AI_MAX_TOKENS=1200` |
 | `AI_TIMEOUT_MS` | tempo máximo de uma chamada ao LLM | padrão `120000` | `AI_TIMEOUT_MS=120000` |
@@ -469,7 +500,7 @@ batem em provider de verdade: provam a integração, mas dependem de site de
 terceiro no ar, então nunca entram no CI.
 
 ```powershell
-bun run check           # lint + typecheck + segredos + testes (sem rede, ~25s)
+bun run check           # lint + typecheck + segredos + testes (sem rede, ~10s)
 
 bun run lint            # biome: correctness, suspicious, complexity, performance,
                         # security — aviso conta como erro
@@ -617,9 +648,10 @@ bun run scripts/release-notes.ts
 - MangaPill e Weeb Central são HTML: mudança de layout no site quebra o parser
   (o provider cai sozinho, sem derrubar a busca).
 - Capítulo do MangaDex com `pages: 0` é link externo e fica fora da lista.
-- PDF de **texto** abre no leitor de livro em blocos de 10 páginas, não pelos
-  capítulos do documento (o sumário do PDF ainda não é lido). PDF **misto** — texto
+- PDF de **texto** sem sumário abre em blocos de 10 páginas. PDF **misto** — texto
   com páginas escaneadas no meio — é tratado pelo que predomina na amostra.
+- Série OPDS com volumes em EPUB abre cada volume inteiro como um capítulo (o EPUB
+  avulso, buscado direto, abre capítulo a capítulo). OPDS 2.0 (JSON) não é lido.
 - O acervo do Gutenberg é majoritariamente em inglês (~483 títulos em português);
   título sem EPUB no espelho (~21 mil, só TXT ou áudio) fica fora da busca.
 - Glossário, tom e honoríficos só valem nos motores de IA: Google e MyMemory

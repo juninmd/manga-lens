@@ -2453,3 +2453,31 @@ body.ml-v2 .ml-book[data-theme='light'] .ml-book-top {
 .ml-book-top .ml-top-right {
   flex-wrap: wrap;
 }
+
+/* fixado (clique no balao) o tooltip recebe clique: editar a traducao, fechar */
+.ml-balloon-tooltip.is-pinned {
+  pointer-events: auto;
+}
+.ml-tooltip-edit {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+.ml-tooltip-edit > .ml-btn {
+  justify-self: start;
+}
+.ml-tooltip-textarea {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  font: inherit;
+}
+.ml-tooltip-hint {
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+.ml-tooltip-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}

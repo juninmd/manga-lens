@@ -166,6 +166,16 @@ function wrapResponseBody(
   });
 }
 
+/**
+ * Base do recuo entre tentativas (400 ms, 800 ms, 1,6 s...). Lida a cada chamada
+ * para os testes poderem zerar: eles exercitam dezenas de 429/5xx e passavam a
+ * maior parte do tempo dormindo nesse recuo, sem testar nada a mais com isso.
+ */
+const backoffMs = (attempt: number): number => {
+  const base = Number(process.env['HTTP_BACKOFF_MS'] ?? 400);
+  return (Number.isFinite(base) && base >= 0 ? base : 400) * 2 ** attempt;
+};
+
 /** fetch com UA de browser, timeout e retry com backoff em 429/5xx. */
 export async function httpFetch(url: string, opts: FetchOpts = {}): Promise<Response> {
   const { referer, accept, timeoutMs = 20_000, bodyTimeoutMs = 30_000, retries = 2, redirect = 'follow' } = opts;
@@ -196,7 +206,7 @@ export async function httpFetch(url: string, opts: FetchOpts = {}): Promise<Resp
       if (res.status === 429 || res.status >= 500) {
         if (attempt < retries) {
           release();
-          await Bun.sleep(400 * 2 ** attempt);
+          await Bun.sleep(backoffMs(attempt));
           continue;
         }
         throw upstreamError(res.status, url);
@@ -213,7 +223,7 @@ export async function httpFetch(url: string, opts: FetchOpts = {}): Promise<Resp
       if (opts.signal?.aborted) throw new HttpError('requisicao cancelada', 504);
       lastErr = err;
       if (attempt >= retries) break;
-      await Bun.sleep(400 * 2 ** attempt);
+      await Bun.sleep(backoffMs(attempt));
     }
   }
   throw new HttpError(`falha de rede: ${String(lastErr)}`, 502);

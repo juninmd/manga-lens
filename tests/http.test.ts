@@ -234,3 +234,26 @@ describe('corpo travado, limite de concorrencia e cancelamento', () => {
     }
   });
 });
+
+describe('recuo entre tentativas', () => {
+  test('vale o valor configurado; sem configuracao, o padrao de producao (400 ms)', async () => {
+    // tests/setup.ts zera o recuo para a suite nao dormir; aqui ele volta a contar
+    const saved = process.env['HTTP_BACKOFF_MS'];
+    const timed = async (): Promise<number> => {
+      let calls = 0;
+      globalThis.fetch = (() => Promise.resolve(new Response('', { status: calls++ ? 200 : 503 }))) as unknown as typeof fetch;
+      const t0 = Date.now();
+      await httpFetch('https://exemplo.test/x', { retries: 1 });
+      return Date.now() - t0;
+    };
+    try {
+      process.env['HTTP_BACKOFF_MS'] = '120';
+      expect(await timed()).toBeGreaterThanOrEqual(110);
+      delete process.env['HTTP_BACKOFF_MS'];
+      expect(await timed()).toBeGreaterThanOrEqual(390);
+    } finally {
+      if (saved === undefined) delete process.env['HTTP_BACKOFF_MS'];
+      else process.env['HTTP_BACKOFF_MS'] = saved;
+    }
+  });
+});

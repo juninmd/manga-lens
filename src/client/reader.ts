@@ -18,6 +18,7 @@ import {
 } from './api.ts';
 import { el, langLabel, toast } from './ui.ts';
 import { openGlossary } from './glossary.ts';
+import { edits, MAX_EDIT_CHARS, type EditScope } from './edits.ts';
 import {
   hasBookmark,
   isFavorite,
@@ -145,6 +146,8 @@ interface RunStats {
   failedBalloons: number;
   failed: string[];
 }
+
+const normalizeSame = (a: string, b: string): boolean => a.replace(/\s+/g, ' ').trim().toLowerCase() === b.replace(/\s+/g, ' ').trim().toLowerCase();
 
 export class Reader {
   private host = el('section', { class: 'ml-reader', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Leitor', tabindex: '-1' });
@@ -335,6 +338,11 @@ export class Reader {
 
     this.stage.addEventListener('pointermove', this.onStagePointerMove);
     this.stage.addEventListener('pointerleave', this.onStagePointerLeave);
+    this.stage.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse') this.mouseDownAt = { x: e.clientX, y: e.clientY };
+    });
+    this.stage.addEventListener('click', this.onStageClick);
+    this.stage.addEventListener('dblclick', () => clearTimeout(this.pinTimer));
 
     this.zoomRange.addEventListener('input', () => this.viewer.setZoom(Number(this.zoomRange.value) / 100));
     this.chat.append(
@@ -375,7 +383,35 @@ export class Reader {
     return this.tooltipPinned;
   }
 
+  private mouseDownAt?: { x: number; y: number };
+  private pinTimer?: number;
+
+  /**
+   * Com mouse o tooltip so' aparecia no hover, transparente ao ponteiro: nao havia
+   * como clicar nele. Um clique (sem arrastar) no balao o fixa — e ai' da' para
+   * corrigir a traducao. A espera curta deixa o duplo clique continuar sendo zoom.
+   */
+  private onStageClick = (e: MouseEvent): void => {
+    if ((e as PointerEvent).pointerType && (e as PointerEvent).pointerType !== 'mouse') return;
+    const down = this.mouseDownAt;
+    this.mouseDownAt = undefined;
+    if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 6 || e.detail > 1) return;
+    if ((e.target as HTMLElement | null)?.closest('.ml-balloon-tooltip, button, input, textarea, select')) return;
+    clearTimeout(this.pinTimer);
+    const { clientX, clientY } = e;
+    this.pinTimer = window.setTimeout(() => {
+      if (this.tooltipPinned) {
+        this.hideTooltip();
+        return;
+      }
+      const hit = this.findBlockAt(clientX, clientY);
+      if (hit) this.showTooltip(hit.block, clientX, clientY, hit.sheet, true);
+    }, 230);
+  };
+
   private checkBalloonHover(clientX: number, clientY: number): void {
+    // fixado (para editar), o tooltip nao segue o mouse nem fecha sozinho
+    if (this.tooltipPinned) return;
     // arrastar a pagina e' intencao de mover, nao de ler: fecha na hora
     if (this.viewer.isDragging()) {
       this.hideTooltip();
@@ -431,7 +467,7 @@ export class Reader {
    * `pointermove`, entao fugia do cursor e piscava — e quem tentasse ir ate' ele
    * para ler o original saia da caixa do balao e o perdia.
    */
-  private showTooltip(block: OcrBlock, clientX: number, clientY: number, sheet: { el: HTMLDivElement }, pin = false): void {
+  private showTooltip(block: OcrBlock, clientX: number, clientY: number, sheet: { el: HTMLDivElement; page?: number }, pin = false): void {
     const origText = block.text?.trim();
     if (!origText) {
       this.hideTooltip();
@@ -443,6 +479,8 @@ export class Reader {
     if (!this.tooltipEl.hidden && sig === this.tooltipSig) return;
     this.tooltipSig = sig;
     this.tooltipPinned = pin;
+    // fixado ele recebe clique (editar, fechar); solto continua transparente ao ponteiro
+    this.tooltipEl.classList.toggle('is-pinned', pin);
 
     this.highlightBox.style.left = `${block.x}px`;
     this.highlightBox.style.top = `${block.y}px`;
@@ -457,7 +495,7 @@ export class Reader {
     const header = el(
       'div',
       { class: 'ml-tooltip-header' },
-      el('span', { class: 'ml-tooltip-tag' }, 'Texto original'),
+      el('span', { class: 'ml-tooltip-tag' }, block.edited ? 'Original · editado por voce' : 'Texto original'),
       block.confidence ? el('span', { class: 'ml-tooltip-confidence' }, `${Math.round(block.confidence)}% conf.`) : el('span', {}),
       pin
         ? el('button', { class: 'ml-btn ml-btn-ghost ml-btn-sm', 'aria-label': 'fechar', onclick: () => this.hideTooltip() }, '✕')
@@ -475,6 +513,7 @@ export class Reader {
       );
       this.tooltipEl.append(transEl);
     }
+    if (pin && sheet.page !== undefined) this.tooltipEl.append(this.editControls(block, sheet.page));
 
     this.tooltipEl.hidden = false;
 
@@ -496,6 +535,82 @@ export class Reader {
 
     this.tooltipEl.style.left = `${left}px`;
     this.tooltipEl.style.top = `${top}px`;
+  }
+
+  /** Onde a correcao manual vale: obra, capitulo, pagina e idioma de chegada. */
+  private editScope(page: number, chapterId = this.chapter?.id): EditScope | null {
+    if (!this.detail || !chapterId) return null;
+    return { provider: this.detail.provider, seriesId: this.detail.id, chapterId, page, target: store.settings.targetLang };
+  }
+
+  /**
+   * Corrigir a mao a traducao de um balao. A IA erra nome, piada e tom, e a unica
+   * saida era retraduzir a pagina inteira torcendo por sorte. A correcao fica
+   * guardada no aparelho e volta a ser aplicada sempre que a pagina e' traduzida
+   * de novo; texto vazio deixa o balao original na arte.
+   */
+  private editControls(block: OcrBlock, page: number): HTMLElement {
+    const scope = this.editScope(page);
+    const box = el('div', { class: 'ml-tooltip-edit' });
+    if (!scope) return box;
+    const apply = (pt: string | undefined): void => {
+      if (pt === undefined) edits.remove(scope, block.text);
+      else edits.set(scope, block.text, pt);
+      // a pagina em cache recebe a correcao na hora; sem isso so' valeria na proxima traducao
+      for (const kind of ['t', 'v'] as const) {
+        const key = this.pageKey(page, this.chapter?.id, kind);
+        const blocks = this.ocrCache.get(key);
+        if (!blocks) continue;
+        this.ocrCache.set(
+          key,
+          blocks.map((b) => (normalizeSame(b.text, block.text) ? { ...b, pt: pt ?? b.pt, edited: pt !== undefined } : b)),
+        );
+      }
+      this.hideTooltip();
+      this.paintOverlays();
+      toast(pt === undefined ? 'correcao removida — vale a traducao automatica a partir da proxima traducao' : pt ? 'traducao corrigida' : 'balao mantido no original');
+    };
+    const start = el('button', { class: 'ml-btn ml-btn-sm', type: 'button', title: 'Corrigir a traducao deste balao (fica guardada neste aparelho)' }, '✎ editar traducao');
+    start.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const area = el('textarea', { class: 'ml-input ml-tooltip-textarea', rows: '3', maxlength: String(MAX_EDIT_CHARS), 'aria-label': 'Traducao do balao' });
+      area.value = block.pt ?? '';
+      const save = el('button', { class: 'ml-btn ml-btn-sm ml-btn-action-primary', type: 'button' }, 'salvar');
+      save.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        apply(area.value);
+      });
+      const cancel = el('button', { class: 'ml-btn ml-btn-sm ml-btn-ghost', type: 'button' }, 'cancelar');
+      cancel.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        this.hideTooltip();
+      });
+      const reset = block.edited ? el('button', { class: 'ml-btn ml-btn-sm ml-btn-ghost', type: 'button', title: 'Esquece a correcao e volta a usar a traducao automatica' }, 'desfazer correcao') : null;
+      reset?.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        apply(undefined);
+      });
+      area.addEventListener('keydown', (ev) => {
+        // Ctrl+Enter salva; Esc cancela sem fechar o leitor
+        if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
+          ev.preventDefault();
+          apply(area.value);
+        } else if (ev.key === 'Escape') {
+          ev.preventDefault();
+          ev.stopPropagation();
+          this.hideTooltip();
+        }
+      });
+      box.replaceChildren(
+        area,
+        el('span', { class: 'ml-tooltip-hint' }, 'vazio = deixa o balao original · Ctrl+Enter salva'),
+        el('div', { class: 'ml-tooltip-actions' }, save, cancel, reset),
+      );
+      area.focus();
+      area.select();
+    });
+    box.append(start);
+    return box;
   }
 
   /**
@@ -2016,7 +2131,7 @@ export class Reader {
     // o modelo de visao le a imagem: sem ela nao ha' traducao, cache ou nao
     const needsImage = ctx.mode === 'vision' || (ctx.mode === 'ai' && store.settings.aiSeesPage);
     // ja' traduzida com este motor/idioma e sem lote vazio: nem carrega a imagem
-    if (cached && this.translatedAs.get(key) === ctx.stamp && cached.every((b) => b.pt?.trim())) {
+    if (cached && this.translatedAs.get(key) === ctx.stamp && cached.every((b) => b.pt?.trim() || b.edited)) {
       stats.translated += cached.length;
       return null;
     }
@@ -2037,7 +2152,8 @@ export class Reader {
       return null;
     }
     // ja' traduzida com este motor/idioma: so' refaz o que voltou vazio
-    const pending = this.translatedAs.get(key) === ctx.stamp ? blocks.filter((b) => !b.pt?.trim()) : blocks;
+    // balao corrigido para vazio ("deixar o original") esta' resolvido: nao volta ao tradutor
+    const pending = this.translatedAs.get(key) === ctx.stamp ? blocks.filter((b) => !b.pt?.trim() && !b.edited) : blocks;
     if (!pending.length) {
       stats.translated += blocks.length;
       return null;
@@ -2073,10 +2189,14 @@ export class Reader {
     // a chamada nao e' abortavel; o resultado de um capitulo que ja' ficou para tras e' descartado
     this.throwIfAborted(ctx.signal);
     const byId = new Map(translated.map((b) => [b.id, b]));
-    const merged = blocks.map((b) => {
+    const translatedPage = blocks.map((b) => {
       const t = byId.get(b.id);
       return t ? { ...b, pt: t.pt, text: t.text } : b;
     });
+    // correcao manual vence a traducao nova: e' por isso que ela foi feita
+    // (o capitulo seguinte adiantado pela fila tambem: a chave e' o capitulo dele, nao o aberto)
+    const scope = this.editScope(page, chapter.id);
+    const merged = scope ? edits.apply(scope, translatedPage) : translatedPage;
     this.ocrCache.set(key, merged);
     this.trimCache();
     this.translatedAs.set(key, ctx.stamp);
@@ -2298,7 +2418,8 @@ export class Reader {
     if (!this.host.classList.contains('is-open')) return;
     // Esc vale ate' com o foco num select/textarea (fechar o popover ou o chat de dentro deles)
     if (e.key === 'Escape') {
-      if (this.popoverOpen) this.togglePopover(false);
+      if (this.tooltipPinned) this.hideTooltip();
+      else if (this.popoverOpen) this.togglePopover(false);
       else if (this.helpEl) this.toggleHelp(false);
       else if (this.chat.classList.contains('is-open')) this.closeChat();
       else if (this.endCard) this.hideEndCard();
