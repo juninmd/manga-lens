@@ -10,6 +10,8 @@ export interface ProviderInfo {
   contentType: ContentType;
   supports: string[];
   languages: string[];
+  /** acervo misto (biblioteca local, catalogo OPDS): aparece em toda aba */
+  mixed?: boolean;
 }
 
 export interface SeriesCard {

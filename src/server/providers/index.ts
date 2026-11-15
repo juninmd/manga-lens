@@ -12,6 +12,7 @@ import { builtinThemesiaSites } from './sites.ts';
 import { hqnow } from './hqnow.ts';
 import { mangakatana } from './mangakatana.ts';
 import { komiku } from './komiku.ts';
+import { createOpdsProvider, opdsCatalogs } from './opds.ts';
 import type { ContentType, Provider, SearchFilters, SeriesCard } from './types.ts';
 
 export const providers: Provider[] = [
@@ -26,6 +27,7 @@ export const providers: Provider[] = [
   ...builtinThemesiaSites.map(createThemesiaProvider),
   archive,
   gutenberg,
+  ...opdsCatalogs().map(createOpdsProvider),
   local,
 ];
 
@@ -35,7 +37,7 @@ export const enabledProviders = (contentType?: ContentType): Provider[] =>
     // a biblioteca local e' mista (manga em CBZ, HQ em CBR, livro em PDF/EPUB):
     // descarta-la pelo tipo declarado do provider escondia o acervo inteiro fora
     // da aba Manga. Quem decide e' o card, e searchAll ja' filtra card a card.
-    .filter((p) => !contentType || p.kind === 'local' || p.contentType === contentType);
+    .filter((p) => !contentType || p.mixed || p.contentType === contentType);
 
 export function getProvider(id: string): Provider {
   const p = providers.find((x) => x.id === id);

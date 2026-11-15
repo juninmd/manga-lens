@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { buildChapters, decodeText, isHeading, linesToParagraphs, parseFb2, parseMarkdown, parseTxt, PART_SIZE, textFormatOf } from '../src/server/text-book.ts';
+import { buildChapters, decodeText, isHeading, linesToParagraphs, parseFb2, parseMarkdown, parsePdfRange, parseTxt, PART_SIZE, pdfSections, textFormatOf } from '../src/server/text-book.ts';
 
 describe('titulo de capitulo em texto puro', () => {
   test('numero e obrigatorio: frase que comeca com "Parte" nao e titulo', () => {
@@ -123,5 +123,50 @@ describe('textFormatOf', () => {
     expect(textFormatOf('/a/notas.markdown')).toBe('md');
     expect(textFormatOf('/a/conto.fb2')).toBe('fb2');
     expect(textFormatOf('/a/capa.png')).toBeNull();
+  });
+});
+
+describe('pdfSections', () => {
+  test('cada marcador vai ate o seguinte; o que vem antes do primeiro e "Inicio"', () => {
+    const out = pdfSections([{ title: 'Um', page: 2 }, { title: 'Dois', page: 5 }], 9);
+    expect(out).toEqual([
+      { title: 'Inicio', first: 0, end: 2 },
+      { title: 'Um', first: 2, end: 5 },
+      { title: 'Dois', first: 5, end: 9 },
+    ]);
+  });
+
+  test('secao longa e fatiada; marcador repetido, fora do PDF ou sem titulo e ignorado', () => {
+    const out = pdfSections(
+      [
+        { title: 'Longo', page: 0 },
+        { title: 'Mesmo lugar', page: 0 },
+        { title: 'Fim', page: 70 },
+        { title: 'Fantasma', page: 500 },
+        { title: '  ', page: 71 },
+      ],
+      75,
+      10,
+      30,
+    );
+    expect(out.map((s) => s.title)).toEqual(['Longo (1/3)', 'Longo (2/3)', 'Longo (3/3)', 'Fim']);
+    expect(out[2]).toMatchObject({ first: 60, end: 70 });
+  });
+
+  test('sem sumario (ou com um marcador so), blocos de paginas', () => {
+    expect(pdfSections([], 23, 10).map((s) => s.title)).toEqual(['Paginas 1–10', 'Paginas 11–20', 'Paginas 21–23']);
+    expect(pdfSections([{ title: 'Unico', page: 0 }], 1, 10)).toEqual([{ title: 'Pagina 1', first: 0, end: 1 }]);
+  });
+});
+
+describe('parsePdfRange', () => {
+  test('faixa valida, formato antigo e limites', () => {
+    expect(parsePdfRange('3-7', 20)).toEqual({ first: 3, end: 7 });
+    expect(parsePdfRange('15', 20, 10)).toEqual({ first: 15, end: 20 });
+    expect(parsePdfRange('0-61', 100)).toBeNull();
+    expect(parsePdfRange('5-5', 20)).toBeNull();
+    expect(parsePdfRange('20', 20)).toBeNull();
+    expect(parsePdfRange('-1', 20)).toBeNull();
+    expect(parsePdfRange('1-2x', 20)).toBeNull();
   });
 });

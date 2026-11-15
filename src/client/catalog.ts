@@ -139,6 +139,8 @@ export class Catalog {
   private seq = 0;
   private tagsLoading = false;
   private tagsSeq = 0;
+  /** aba cujas tags ja' estao carregadas (ou carregando): abrir o filtro de novo nao repete a busca */
+  private tagsFor?: ContentType;
   /** favoritos vivem no localStorage, nao na busca: viram uma listagem propria */
   private showFavorites = false;
   private providers: ProviderInfo[] = [];
@@ -183,7 +185,6 @@ export class Catalog {
     });
     this.renderTypeTabs();
     this.renderProviders();
-    void this.loadTags();
     await this.run();
 
     // painel de serie sem capitulos pede "buscar em outras fontes"
@@ -231,7 +232,14 @@ export class Catalog {
     target?.focus();
   }
 
+  /**
+   * Tags so' quando o filtro abre. Carregar no boot e a cada troca de aba disparava
+   * um /api/tags por fonte (~90): a primeira busca disputava a fila com elas e a
+   * aba demorava a responder justamente na primeira impressao.
+   */
   private async loadTags(): Promise<void> {
+    if (this.tagsFor === this.activeType) return;
+    this.tagsFor = this.activeType;
     const online = this.providersOfType(this.activeType)
       .filter((p) => p.kind === 'online')
       .map((p) => p.id);
@@ -241,6 +249,8 @@ export class Catalog {
     this.renderTagPickers();
     const lists = await Promise.all(online.map((p) => getTags(p).catch(() => [] as TagInfo[])));
     if (ticket !== this.tagsSeq) return;
+    // fonte que caiu devolve lista vazia: sem nenhuma tag, a proxima abertura tenta de novo
+    if (lists.every((l) => !l.length)) this.tagsFor = undefined;
     const byName = new Map<string, TagInfo>();
     for (const list of lists) for (const t of list) byName.set(t.name.toLowerCase(), t);
     this.tags = [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
@@ -407,7 +417,7 @@ export class Catalog {
   }
 
   private providersOfType(type: ContentType): ProviderInfo[] {
-    return this.providers.filter((p) => p.contentType === type);
+    return this.providers.filter((p) => p.contentType === type || p.mixed);
   }
 
   /** Provider desconhecido (ex. antes dos providers carregarem) entra por padrão — nunca some da tela. */
@@ -459,7 +469,8 @@ export class Catalog {
     this.syncToolbar();
     this.renderProviders();
     this.rebuildDrawer();
-    void this.loadTags();
+    // filtro aberto na troca de aba: as tags da aba nova entram ja'
+    if (this.drawer.classList.contains('is-open')) void this.loadTags();
     void this.run();
   }
 
@@ -483,6 +494,7 @@ export class Catalog {
     this.drawerBackdrop.classList.toggle('is-open', open);
     this.drawerBackdrop.hidden = !open;
     this.filtersBtn?.setAttribute('aria-expanded', String(open));
+    if (open) void this.loadTags();
     if (open) this.focusInto(this.drawer);
     else this.restoreFocus(this.filtersBtn);
   }

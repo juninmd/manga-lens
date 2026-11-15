@@ -34,6 +34,8 @@ export interface OcrBlock {
   bgCanvas?: HTMLCanvasElement;
   /** o texto original era caixa alta? a traducao acompanha */
   upper?: boolean;
+  /** traducao corrigida a mao (edits.ts): retraduzir nao a sobrescreve */
+  edited?: boolean;
 }
 
 export interface OcrProgress {
