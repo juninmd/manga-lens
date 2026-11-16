@@ -187,6 +187,18 @@ export class Catalog {
     this.renderProviders();
     await this.run();
 
+    // selo de capitulo novo: a aba de favoritos redesenha sem refazer busca
+    window.addEventListener('ml:favorites-updated', () => {
+      if (this.showFavorites) return this.renderFavorites();
+      // home: so' troca o selo nos atalhos de favorito ja' na tela
+      for (const f of favorites()) {
+        const row = this.grid.querySelector<HTMLElement>(`[data-fav="${CSS.escape(`${f.provider}:${f.id}`)}"]`);
+        if (!row) continue;
+        row.querySelector('.ml-new-badge')?.remove();
+        if (f.newChapters) row.append(el('span', { class: 'ml-new-badge', title: 'capitulos novos desde a ultima visita' }, `+${f.newChapters}`));
+      }
+    });
+
     // painel de serie sem capitulos pede "buscar em outras fontes"
     window.addEventListener('ml:search', (e) => {
       const q = (e as CustomEvent<{ q?: string }>).detail?.q ?? '';
@@ -954,7 +966,9 @@ export class Catalog {
 
     const cards = el('div', { class: 'ml-cards' });
     for (const f of list) {
-      cards.append(this.card({ provider: f.provider, id: f.id, title: f.title, cover: f.cover } as SeriesCard));
+      const card = this.card({ provider: f.provider, id: f.id, title: f.title, cover: f.cover } as SeriesCard);
+      if (f.newChapters) card.append(el('span', { class: 'ml-new-badge', title: 'capitulos novos desde a ultima visita' }, `+${f.newChapters}`));
+      cards.append(card);
     }
     this.grid.append(cards);
   }
@@ -1030,11 +1044,13 @@ export class Catalog {
               {
                 class: 'ml-resume',
                 title: f.title,
+                'data-fav': `${f.provider}:${f.id}`,
                 onclick: () => this.handlers.onOpenSeries(f.provider, f.id),
               },
               this.storedCover(f.provider, f.id, f.cover, f.title),
               el('span', {}, f.title),
               el('small', {}, `★ ${f.provider}`),
+              f.newChapters ? el('span', { class: 'ml-new-badge', title: 'capitulos novos desde a ultima visita' }, `+${f.newChapters}`) : null,
             ),
           );
         }
