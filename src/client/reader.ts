@@ -1,14 +1,10 @@
 import {
   aiHealth,
-  clearSeriesMemory,
-  explain,
   getAiProviders,
   getEngines,
   getPages,
   getTargets,
   humanizeError,
-  saveAiConfig,
-  seriesMemory,
   visionTranslate,
   type ChapterRef,
   type PageRef,
@@ -17,8 +13,7 @@ import {
   type TranslateEngineInfo,
 } from './api.ts';
 import { el, langLabel, toast } from './ui.ts';
-import { openGlossary } from './glossary.ts';
-import { edits, MAX_EDIT_CHARS, type EditScope } from './edits.ts';
+import { edits, } from './edits.ts';
 import {
   hasBookmark,
   isFavorite,
@@ -30,16 +25,10 @@ import {
   toggleBookmark,
   toggleFavorite,
   translateStyle,
-  type AiProviderName,
-  type FitMode,
-  type LetterFont,
-  type ReadingMode,
-  type TranslateEngine,
   type TranslateMode,
 } from './state.ts';
 import { MAX_SCALE, Viewer } from './viewer.ts';
 import {
-  TESS_LANG_OPTIONS,
   disposeOcr,
   effectiveOcrLang,
   isAbortError,
@@ -50,115 +39,23 @@ import {
   type OcrBlock,
 } from './ocr.ts';
 import { numberedPage } from './page-image.ts';
-
-/**
- * Pagina que nao esta' no palco nao tem <img>: carrega uma so' para o OCR.
- * `crossOrigin` e' obrigatorio, senao o canvas fica "tainted" e o OCR nao le.
- */
-function loadPageImage(url: string, signal: AbortSignal, timeoutMs = 20_000): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.decoding = 'async';
-    // host que aceita a conexao e nunca responde travaria a fila com `busy` para sempre
-    const timer = window.setTimeout(() => finish(new Error('imagem demorou demais')), timeoutMs);
-    const onAbort = (): void => finish(new DOMException('OCR cancelado', 'AbortError'));
-    const finish = (err: Error | null): void => {
-      clearTimeout(timer);
-      signal.removeEventListener('abort', onAbort);
-      if (err) {
-        // `src = ''` dispara outro `error`: sem soltar os handlers virava loop infinito
-        img.onload = null;
-        img.onerror = null;
-        img.src = '';
-        reject(err);
-      } else resolve(img);
-    };
-    signal.addEventListener('abort', onAbort, { once: true });
-    img.onload = () => finish(img.naturalWidth > 0 ? null : new Error('imagem vazia'));
-    img.onerror = () => finish(new Error('imagem nao carregou'));
-    img.src = url;
-  });
-}
-
-/** "1 pagina" / "3 paginas" — ui.ts ganha o mesmo helper em outra frente; local ate' la' */
-const plural = (n: number, s: string, p = `${s}s`): string => `${n} ${n === 1 ? s : p}`;
-
-/**
- * Espera a imagem do sheet ficar utilizavel. Ouvir so' `load` era uma armadilha:
- * pagina que responde 404 (ou host bloqueado no proxy) nunca emite `load`, a
- * promessa nunca resolvia e o leitor ficava com `busy = true` para sempre — OCR,
- * traducao e fila morriam no capitulo inteiro ate' recarregar o app.
- */
-function imageReady(img: HTMLImageElement, timeoutMs = 20_000): Promise<boolean> {
-  if (img.complete) return Promise.resolve(img.naturalWidth > 0);
-  return new Promise((resolve) => {
-    const done = (ok: boolean): void => {
-      clearTimeout(timer);
-      img.removeEventListener('load', onLoad);
-      img.removeEventListener('error', onError);
-      resolve(ok);
-    };
-    const onLoad = (): void => done(img.naturalWidth > 0);
-    const onError = (): void => done(false);
-    const timer = window.setTimeout(() => done(false), timeoutMs);
-    img.addEventListener('load', onLoad);
-    img.addEventListener('error', onError);
-  });
-}
-
-/**
- * "🪄 Traduzir" vira icone + <span class="ml-btn-label">Traduzir</span>: em tela
- * estreita o CSS esconde so' o texto. Como display:none tira o texto do nome
- * acessivel, o rotulo inteiro vai para aria-label.
- */
-function iconLabel(text: string): { children: (string | HTMLElement)[]; aria: Record<string, string> } {
-  const m = /^(\S+)\s+(.+)$/.exec(text);
-  if (!m) return { children: [text], aria: {} };
-  return { children: [`${m[1]} `, el('span', { class: 'ml-btn-label' }, m[2]!)], aria: { 'aria-label': text } };
-}
-
-const MODES: [ReadingMode, string][] = [
-  ['single', 'pagina'],
-  ['double', 'dupla'],
-  ['strip', 'tira'],
-];
-const FITS: [FitMode, string][] = [
-  ['page', 'ajustar'],
-  ['width', 'largura'],
-  ['height', 'altura'],
-];
-
-/** motor/idioma fixados no inicio da execucao — trocar no meio nao mistura carimbos */
-interface RunCtx {
-  mode: TranslateMode;
-  engine: TranslateEngine;
-  provider: string;
-  /** idioma de destino fixado no inicio: trocar no meio nao pode carimbar espanhol como pt-BR */
-  target: string;
-  stamp: string;
-  modeLabel: string;
-  signal: AbortSignal;
-}
-
-interface RunStats {
-  translated: number;
-  failedBalloons: number;
-  failed: string[];
-}
-
-const normalizeSame = (a: string, b: string): boolean => a.replace(/\s+/g, ' ').trim().toLowerCase() === b.replace(/\s+/g, ' ').trim().toLowerCase();
+import { FITS, MODES, iconLabel, imageReady, loadPageImage, plural, type RunCtx, type RunStats } from './reader-util.ts';
+import { buildChatInput, closeChat, openChat, pushMessage } from './reader-chat.ts';
+import { checkBalloonHover, editScope, findBlockAt, hideTooltip, scheduleHideTooltip, showTooltip } from './reader-tooltip.ts';
+import { contextSection, engineSelect, fontSelect, ocrLangSelect, providerSelect, styleSection, targetSelect } from './reader-settings.ts';
 
 export class Reader {
   private host = el('section', { class: 'ml-reader', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Leitor', tabindex: '-1' });
-  private stage = el('div', { class: 'ml-stage' });
+  /** @internal usado pelos modulos reader-* */
+  stage = el('div', { class: 'ml-stage' });
   private stageLoading = el(
     'div',
     { class: 'ml-stage-loading' },
     el('div', { class: 'ml-spinner' }),
     el('span', {}, 'carregando capitulo...'),
   );
-  private viewer: Viewer;
+  /** @internal usado pelos modulos reader-* */
+  viewer: Viewer;
   private film = el('div', { class: 'ml-film' });
   private zoomLabel = el('span', { class: 'ml-zoom-label' }, '100%');
   private zoomRange = el('input', {
@@ -170,9 +67,12 @@ export class Reader {
     'aria-label': 'Zoom',
   });
   private pageLabel = el('span', { class: 'ml-page-label', role: 'status', 'aria-live': 'polite' }, '');
-  private chat = el('aside', { class: 'ml-chat' });
-  private chatLog = el('div', { class: 'ml-chat-log' });
-  private ocrStatus = el('span', { class: 'ml-ocr-status', role: 'status', 'aria-live': 'polite' }, '');
+  /** @internal usado pelos modulos reader-* */
+  chat = el('aside', { class: 'ml-chat' });
+  /** @internal usado pelos modulos reader-* */
+  chatLog = el('div', { class: 'ml-chat-log' });
+  /** @internal usado pelos modulos reader-* */
+  ocrStatus = el('span', { class: 'ml-ocr-status', role: 'status', 'aria-live': 'polite' }, '');
   private progressFill = el('div', { class: 'ml-progress-fill' });
   private progressText = el('span', { class: 'ml-progress-text' }, '');
   private progressBar = el(
@@ -190,12 +90,16 @@ export class Reader {
   private progressEl = el('span', { class: 'ml-status-item ml-progress-item', hidden: true }, this.progressBar, this.progressText);
   private aiDot = el('span', { class: 'ml-dot' });
   private aiLabel = el('span', {}, 'IA: verificando...');
-  private tooltipEl = el('div', { class: 'ml-balloon-tooltip', hidden: true });
+  /** @internal usado pelos modulos reader-* */
+  tooltipEl = el('div', { class: 'ml-balloon-tooltip', hidden: true });
   /** fechamento com carencia: sair um pixel da caixa do balao nao pode apagar o texto */
-  private tooltipHideTimer = 0;
+  /** @internal usado pelos modulos reader-* */
+  tooltipHideTimer = 0;
   /** balao + conteudo ja' montados: evita remontar (e mover) o tooltip a cada pixel */
-  private tooltipSig = '';
-  private highlightBox = el('div', { class: 'ml-balloon-highlight', hidden: true });
+  /** @internal usado pelos modulos reader-* */
+  tooltipSig = '';
+  /** @internal usado pelos modulos reader-* */
+  highlightBox = el('div', { class: 'ml-balloon-highlight', hidden: true });
   private popoverEl = el('div', { class: 'ml-popover', hidden: true });
   private popoverBackdrop = el('div', { class: 'ml-popover-backdrop', hidden: true });
   private popoverOpen = false;
@@ -213,19 +117,23 @@ export class Reader {
   private prevFocus: HTMLElement | null = null;
   private bookmarkBtn?: HTMLElement;
 
-  private detail?: SeriesDetail;
-  private chapter?: ChapterRef;
+  /** @internal usado pelos modulos reader-* */
+  detail?: SeriesDetail;
+  /** @internal usado pelos modulos reader-* */
+  chapter?: ChapterRef;
   /** sentido efetivo da obra aberta: HQ ocidental le ao contrario de manga */
   private rtl = true;
   private pages: PageRef[] = [];
-  private ocrCache = new Map<string, OcrBlock[]>();
+  /** @internal usado pelos modulos reader-* */
+  ocrCache = new Map<string, OcrBlock[]>();
   /**
    * Com que motor+idioma cada pagina do cache foi traduzida. Antes, trocar o
    * idioma de destino limpava o cache inteiro e refazia o Tesseract da pagina —
    * a parte cara — sendo que o texto reconhecido continua valendo: so' a traducao
    * envelhece. Com o carimbo, trocar de idioma so' retraduz.
    */
-  private translatedAs = new Map<string, string>();
+  /** @internal usado pelos modulos reader-* */
+  translatedAs = new Map<string, string>();
   /**
    * Carimbo da ultima execucao. Com IA offline a execucao cai no motor web e
    * carimba `ocr|auto|...`; a repintura comparava com o carimbo da preferencia
@@ -239,9 +147,11 @@ export class Reader {
   private endCard?: HTMLElement;
   private helpEl?: HTMLElement;
   private helpReturnFocus?: HTMLElement;
-  private chatAbort?: AbortController;
+  /** @internal usado pelos modulos reader-* */
+  chatAbort?: AbortController;
   /** cancela o OCR/traducao em voo: virar a pagina ou fechar nao espera o Tesseract terminar */
-  private ocrAbort?: AbortController;
+  /** @internal usado pelos modulos reader-* */
+  ocrAbort?: AbortController;
   /** 'page' = OCR da pagina (virar aborta); 'chapter' = traducao do capitulo (segue em fundo) */
   private runScope: 'page' | 'chapter' = 'page';
   /** capitulos cobertos pela execucao atual (o aberto + o proximo, adiantado) e paginas que faltam */
@@ -250,15 +160,20 @@ export class Reader {
   private runDone = 0;
   private runTotal = 0;
   /** tooltip fixado por toque (touch nao tem hover) */
-  private tooltipPinned = false;
+  /** @internal usado pelos modulos reader-* */
+  tooltipPinned = false;
   private aiOk = false;
   private aiError = '';
   private paintHandle = 0;
-  private history: { role: 'user' | 'assistant'; content: string }[] = [];
+  /** @internal usado pelos modulos reader-* */
+  history: { role: 'user' | 'assistant'; content: string }[] = [];
 
-  private engines: TranslateEngineInfo[] = [{ id: 'auto', name: 'Automatico (sem IA primeiro)', needsAi: false, note: '' }];
-  private targets: TargetLangInfo[] = [{ id: 'pt-BR', name: 'Portugues (Brasil)' }];
-  private aiProviders: { id: string; name: string; baseUrl: string; model: string; visionModel?: string; hasKey: boolean }[] = [];
+  /** @internal usado pelos modulos reader-* */
+  engines: TranslateEngineInfo[] = [{ id: 'auto', name: 'Automatico (sem IA primeiro)', needsAi: false, note: '' }];
+  /** @internal usado pelos modulos reader-* */
+  targets: TargetLangInfo[] = [{ id: 'pt-BR', name: 'Portugues (Brasil)' }];
+  /** @internal usado pelos modulos reader-* */
+  aiProviders: { id: string; name: string; baseUrl: string; model: string; visionModel?: string; hasKey: boolean }[] = [];
 
   /**
    * Troca de capitulo feita de dentro do leitor (cap », fim de capitulo, popover):
@@ -272,7 +187,7 @@ export class Reader {
       onTransform: ({ scale, fit }) => {
         this.zoomLabel.textContent = `${Math.round(scale * 100)}%`;
         this.zoomRange.value = String(Math.round(scale * 100));
-        this.hideTooltip();
+        hideTooltip(this);
         // zoom pela roda vira 'free' e a tira forca 'width': a barra segue o viewer, nao a preferencia
         for (const b of this.host.querySelectorAll<HTMLElement>('[data-fit]')) {
           const on = b.dataset.fit === fit;
@@ -284,7 +199,7 @@ export class Reader {
       onTap: (x, y) => this.onStageTap(x, y),
       onSheetsChange: () => {
         this.paintOverlays();
-        this.hideTooltip();
+        hideTooltip(this);
       },
     });
     this.build();
@@ -352,21 +267,21 @@ export class Reader {
         'div',
         { class: 'ml-chat-head' },
         el('strong', {}, 'Assistente de leitura'),
-        el('button', { class: 'ml-btn ml-btn-ghost', 'aria-label': 'Fechar assistente', onclick: () => this.closeChat() }, '✕'),
+        el('button', { class: 'ml-btn ml-btn-ghost', 'aria-label': 'Fechar assistente', onclick: () => closeChat(this) }, '✕'),
       ),
       this.chatLog,
-      this.buildChatInput(),
+      buildChatInput(this),
     );
   }
 
   private onStagePointerMove = (e: PointerEvent): void => {
     // no touch todo movimento e' arrasto; o tooltip fixado por toque nao pode sumir com ele
     if (this.tooltipPinned || e.pointerType !== 'mouse') return;
-    this.checkBalloonHover(e.clientX, e.clientY);
+    checkBalloonHover(this, e.clientX, e.clientY);
   };
 
   private onStagePointerLeave = (): void => {
-    if (!this.tooltipPinned) this.scheduleHideTooltip();
+    if (!this.tooltipPinned) scheduleHideTooltip(this);
   };
 
   /**
@@ -376,12 +291,12 @@ export class Reader {
    */
   private onStageTap(clientX: number, clientY: number): boolean {
     if (this.tooltipPinned) {
-      this.hideTooltip();
+      hideTooltip(this);
       return true;
     }
-    const hit = this.findBlockAt(clientX, clientY);
+    const hit = findBlockAt(this, clientX, clientY);
     if (!hit) return false;
-    this.showTooltip(hit.block, clientX, clientY, hit.sheet, true);
+    showTooltip(this, hit.block, clientX, clientY, hit.sheet, true);
     return this.tooltipPinned;
   }
 
@@ -403,241 +318,16 @@ export class Reader {
     const { clientX, clientY } = e;
     this.pinTimer = window.setTimeout(() => {
       if (this.tooltipPinned) {
-        this.hideTooltip();
+        hideTooltip(this);
         return;
       }
-      const hit = this.findBlockAt(clientX, clientY);
-      if (hit) this.showTooltip(hit.block, clientX, clientY, hit.sheet, true);
+      const hit = findBlockAt(this, clientX, clientY);
+      if (hit) showTooltip(this, hit.block, clientX, clientY, hit.sheet, true);
     }, 230);
   };
 
-  private checkBalloonHover(clientX: number, clientY: number): void {
-    // fixado (para editar), o tooltip nao segue o mouse nem fecha sozinho
-    if (this.tooltipPinned) return;
-    // arrastar a pagina e' intencao de mover, nao de ler: fecha na hora
-    if (this.viewer.isDragging()) {
-      this.hideTooltip();
-      return;
-    }
-    const hit = this.findBlockAt(clientX, clientY);
-    if (!hit) {
-      // ir com o mouse ate' o tooltip para ler o original nao pode fecha-lo
-      if (!this.overTooltip(clientX, clientY)) this.scheduleHideTooltip();
-      return;
-    }
-    this.showTooltip(hit.block, clientX, clientY, hit.sheet);
-  }
-
-  /** O proprio tooltip conta como alvo de hover — ele e' transparente ao ponteiro. */
-  private overTooltip(clientX: number, clientY: number): boolean {
-    if (this.tooltipEl.hidden) return false;
-    const pad = 12;
-    const r = this.tooltipEl.getBoundingClientRect();
-    return clientX >= r.left - pad && clientX <= r.right + pad && clientY >= r.top - pad && clientY <= r.bottom + pad;
-  }
-
-  private findBlockAt(clientX: number, clientY: number): { block: OcrBlock; sheet: { page: number; el: HTMLDivElement; x: number; y: number; w: number; h: number } } | null {
-    const stageRect = this.stage.getBoundingClientRect();
-    const stageX = clientX - stageRect.left;
-    const stageY = clientY - stageRect.top;
-
-    const transform = this.viewer.getTransform();
-    const canvasX = (stageX - transform.tx) / transform.scale;
-    const canvasY = (stageY - transform.ty) / transform.scale;
-
-    for (const sheet of this.viewer.getSheets()) {
-      if (canvasX >= sheet.x && canvasX <= sheet.x + sheet.w && canvasY >= sheet.y && canvasY <= sheet.y + sheet.h) {
-        const imgX = canvasX - sheet.x;
-        const imgY = canvasY - sheet.y;
-        const blocks = this.ocrCache.get(this.pageKey(sheet.page));
-        if (!blocks?.length) continue;
-
-        for (let i = blocks.length - 1; i >= 0; i--) {
-          const b = blocks[i]!;
-          if (imgX >= b.x && imgX <= b.x + b.w && imgY >= b.y && imgY <= b.y + b.h) {
-            return { block: b, sheet };
-          }
-        }
-      }
-    }
-    return null;
-  }
-
-  /**
-   * O tooltip ancora no balao, nao no ponteiro: enquanto o mouse anda dentro do
-   * mesmo balao ele fica parado. Antes ele era remontado e reposicionado a cada
-   * `pointermove`, entao fugia do cursor e piscava — e quem tentasse ir ate' ele
-   * para ler o original saia da caixa do balao e o perdia.
-   */
-  private showTooltip(block: OcrBlock, clientX: number, clientY: number, sheet: { el: HTMLDivElement; page?: number }, pin = false): void {
-    const origText = block.text?.trim();
-    if (!origText) {
-      this.hideTooltip();
-      return;
-    }
-    clearTimeout(this.tooltipHideTimer);
-    const sig = `${block.id}|${origText}|${block.pt ?? ''}|${pin ? 'fix' : 'hover'}`;
-    // mesmo balao e mesmo texto: nada a remontar, e mexer na posicao so' atrapalharia
-    if (!this.tooltipEl.hidden && sig === this.tooltipSig) return;
-    this.tooltipSig = sig;
-    this.tooltipPinned = pin;
-    // fixado ele recebe clique (editar, fechar); solto continua transparente ao ponteiro
-    this.tooltipEl.classList.toggle('is-pinned', pin);
-
-    this.highlightBox.style.left = `${block.x}px`;
-    this.highlightBox.style.top = `${block.y}px`;
-    this.highlightBox.style.width = `${block.w}px`;
-    this.highlightBox.style.height = `${block.h}px`;
-    if (this.highlightBox.parentElement !== sheet.el) {
-      sheet.el.append(this.highlightBox);
-    }
-    this.highlightBox.hidden = false;
-
-    this.tooltipEl.innerHTML = '';
-    const header = el(
-      'div',
-      { class: 'ml-tooltip-header' },
-      el('span', { class: 'ml-tooltip-tag' }, block.edited ? 'Original · editado por voce' : 'Texto original'),
-      block.confidence ? el('span', { class: 'ml-tooltip-confidence' }, `${Math.round(block.confidence)}% conf.`) : el('span', {}),
-      pin
-        ? el('button', { class: 'ml-btn ml-btn-ghost ml-btn-sm', 'aria-label': 'fechar', onclick: () => this.hideTooltip() }, '✕')
-        : null,
-    );
-    const origEl = el('div', { class: 'ml-tooltip-original' }, origText);
-    this.tooltipEl.append(header, origEl);
-
-    if (block.pt?.trim() && block.pt.trim() !== origText) {
-      const transEl = el(
-        'div',
-        { class: 'ml-tooltip-translated' },
-        el('span', { class: 'ml-tooltip-subtag' }, 'Traducao:'),
-        block.pt.trim(),
-      );
-      this.tooltipEl.append(transEl);
-    }
-    if (pin && sheet.page !== undefined) this.tooltipEl.append(this.editControls(block, sheet.page));
-
-    this.tooltipEl.hidden = false;
-
-    const pad = 16;
-    const ttW = this.tooltipEl.offsetWidth || 240;
-    const ttH = this.tooltipEl.offsetHeight || 80;
-    const vpW = window.innerWidth;
-    const vpH = window.innerHeight;
-
-    let left = clientX + 16;
-    let top = clientY + 16;
-
-    if (left + ttW > vpW - pad) {
-      left = Math.max(pad, clientX - ttW - 16);
-    }
-    if (top + ttH > vpH - pad) {
-      top = Math.max(pad, clientY - ttH - 16);
-    }
-
-    this.tooltipEl.style.left = `${left}px`;
-    this.tooltipEl.style.top = `${top}px`;
-  }
-
-  /** Onde a correcao manual vale: obra, capitulo, pagina e idioma de chegada. */
-  private editScope(page: number, chapterId = this.chapter?.id): EditScope | null {
-    if (!this.detail || !chapterId) return null;
-    return { provider: this.detail.provider, seriesId: this.detail.id, chapterId, page, target: store.settings.targetLang };
-  }
-
-  /**
-   * Corrigir a mao a traducao de um balao. A IA erra nome, piada e tom, e a unica
-   * saida era retraduzir a pagina inteira torcendo por sorte. A correcao fica
-   * guardada no aparelho e volta a ser aplicada sempre que a pagina e' traduzida
-   * de novo; texto vazio deixa o balao original na arte.
-   */
-  private editControls(block: OcrBlock, page: number): HTMLElement {
-    const scope = this.editScope(page);
-    const box = el('div', { class: 'ml-tooltip-edit' });
-    if (!scope) return box;
-    const apply = (pt: string | undefined): void => {
-      if (pt === undefined) edits.remove(scope, block.text);
-      else edits.set(scope, block.text, pt);
-      // a pagina em cache recebe a correcao na hora; sem isso so' valeria na proxima traducao
-      for (const kind of ['t', 'v'] as const) {
-        const key = this.pageKey(page, this.chapter?.id, kind);
-        const blocks = this.ocrCache.get(key);
-        if (!blocks) continue;
-        this.ocrCache.set(
-          key,
-          blocks.map((b) => (normalizeSame(b.text, block.text) ? { ...b, pt: pt ?? b.pt, edited: pt !== undefined } : b)),
-        );
-      }
-      this.hideTooltip();
-      this.paintOverlays();
-      toast(pt === undefined ? 'correcao removida — vale a traducao automatica a partir da proxima traducao' : pt ? 'traducao corrigida' : 'balao mantido no original');
-    };
-    const start = el('button', { class: 'ml-btn ml-btn-sm', type: 'button', title: 'Corrigir a traducao deste balao (fica guardada neste aparelho)' }, '✎ editar traducao');
-    start.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const area = el('textarea', { class: 'ml-input ml-tooltip-textarea', rows: '3', maxlength: String(MAX_EDIT_CHARS), 'aria-label': 'Traducao do balao' });
-      area.value = block.pt ?? '';
-      const save = el('button', { class: 'ml-btn ml-btn-sm ml-btn-action-primary', type: 'button' }, 'salvar');
-      save.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        apply(area.value);
-      });
-      const cancel = el('button', { class: 'ml-btn ml-btn-sm ml-btn-ghost', type: 'button' }, 'cancelar');
-      cancel.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        this.hideTooltip();
-      });
-      const reset = block.edited ? el('button', { class: 'ml-btn ml-btn-sm ml-btn-ghost', type: 'button', title: 'Esquece a correcao e volta a usar a traducao automatica' }, 'desfazer correcao') : null;
-      reset?.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        apply(undefined);
-      });
-      area.addEventListener('keydown', (ev) => {
-        // Ctrl+Enter salva; Esc cancela sem fechar o leitor
-        if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
-          ev.preventDefault();
-          apply(area.value);
-        } else if (ev.key === 'Escape') {
-          ev.preventDefault();
-          ev.stopPropagation();
-          this.hideTooltip();
-        }
-      });
-      box.replaceChildren(
-        area,
-        el('span', { class: 'ml-tooltip-hint' }, 'vazio = deixa o balao original · Ctrl+Enter salva'),
-        el('div', { class: 'ml-tooltip-actions' }, save, cancel, reset),
-      );
-      area.focus();
-      area.select();
-    });
-    box.append(start);
-    return box;
-  }
-
-  /**
-   * Fecha depois de uma carencia curta. Sair da caixa do balao por um pixel, ou
-   * atravessar o vao entre dois baloes, nao e' intencao de fechar; ir com o mouse
-   * ate' o tooltip para ler o original muito menos.
-   */
-  private scheduleHideTooltip(): void {
-    if (this.tooltipPinned) return;
-    clearTimeout(this.tooltipHideTimer);
-    this.tooltipHideTimer = window.setTimeout(() => this.hideTooltip(), Reader.TOOLTIP_GRACE_MS);
-  }
-
-  private static readonly TOOLTIP_GRACE_MS = 320;
-
-  /** Fecha agora: zoom, arrasto, virar pagina e sair do leitor invalidam a ancora. */
-  private hideTooltip(): void {
-    clearTimeout(this.tooltipHideTimer);
-    this.tooltipPinned = false;
-    this.tooltipSig = '';
-    this.tooltipEl.hidden = true;
-    this.highlightBox.hidden = true;
-  }
-
-  private toggle(label: string, on: boolean, onclick: () => void, title?: string, extra: Record<string, string> = {}): HTMLElement {
+  /** @internal usado pelos modulos reader-* */
+  toggle(label: string, on: boolean, onclick: () => void, title?: string, extra: Record<string, string> = {}): HTMLElement {
     const { children, aria } = iconLabel(label);
     return el(
       'button',
@@ -646,7 +336,8 @@ export class Reader {
     );
   }
 
-  private togglePopover(open?: boolean): void {
+  /** @internal usado pelos modulos reader-* */
+  togglePopover(open?: boolean): void {
     this.popoverOpen = open !== undefined ? open : !this.popoverOpen;
     this.popoverEl.classList.toggle('is-open', this.popoverOpen);
     this.popoverBackdrop.classList.toggle('is-open', this.popoverOpen);
@@ -795,7 +486,7 @@ export class Reader {
       }, ...iconLabel('🤖 Visao').children),
       el('button', {
         class: 'ml-btn ml-btn-sm',
-        onclick: () => (this.chat.classList.contains('is-open') ? this.closeChat() : this.openChat()),
+        onclick: () => (this.chat.classList.contains('is-open') ? closeChat(this) : openChat(this)),
         title: 'Assistente de leitura',
         ...iconLabel('💬 Explicar').aria,
       }, ...iconLabel('💬 Explicar').children),
@@ -814,20 +505,9 @@ export class Reader {
 
   // ---------- assistente (painel) ----------
 
-  private openChat(): void {
-    this.chat.classList.add('is-open');
-    this.syncChatToViewport();
-    window.visualViewport?.addEventListener('resize', this.syncChatToViewport);
-  }
-
-  private closeChat(): void {
-    this.chat.classList.remove('is-open');
-    this.chat.style.height = '';
-    window.visualViewport?.removeEventListener('resize', this.syncChatToViewport);
-  }
-
   /** teclado virtual (iOS) nao encolhe o layout: o campo do chat ficava atras dele */
-  private syncChatToViewport = (): void => {
+  /** @internal usado pelos modulos reader-* */
+  syncChatToViewport = (): void => {
     const vv = window.visualViewport;
     // girar para paisagem larga com o chat aberto deixava a altura em px do retrato
     if (!this.compact) {
@@ -990,7 +670,8 @@ export class Reader {
     );
   }
 
-  private buildPopover(): void {
+  /** @internal usado pelos modulos reader-* */
+  buildPopover(): void {
     const s = store.settings;
     this.popoverEl.innerHTML = '';
 
@@ -1062,28 +743,28 @@ export class Reader {
       'div',
       { class: 'ml-popover-section' },
       el('span', { class: 'ml-popover-label' }, isAi || isVision ? 'Provedor de IA' : 'Motor de traducao'),
-      isAi || isVision ? this.providerSelect() : this.engineSelect(),
+      isAi || isVision ? providerSelect(this) : engineSelect(this),
     );
 
     const targetSection = el(
       'div',
       { class: 'ml-popover-section' },
       el('span', { class: 'ml-popover-label' }, 'Traduzir para'),
-      this.targetSelect(),
+      targetSelect(this),
     );
 
     const fontSection = el(
       'div',
       { class: 'ml-popover-section' },
       el('span', { class: 'ml-popover-label' }, 'Letra dos baloes'),
-      this.fontSelect(),
+      fontSelect(this),
     );
 
     const ocrLangSection = el(
       'div',
       { class: 'ml-popover-section' },
       el('span', { class: 'ml-popover-label' }, 'Idioma do OCR'),
-      this.ocrLangSelect(),
+      ocrLangSelect(this),
       this.toggle(
         s.neuralDetect ? '🎯 Detector neural (ligado)' : '🎯 Detector neural',
         s.neuralDetect,
@@ -1114,253 +795,11 @@ export class Reader {
     this.popoverEl.append(
       modeSection,
       providerSection,
-      ...(isAi || isVision ? [this.contextSection(), this.styleSection()] : []),
+      ...(isAi || isVision ? [contextSection(this), styleSection(this)] : []),
       targetSection,
       ocrLangSection,
       fontSection,
       foot,
-    );
-  }
-
-  /**
-   * Modo IA: a memoria da obra (glossario de nomes/genero + resumo das paginas
-   * anteriores) e a opcao de mandar a pagina numerada ao modelo de visao. Limpar
-   * existe porque um nome ou genero gravado errado se repetiria no resto da obra.
-   */
-  private contextSection(): HTMLElement {
-    const s = store.settings;
-    const series = this.detail?.title;
-    const vision = this.aiProviders.find((p) => p.id === s.aiProvider)?.visionModel;
-    const info = el('span', { class: 'ml-popover-hint', role: 'status' }, series ? 'lendo memoria da obra...' : 'abra uma obra para ver a memoria');
-    const showMemory = (): void => {
-      if (!series) return;
-      void seriesMemory(series, s.targetLang)
-        .then((m) => {
-          info.textContent = `${plural(m.glossary.length, 'nome')} no glossario · ${plural(m.notes.length, 'pagina resumida', 'paginas resumidas')}`;
-        })
-        .catch((err) => {
-          info.textContent = `memoria indisponivel: ${humanizeError(err)}`;
-        });
-    };
-    showMemory();
-    const seesPage = this.toggle(
-      s.aiSeesPage ? '🖼️ IA ve a pagina (ligado)' : '🖼️ IA ve a pagina',
-      s.aiSeesPage,
-      () => {
-        s.aiSeesPage = !s.aiSeesPage;
-        persist();
-        this.invalidateTranslations();
-        this.buildPopover();
-      },
-      vision
-        ? `Manda a pagina reduzida, com os baloes numerados, ao modelo de visao (${vision}): acerta melhor quem fala e o genero, mas gasta mais tokens por pagina`
-        : 'Defina um modelo de visao no provedor de IA para usar esta opcao',
-    );
-    if (!vision) seesPage.setAttribute('disabled', '');
-    return el(
-      'div',
-      { class: 'ml-popover-section' },
-      el('span', { class: 'ml-popover-label' }, 'Contexto da obra'),
-      // no modo visao a pagina sempre vai ao modelo: a opcao seria um botao sem efeito
-      s.translateMode === 'vision' ? null : seesPage,
-      info,
-      el('button', {
-        class: 'ml-btn ml-btn-sm',
-        disabled: !series,
-        title: 'Corrija, fixe ou adicione nomes e termos: o que voce fixar a IA nao muda mais',
-        onclick: () => {
-          if (!series) return;
-          this.togglePopover(false);
-          openGlossary(series, s.targetLang, { usesAi: true }, () => {
-            // traduzido com o glossario antigo: some da pagina ate' refazer com R
-            this.translatedAs.clear();
-            this.invalidateTranslations();
-            showMemory();
-          });
-        },
-      }, '📖 editar glossario'),
-      el('button', {
-        class: 'ml-btn ml-btn-sm ml-btn-ghost',
-        disabled: !series,
-        title: 'Apaga os nomes e o resumo aprendidos nesta obra (use se a IA gravou um nome ou genero errado)',
-        onclick: () => {
-          if (!series) return;
-          void clearSeriesMemory(series, s.targetLang)
-            .then(() => {
-              toast('memoria da obra apagada');
-              showMemory();
-            })
-            .catch((err) => toast(`nao consegui apagar a memoria: ${humanizeError(err)}`, 'error'));
-        },
-      }, 'limpar memoria da obra'),
-    );
-  }
-
-  /**
-   * Estilo da traducao por IA. Sao as tres decisoes em que tradutor e leitor mais
-   * discordam — sufixo de tratamento, o quanto adaptar e o que fazer com efeito
-   * sonoro — e nenhuma tem resposta certa: vira preferencia, e vai no prompt.
-   */
-  private styleSection(): HTMLElement {
-    const s = store.settings;
-    const pick = <K extends 'tone' | 'honorifics' | 'sfx'>(key: K, label: string, title: string, options: [(typeof s)[K], string][]): HTMLElement[] => {
-      const id = `ml-style-${key}`;
-      return [
-        el('label', { for: id }, label),
-        el(
-          'select',
-          {
-            id,
-            class: 'ml-select ml-select-sm',
-            title,
-            onchange: (e: Event) => {
-              s[key] = (e.target as HTMLSelectElement).value as (typeof s)[K];
-              persist();
-              this.invalidateTranslations();
-            },
-          },
-          ...options.map(([value, text]) => el('option', { value, selected: value === s[key] }, text)),
-        ),
-      ];
-    };
-    return el(
-      'div',
-      { class: 'ml-popover-section' },
-      el('span', { class: 'ml-popover-label' }, 'Estilo da traducao'),
-      el(
-        'div',
-        { class: 'ml-style-grid' },
-        ...pick('tone', 'Tom', 'Natural: fluida, como scanlation. Literal: colada no original. Localizada: adapta piada, giria e referencia cultural', [
-          ['natural', 'Natural'],
-          ['literal', 'Literal (colada no original)'],
-          ['localized', 'Localizada (adapta referencias)'],
-        ]),
-        ...pick('honorifics', 'Honorificos', '-san, -kun, senpai, oppa: manter como no original ou trocar pelo tratamento do idioma de chegada', [
-          ['keep', 'Manter (-san, senpai)'],
-          ['adapt', 'Adaptar (senhor, dona)'],
-        ]),
-        ...pick('sfx', 'Onomatopeias', 'Traduzir o efeito sonoro, ou deixar a arte original na pagina', [
-          ['translate', 'Traduzir'],
-          ['keep', 'Manter a arte original'],
-        ]),
-      ),
-    );
-  }
-
-  /**
-   * Idioma do scan para o Tesseract. O 'auto' segue o idioma que a fonte declara
-   * para o capitulo — e a fonte erra: scan em ingles marcado como "unknown" cai
-   * no modelo japones e sai lixo. Aqui o usuario corrige.
-   */
-  private ocrLangSelect(): HTMLElement {
-    return el(
-      'select',
-      {
-        class: 'ml-select ml-select-sm',
-        title: 'modelo de reconhecimento usado no OCR',
-        'aria-label': 'Idioma do OCR',
-        onchange: (e: Event) => {
-          store.settings.ocrLang = (e.target as HTMLSelectElement).value;
-          persist();
-          // o texto reconhecido muda com o modelo: o cache inteiro envelhece
-          this.ocrAbort?.abort();
-          this.ocrCache.clear();
-          this.translatedAs.clear();
-          this.paintOverlays();
-          this.ocrStatus.textContent = 'idioma do OCR alterado — pressione O ou R';
-        },
-      },
-      ...TESS_LANG_OPTIONS.map((o) =>
-        el('option', { value: o.code, selected: o.code === store.settings.ocrLang }, o.label),
-      ),
-    );
-  }
-
-  /** Idioma de chegada: vale para os tres motores; trocar reletreira o capitulo. */
-  private targetSelect(): HTMLElement {
-    return el(
-      'select',
-      {
-        class: 'ml-select ml-select-sm',
-        title: 'idioma de destino da traducao',
-        onchange: (e: Event) => {
-          store.settings.targetLang = (e.target as HTMLSelectElement).value;
-          persist();
-          this.invalidateTranslations();
-        },
-      },
-      ...this.targets.map((t) =>
-        el('option', { value: t.id, selected: t.id === store.settings.targetLang }, t.name),
-      ),
-    );
-  }
-
-  /** Motor de traducao: Google ou MyMemory (modo OCR tradicional). */
-  private engineSelect(): HTMLElement {
-    // este select e' o do Tradutor Web: motor que depende de IA tem modo proprio
-    const traditionalEngines = this.engines.filter((eng) => !eng.needsAi);
-    const select = el(
-      'select',
-      {
-        class: 'ml-select ml-select-sm',
-        title: 'motor de traducao dos baloes (modo Tradutor Web)',
-        onchange: (e: Event) => {
-          store.settings.engine = (e.target as HTMLSelectElement).value as TranslateEngine;
-          persist();
-          this.invalidateTranslations();
-        },
-      },
-      ...(traditionalEngines.length ? traditionalEngines : this.engines).map((eng) =>
-        el('option', { value: eng.id, selected: eng.id === store.settings.engine, title: eng.note }, eng.name),
-      ),
-    );
-    return select;
-  }
-
-  private fontSelect(): HTMLElement {
-    const fonts: [LetterFont, string, string][] = [
-      ['comic', 'Balao de HQ', 'Fonte estilo quadrinhos / manga'],
-      ['sans', 'Moderna (Limpa)', 'Fonte limpa e moderna sem serifa'],
-      ['serif', 'Classica (livro)', 'Fonte classica de livro impresso'],
-    ];
-    return el(
-      'select',
-      {
-        class: 'ml-select ml-select-sm',
-        title: 'letra dos baloes traduzidos',
-        onchange: (e: Event) => {
-          store.settings.font = (e.target as HTMLSelectElement).value as LetterFont;
-          persist();
-          this.paintOverlays();
-        },
-      },
-      ...fonts.map(([id, label, desc]) =>
-        el('option', { value: id, selected: id === store.settings.font, title: desc }, label),
-      ),
-    );
-  }
-
-  /** Provider de IA: openrouter, ollama, openaicompatible (via AI SDK). */
-  private providerSelect(): HTMLElement {
-    return el(
-      'select',
-      {
-        class: 'ml-select ml-select-sm',
-        title: 'provedor de IA (modo IA)',
-        onchange: (e: Event) => {
-          const active = (e.target as HTMLSelectElement).value as AiProviderName;
-          store.settings.aiProvider = active;
-          persist();
-          this.invalidateTranslations();
-          // trocar so' no cliente deixava servidor e leitor discordando do provedor
-          void saveAiConfig({ active })
-            .catch((err) => toast(`nao consegui ativar o provedor no servidor: ${humanizeError(err)}`, 'error'))
-            .finally(() => void this.checkAi());
-        },
-      },
-      ...this.aiProviders.map((p) =>
-        el('option', { value: p.id, selected: p.id === store.settings.aiProvider }, `IA: ${p.name}`),
-      ),
     );
   }
 
@@ -1467,7 +906,8 @@ export class Reader {
   }
 
   /** Estado do endpoint de IA — so' importa quando o motor cai nela. */
-  private async checkAi(): Promise<{ ok: boolean; error: string }> {
+  /** @internal usado pelos modulos reader-* */
+  async checkAi(): Promise<{ ok: boolean; error: string }> {
     try {
       const h = await aiHealth(store.settings.aiProvider);
       this.aiDot.classList.toggle('is-on', Boolean(h.ok));
@@ -1516,29 +956,6 @@ export class Reader {
         el('button', { class: 'ml-btn ml-btn-ghost', title: 'Aumentar zoom (tecla +)', 'aria-label': 'Aumentar zoom', onclick: () => this.viewer.setZoom(this.viewer.zoom * 1.25) }, '+'),
         this.zoomLabel,
       ),
-    );
-  }
-
-  private buildChatInput(): HTMLElement {
-    const input = el('textarea', { class: 'ml-chat-input', rows: '2', placeholder: 'pergunte sobre a cena, personagem, referencia...' });
-    const send = (): void => {
-      const q = input.value.trim();
-      if (!q) return;
-      input.value = '';
-      void this.ask(q);
-    };
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        send();
-      }
-    });
-    return el(
-      'div',
-      { class: 'ml-chat-foot' },
-      input,
-      el('button', { class: 'ml-btn ml-btn-primary', onclick: send }, 'perguntar'),
-      el('button', { class: 'ml-btn ml-btn-ghost', onclick: () => void this.ask('Explique o que esta acontecendo nesta pagina.') }, 'explicar pagina'),
     );
   }
 
@@ -1612,7 +1029,7 @@ export class Reader {
       // o catalogo fica atras do leitor em tela cheia mas continuava na ordem do Tab
       document.querySelector('.ml-main')?.setAttribute('inert', '');
       this.togglePopover(false);
-      this.closeChat();
+      closeChat(this);
     }
     this.hideEndCard();
     // resposta do chat do capitulo anterior nao pode cair no historico do novo
@@ -1691,7 +1108,7 @@ export class Reader {
   }
 
   close(): void {
-    this.hideTooltip();
+    hideTooltip(this);
     this.hideEndCard();
     this.toggleHelp(false);
     this.ocrAbort?.abort();
@@ -1702,7 +1119,7 @@ export class Reader {
     this.stageLoading.classList.remove('is-visible');
     // popover/chat abertos reapareciam no proximo capitulo
     this.togglePopover(false);
-    this.closeChat();
+    closeChat(this);
     this.host.classList.remove('is-open');
     document.body.classList.remove('is-reading');
     document.querySelector('.ml-main')?.removeAttribute('inert');
@@ -1732,7 +1149,7 @@ export class Reader {
     // capitulo que nao abriu nao tem pagina: sem esta guarda o `page >= length-1`
     // abaixo daria verdadeiro em 0 >= -1 e marcaria como lido o que nunca abriu
     if (!this.pages.length) return;
-    this.hideTooltip();
+    hideTooltip(this);
     this.hideEndCard();
     // OCR da pagina que ficou para tras nao precisa terminar; a traducao do
     // capitulo continua em fundo e pinta a pagina nova quando chegar nela
@@ -1774,7 +1191,8 @@ export class Reader {
    * `onPageChange`), e cada uma refaz a busca binaria de corpo de letra balao a
    * balao. Juntar no proximo quadro faz o trabalho uma vez so'.
    */
-  private paintOverlays(): void {
+  /** @internal usado pelos modulos reader-* */
+  paintOverlays(): void {
     if (this.paintHandle) return;
     this.paintHandle = requestAnimationFrame(() => {
       this.paintHandle = 0;
@@ -1817,7 +1235,8 @@ export class Reader {
   }
 
   /** Cache por capitulo: a fila adianta paginas de capitulos que ainda nem abriram. */
-  private pageKey(page: number, chapterId = this.chapter?.id ?? '', kind = this.ocrKind()): string {
+  /** @internal usado pelos modulos reader-* */
+  pageKey(page: number, chapterId = this.chapter?.id ?? '', kind = this.ocrKind()): string {
     return `${chapterId}:${page}:${kind}`;
   }
 
@@ -1840,7 +1259,8 @@ export class Reader {
    * Trocar motor ou idioma de destino invalida a traducao, nao o reconhecimento:
    * o cache continua servindo de entrada e so' a chamada ao tradutor se repete.
    */
-  private invalidateTranslations(): void {
+  /** @internal usado pelos modulos reader-* */
+  invalidateTranslations(): void {
     // o carimbo fica: `repaintNow` compara com o atual e esconde a traducao velha
     this.activeStamp = undefined;
     this.activeKind = undefined;
@@ -2218,7 +1638,7 @@ export class Reader {
     });
     // correcao manual vence a traducao nova: e' por isso que ela foi feita
     // (o capitulo seguinte adiantado pela fila tambem: a chave e' o capitulo dele, nao o aberto)
-    const scope = this.editScope(page, chapter.id);
+    const scope = editScope(this, page, chapter.id);
     const merged = scope ? edits.apply(scope, translatedPage) : translatedPage;
     this.ocrCache.set(key, merged);
     this.trimCache();
@@ -2251,8 +1671,8 @@ export class Reader {
   private async visionRead(): Promise<void> {
     const sheet = this.viewer.visibleSheets()[0];
     if (!sheet) return;
-    this.openChat();
-    const bubble = this.pushMessage('assistant', 'lendo a pagina com o modelo de visao...');
+    openChat(this);
+    const bubble = pushMessage(this, 'assistant', 'lendo a pagina com o modelo de visao...');
     try {
       // sem a imagem decodificada o canvas sai 0x0 e o modelo recebe "data:," vazio
       if (!(await imageReady(sheet.img))) {
@@ -2279,60 +1699,6 @@ export class Reader {
   }
 
   // ---------- assistente ----------
-
-  private pushMessage(role: 'user' | 'assistant', text: string): HTMLElement {
-    const body = el('div', { class: 'ml-msg-body' }, text);
-    this.chatLog.append(el('div', { class: `ml-msg is-${role}` }, body));
-    this.chatLog.scrollTop = this.chatLog.scrollHeight;
-    return body;
-  }
-
-  private async ask(question: string): Promise<void> {
-    this.openChat();
-    this.pushMessage('user', question);
-    const bubble = this.pushMessage('assistant', '');
-    const pageText = this.viewer
-      .visibleSheets()
-      .flatMap((s) => this.ocrCache.get(this.pageKey(s.page)) ?? [])
-      .map((b) => b.pt || b.text)
-      .filter(Boolean);
-
-    // resposta longa sem como parar (ate' 120s de servidor): botao de parar por pergunta
-    this.chatAbort?.abort();
-    const abort = new AbortController();
-    this.chatAbort = abort;
-    const stop = el('button', { class: 'ml-btn ml-btn-ghost ml-btn-sm ml-chat-stop', 'aria-label': 'parar resposta', onclick: () => abort.abort() }, '■ parar');
-    bubble.parentElement?.append(stop);
-
-    let full = '';
-    try {
-      for await (const chunk of explain(
-        {
-          series: this.detail?.title,
-          description: this.detail?.description,
-          chapter: this.chapter?.number,
-          pageText,
-          question,
-          history: this.history.slice(-6),
-          provider: store.settings.aiProvider,
-        },
-        abort.signal,
-      )) {
-        full += chunk;
-        bubble.textContent = full;
-        this.chatLog.scrollTop = this.chatLog.scrollHeight;
-      }
-      this.history.push({ role: 'user', content: question }, { role: 'assistant', content: full });
-      if (!full.trim()) bubble.textContent = '(o modelo devolveu vazio — confira o modelo e o limite de tokens no painel de IA)';
-    } catch (err) {
-      // o que ja' chegou vale: apagar a resposta parcial era pior que o erro
-      const why = isAbortError(err) ? '' : `: ${humanizeError(err)}`;
-      bubble.textContent = full ? `${full}\n\n(interrompido${why})` : `falhou${why || ': interrompido'}`;
-    } finally {
-      stop.remove();
-      if (this.chatAbort === abort) this.chatAbort = undefined;
-    }
-  }
 
   // ---------- navegacao ----------
 
@@ -2441,10 +1807,10 @@ export class Reader {
     if (!this.host.classList.contains('is-open')) return;
     // Esc vale ate' com o foco num select/textarea (fechar o popover ou o chat de dentro deles)
     if (e.key === 'Escape') {
-      if (this.tooltipPinned) this.hideTooltip();
+      if (this.tooltipPinned) hideTooltip(this);
       else if (this.popoverOpen) this.togglePopover(false);
       else if (this.helpEl) this.toggleHelp(false);
-      else if (this.chat.classList.contains('is-open')) this.closeChat();
+      else if (this.chat.classList.contains('is-open')) closeChat(this);
       else if (this.endCard) this.hideEndCard();
       else if (document.fullscreenElement) void document.exitFullscreen();
       else this.close();
