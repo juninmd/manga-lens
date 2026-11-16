@@ -333,3 +333,37 @@ export async function* explain(body: {
 /** Paragrafos de um capitulo de livro, de qualquer fonte de texto (biblioteca local ou acervo online). */
 export const getBookChapter = (provider: string, chapterId: string): Promise<{ blocks: { id: number; text: string }[] }> =>
   json(`/api/book?provider=${encodeURIComponent(provider)}&c=${encodeURIComponent(chapterId)}`);
+
+export type TtsEngineId = 'kokoro' | 'piper' | 'browser' | 'openai' | 'elevenlabs' | 'azure' | 'google';
+
+export interface TtsEngineInfo {
+  id: TtsEngineId;
+  name: string;
+  local: boolean;
+  needsKey: boolean;
+  hasKey: boolean;
+  ready: boolean;
+  voices: { id: string; name: string }[];
+  baseUrl: string;
+  voice: string;
+  model: string;
+  region: string;
+}
+
+export const getTtsEngines = (): Promise<TtsEngineInfo[]> => json('/api/tts/engines');
+
+export const saveTtsConfig = (data: { engine: TtsEngineId; baseUrl?: string; apiKey?: string; voice?: string; model?: string; region?: string }): Promise<TtsEngineInfo[]> =>
+  json('/api/tts/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+
+/** Audio de um trecho; quem chama vira em `URL.createObjectURL`. */
+export async function ttsSpeak(body: { engine: TtsEngineId; text: string; voice?: string; speed?: number }, signal?: AbortSignal): Promise<Blob> {
+  let res: Response;
+  try {
+    res = await fetch(api('/api/tts/speak'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal });
+  } catch (err) {
+    if (isNetworkError(err)) throw new ApiError('servidor indisponivel', 0);
+    throw err;
+  }
+  if (!res.ok) throw new ApiError(errorMessage(res.status, await res.text().catch(() => '')), res.status);
+  return res.blob();
+}
