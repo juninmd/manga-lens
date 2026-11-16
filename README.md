@@ -415,8 +415,8 @@ ele. Motores, locais primeiro:
 
 | Motor | Tipo | Como ligar |
 |---|---|---|
-| **Kokoro** (padrão) | local | `docker run -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-cpu` · vozes `pf_dora`, `pm_alex` |
-| **Piper** | local | `python -m piper.http_server -m pt_BR-faber-medium` |
+| **Kokoro** (padrão) | local | `docker run -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-cpu:latest` · vozes `pf_dora`, `pm_alex` |
+| **Piper** | local | `pip install "piper-tts[http]"`, `python -m piper.download_voices pt_BR-faber-medium`, `python -m piper.http_server -m pt_BR-faber-medium` |
 | **Voz do sistema** | local | nada: usa as vozes instaladas (Web Speech API) |
 | **OpenAI TTS**, **ElevenLabs**, **Azure Speech**, **Google Cloud TTS** | nuvem | chave no painel **⚙ voz** (ou no `.env`) |
 

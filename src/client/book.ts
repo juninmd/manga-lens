@@ -791,9 +791,9 @@ export class BookReader {
 
     const hint = current.local
       ? current.id === 'kokoro'
-        ? 'Kokoro roda local (ex.: docker run -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-cpu). Vozes PT-BR: pf_dora, pm_alex.'
+        ? 'Kokoro roda local (ex.: docker run -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-cpu:latest). Vozes PT-BR: pf_dora, pm_alex.'
         : current.id === 'piper'
-          ? 'Piper roda local: python -m piper.http_server -m pt_BR-faber-medium.'
+          ? 'Piper roda local: pip install "piper-tts[http]", python -m piper.download_voices pt_BR-faber-medium e python -m piper.http_server -m pt_BR-faber-medium.'
           : 'Usa as vozes instaladas no sistema. Sem servidor e sem chave.'
       : 'O texto do capitulo vai para o servico na nuvem e pode ter custo. A chave fica so neste computador.';
 

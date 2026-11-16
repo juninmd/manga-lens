@@ -96,7 +96,7 @@ describe('API de voz', () => {
     expect(res.headers.get('content-type')).toBe('audio/mpeg');
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
     expect(seen[0]!.url).toBe('http://kokoro.test/v1/audio/speech');
-    expect(JSON.parse(String(seen[0]!.init.body))).toMatchObject({ input: 'Bom dia.', voice: 'pf_dora', speed: 1.25, lang_code: 'p' });
+    expect(JSON.parse(String(seen[0]!.init.body))).toMatchObject({ input: 'Bom dia.', voice: 'pf_dora', speed: 1.25, lang_code: 'p', stream: false });
   });
 
   test('SaaS sem chave recusa sem chamar a rede', async () => {
@@ -119,10 +119,12 @@ describe('API de voz', () => {
     ttsConfig.azure.apiKey = 'az-key';
     ttsConfig.azure.region = 'brazilsouth';
     mockFetch(() => new Response(new Uint8Array([7]), { headers: { 'Content-Type': 'audio/mpeg' } }));
-    await post('/api/tts/speak', { engine: 'azure', text: 'A & B <c>' });
+    await post('/api/tts/speak', { engine: 'azure', text: 'A & B <c>', speed: 1.25 });
     expect(seen[0]!.url).toBe('https://brazilsouth.tts.speech.microsoft.com/cognitiveservices/v1');
     expect(String(seen[0]!.init.body)).toContain('A &amp; B &lt;c&gt;');
     expect(String(seen[0]!.init.body)).toContain('pt-BR-FranciscaNeural');
+    expect(String(seen[0]!.init.body)).toContain('xmlns="http://www.w3.org/2001/10/synthesis"');
+    expect(String(seen[0]!.init.body)).toContain('rate="+25%"');
   });
 
   test('ElevenLabs usa o modelo multilingue e a chave no cabecalho', async () => {
@@ -131,7 +133,30 @@ describe('API de voz', () => {
     await post('/api/tts/speak', { engine: 'elevenlabs', text: 'Oi.' });
     expect(seen[0]!.url).toContain('/text-to-speech/');
     expect((seen[0]!.init.headers as Record<string, string>)['xi-api-key']).toBe('el-key');
-    expect(JSON.parse(String(seen[0]!.init.body)).model_id).toBe('eleven_multilingual_v2');
+    const body = JSON.parse(String(seen[0]!.init.body));
+    expect(body.model_id).toBe('eleven_multilingual_v2');
+    // multilingual_v2 nao aceita language_code
+    expect(body.language_code).toBeUndefined();
+  });
+
+  test('OpenAI gpt-4o-mini-tts leva instrucao de PT-BR', async () => {
+    ttsConfig.openai.apiKey = 'sk';
+    ttsConfig.openai.model = 'gpt-4o-mini-tts';
+    mockFetch(() => new Response(new Uint8Array([1]), { headers: { 'Content-Type': 'audio/mpeg' } }));
+    await post('/api/tts/speak', { engine: 'openai', text: 'Oi.' });
+    expect(seen[0]!.url).toBe('https://api.openai.com/v1/audio/speech');
+    const body = JSON.parse(String(seen[0]!.init.body));
+    expect(body).toMatchObject({ model: 'gpt-4o-mini-tts', voice: 'nova' });
+    expect(body.instructions).toContain('portugues do Brasil');
+  });
+
+  test('Piper usa POST /synthesize e cai no POST / do servidor antigo', async () => {
+    ttsConfig.piper.baseUrl = 'http://piper.test';
+    mockFetch((url) => (url.endsWith('/synthesize') ? new Response('', { status: 404 }) : new Response(new Uint8Array([4]), { headers: { 'Content-Type': 'audio/wav' } })));
+    const res = await post('/api/tts/speak', { engine: 'piper', text: 'Oi.', speed: 2 });
+    expect(res.status).toBe(200);
+    expect(seen.map((s) => s.url)).toEqual(['http://piper.test/synthesize', 'http://piper.test/']);
+    expect(JSON.parse(String(seen[0]!.init.body))).toMatchObject({ text: 'Oi.', voice: 'pt_BR-faber-medium', length_scale: 0.5 });
   });
 
   test('motor local fora do ar responde 503 com dica', async () => {
