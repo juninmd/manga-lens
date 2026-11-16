@@ -59,10 +59,11 @@ jobs:
           chmod +x "$HOME/.local/bin/x86_64-w64-mingw32-windres"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      # o Tauri confere se o sidecar existe; aqui so' se checa o Rust, entao basta o arquivo
-      - name: Sidecar de mentira
+      # O Tauri confere, em tempo de compilacao, que o sidecar e o front (`frontendDist`,
+      # que o git ignora) existem. Aqui so' se checa o Rust: basta o arquivo e a pasta.
+      - name: Sidecar e front de mentira
         run: |
-          mkdir -p src-tauri/binaries
+          mkdir -p src-tauri/binaries public
           : > src-tauri/binaries/manga-lens-server-x86_64-pc-windows-gnu.exe
 
       # No alvo `gnu` o tauri-build le `<target>/debug/build`, mas calcula esse caminho subindo 3
