@@ -336,6 +336,8 @@ export class Reader {
     this.viewer.fit = store.settings.fit;
     this.viewer.rtl = store.settings.rtl;
 
+    // a tela de configuracoes mexe em `store.settings` com o leitor aberto ou fechado
+    window.addEventListener('ml:settings-changed', this.syncFromSettings);
     this.stage.addEventListener('pointermove', this.onStagePointerMove);
     this.stage.addEventListener('pointerleave', this.onStagePointerLeave);
     this.stage.addEventListener('pointerdown', (e) => {
@@ -905,6 +907,27 @@ export class Reader {
     if (this.popoverOpen) this.buildPopover();
     toast('configuracoes restauradas');
   }
+
+  /**
+   * Modo, ajuste e direcao sao guardados pelo proprio leitor, nao lidos a cada uso:
+   * mexer neles pela tela de configuracoes tem de reaplica-los. Fechado, basta
+   * ajustar o que a proxima abertura vai ler.
+   */
+  private syncFromSettings = (): void => {
+    if (!this.host.classList.contains('is-open')) {
+      this.viewer.mode = store.settings.mode;
+      this.viewer.fit = store.settings.fit;
+      return;
+    }
+    this.viewer.setMode(store.settings.mode);
+    this.viewer.applyFit(store.settings.fit);
+    this.rtl = this.rtlFor(this.detail);
+    this.viewer.setRtl(this.rtl);
+    this.invalidateTranslations();
+    this.refreshBars();
+    if (this.popoverOpen) this.buildPopover();
+    this.paintOverlays();
+  };
 
   private originBadge(): HTMLElement {
     const detectedLang = this.chapter?.lang ?? this.detail?.origin;

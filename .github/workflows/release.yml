@@ -115,3 +115,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release upload "${{ needs.release.outputs.tag }}" src-tauri/target/release/bundle/nsis/*.exe --clobber
+
+      # o app confere este hash antes de instalar: ele aparece aqui para quem acompanha a release
+      - name: Resumo do instalador
+        shell: bash
+        run: |
+          exe=$(ls src-tauri/target/release/bundle/nsis/*.exe | head -n 1)
+          {
+            echo "## Instalador ${{ needs.release.outputs.tag }}"
+            echo
+            echo "| Arquivo | Tamanho | SHA-256 |"
+            echo "|---|---|---|"
+            echo "| \`$(basename "$exe")\` | $(du -h "$exe" | cut -f1) | \`$(sha256sum "$exe" | cut -d' ' -f1)\` |"
+            echo
+            echo "O app instalado oferece esta versão e confere o SHA-256 acima antes de instalar."
+          } >> "$GITHUB_STEP_SUMMARY"

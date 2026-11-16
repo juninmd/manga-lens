@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { checkForUpdate } from './version.ts';
+import { cancelUpdateDownload, getUpdateState, isDesktopApp, startUpdateDownload, UpdateError } from './updater.ts';
 import { join, extname } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { config, getProviderConfig, hostAllowed, normalizeProvider, saveAiConfig, type AiProvider } from './config.ts';
@@ -109,7 +110,35 @@ app.onError((err, c) => {
   return c.json({ error: status === 500 ? `falha interna: ${err.message}` : err.message }, status as 500);
 });
 
-app.get('/api/version', async (c) => c.json(await checkForUpdate({ force: c.req.query('refresh') === '1' })));
+app.get('/api/version', async (c) => {
+  const info = await checkForUpdate({ force: c.req.query('refresh') === '1', offline: c.req.query('local') === '1' });
+  // instalar de dentro do app so' no desktop e so' quando a release publicou o hash do instalador
+  return c.json({ ...info, canInstall: isDesktopApp() && Boolean(info.installerSha256) });
+});
+
+app.get('/api/update/state', (c) => c.json({ ...getUpdateState(), canInstall: isDesktopApp() }));
+
+/**
+ * Exige JSON: um formulario ou `fetch` simples de outra pagina nao manda esse
+ * tipo sem preflight, e o preflight so' passa para a origem do proprio app.
+ */
+const jsonOnly = (c: { req: { header(n: string): string | undefined } }): boolean => (c.req.header('content-type') ?? '').includes('application/json');
+
+app.post('/api/update/download', async (c) => {
+  if (!jsonOnly(c)) return c.json({ error: 'content-type invalido' }, 415);
+  if (!isDesktopApp()) return c.json({ error: 'a instalacao automatica so existe no app desktop' }, 400);
+  try {
+    return c.json(await startUpdateDownload(await checkForUpdate()), 202);
+  } catch (err) {
+    if (err instanceof UpdateError) return c.json({ error: err.message }, err.status);
+    throw err;
+  }
+});
+
+app.post('/api/update/cancel', async (c) => {
+  if (!jsonOnly(c)) return c.json({ error: 'content-type invalido' }, 415);
+  return c.json(await cancelUpdateDownload());
+});
 
 app.get('/api/providers', (c) => {
   const contentType = c.req.query('contentType') as SearchFilters['contentType'];

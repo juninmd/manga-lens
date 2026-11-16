@@ -31,6 +31,13 @@ export async function resolveApiBase(): Promise<string> {
 
 export const api = (path: string): string => apiBase + path;
 
+/** Chama um comando do shell Rust (so' no app desktop). */
+export async function desktopInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  const invoke = tauri().__TAURI__?.core?.invoke ?? tauri().__TAURI_INTERNALS__?.invoke;
+  if (!invoke) throw new Error('isto so existe no app desktop');
+  return invoke<T>(cmd, args);
+}
+
 /**
  * O sidecar pode demorar a escutar (binario Bun + init dos providers): o
  * primeiro fetch do catalogo caia em "servidor indisponivel" e abas vazias.

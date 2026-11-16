@@ -1,3 +1,4 @@
+import { compareVersions, parseVersion } from '../shared/semver.ts';
 import buildInfo from './build-info.json' with { type: 'json' };
 
 /**
@@ -24,6 +25,10 @@ export interface UpdateInfo {
   url: string | null;
   /** instalador (.exe) da release, quando existe */
   downloadUrl: string | null;
+  /** tamanho do instalador em bytes, como a release declara */
+  installerSize: number | null;
+  /** SHA-256 do instalador (hex), publicado pelo GitHub junto do arquivo; sem ele nao ha' instalacao automatica */
+  installerSha256: string | null;
   notes: string | null;
   publishedAt: string | null;
   checkedAt: number;
@@ -33,24 +38,7 @@ export interface UpdateInfo {
   error?: string;
 }
 
-const SEMVER = /^v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/;
-
-export function parseVersion(v: string): [number, number, number] | null {
-  const m = SEMVER.exec(v.trim());
-  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
-}
-
-/** >0 quando `a` e' mais nova que `b`; 0 se igual ou se algum nao for versao valida. */
-export function compareVersions(a: string, b: string): number {
-  const pa = parseVersion(a);
-  const pb = parseVersion(b);
-  if (!pa || !pb) return 0;
-  for (let i = 0; i < 3; i++) {
-    const d = pa[i]! - pb[i]!;
-    if (d !== 0) return d;
-  }
-  return 0;
-}
+export { compareVersions, parseVersion };
 
 interface GhRelease {
   tag_name?: string;
@@ -59,7 +47,7 @@ interface GhRelease {
   published_at?: string;
   draft?: boolean;
   prerelease?: boolean;
-  assets?: { name?: string; browser_download_url?: string }[];
+  assets?: { name?: string; browser_download_url?: string; size?: number; digest?: string | null }[];
 }
 
 type Fetcher = (url: string, init: RequestInit) => Promise<Response>;
@@ -75,7 +63,7 @@ export function resetUpdateCache(): void {
 }
 
 export async function checkForUpdate(
-  opts: { fetcher?: Fetcher; now?: number; force?: boolean; current?: string } = {},
+  opts: { fetcher?: Fetcher; now?: number; force?: boolean; current?: string; offline?: boolean } = {},
 ): Promise<UpdateInfo> {
   const now = opts.now ?? Date.now();
   const current = opts.current ?? CURRENT_VERSION;
@@ -85,12 +73,16 @@ export async function checkForUpdate(
     available: false,
     url: null,
     downloadUrl: null,
+    installerSize: null,
+    installerSha256: null,
     notes: null,
     publishedAt: null,
     checkedAt: now,
   };
   if (!parseVersion(current)) return { ...base, devBuild: true };
   if (process.env['UPDATE_CHECK']?.toLowerCase() === 'off') return { ...base, disabled: true };
+  // quem desligou a checagem nas configuracoes ainda ve a versao instalada, sem ir ao GitHub
+  if (opts.offline) return base;
 
   if (cache && cache.current === current) {
     const age = now - cache.checkedAt;
@@ -116,6 +108,9 @@ export async function checkForUpdate(
       available: compareVersions(latest, current) > 0,
       url: rel.html_url ?? `https://github.com/${REPO}/releases/tag/v${latest}`,
       downloadUrl: exe?.browser_download_url ?? null,
+      installerSize: Number.isInteger(exe?.size) && (exe?.size ?? 0) > 0 ? (exe?.size as number) : null,
+      // o GitHub publica `sha256:<hex>` por arquivo; release antiga pode nao ter
+      installerSha256: /^sha256:([0-9a-f]{64})$/i.exec(exe?.digest ?? '')?.[1]?.toLowerCase() ?? null,
       notes: rel.body?.trim() || null,
       publishedAt: rel.published_at ?? null,
     };

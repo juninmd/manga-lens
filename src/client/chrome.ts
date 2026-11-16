@@ -1,4 +1,6 @@
 import { el, toast } from './ui.ts';
+import { openSettings } from './settings.ts';
+import { applyTheme, getThemeMode, toggleTheme } from './theme.ts';
 import { fmtVersion, getUpdate, onUpdate, openUpdateDialog, startUpdateChecks } from './update.ts';
 
 /**
@@ -19,6 +21,7 @@ const ICONS: Record<string, string> = {
   backup: '<path d="M12 3v12m0 0-4-4m4 4 4-4M4 17v3h16v-3"/>',
   restore: '<path d="M12 21V9m0 0-4 4m4-4 4 4M4 7V4h16v3"/>',
   update: '<circle cx="12" cy="12" r="9"/><path d="m8 12 4-4 4 4M12 8v8"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/>',
 };
 
 const svg = (key: string): SVGSVGElement => {
@@ -45,17 +48,6 @@ const resume = (): void => {
 
 const focusSearch = (): void => {
   document.querySelector<HTMLInputElement>('input.ml-search')?.focus();
-};
-
-const toggleTheme = (): void => {
-  const root = document.documentElement;
-  const dark = (root.dataset.theme ?? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')) === 'dark';
-  root.dataset.theme = dark ? 'light' : 'dark';
-  try {
-    localStorage.setItem('ml:theme', root.dataset.theme);
-  } catch {
-    // modo privado: o tema vale so' nesta sessao
-  }
 };
 
 /** Item fixo no pe' do trilho: versao instalada sempre visivel e selo quando ha' release nova. */
@@ -100,6 +92,7 @@ function buildRail(): HTMLElement {
     item('backup', 'Backup', () => press('backup')),
     item('restore', 'Importar backup', () => press('import')),
     el('div', { class: 'ml-rail-grow' }),
+    item('settings', 'Configurações', () => openSettings()),
     buildVersionItem(),
     el('button', { class: 'ml-rail-item', type: 'button', 'aria-label': 'Paleta de comandos', onclick: openPalette }, el('kbd', {}, 'Ctrl K'), el('span', {}, 'Comandos')),
   );
@@ -122,7 +115,9 @@ const ACTIONS: Action[] = [
   { label: 'Configurar IA e motores', hint: 'Gaveta', run: () => press('ai') },
   { label: 'Baixar backup', hint: 'Dados', run: () => press('backup') },
   { label: 'Importar backup', hint: 'Dados', run: () => press('import') },
+  { label: 'Configurações', hint: 'Ctrl ,', run: () => openSettings() },
   { label: 'Versão e atualizações', hint: 'Sobre', run: openUpdateDialog },
+  { label: 'Preferências de atualização', hint: 'Configurações', run: () => openSettings('atualizacao') },
   { label: 'Alternar tema claro/escuro', hint: 'Aparência', run: toggleTheme },
 ];
 
@@ -258,12 +253,8 @@ function wireTabPill(): void {
 }
 
 export function mountChrome(): void {
-  try {
-    const saved = localStorage.getItem('ml:theme');
-    if (saved === 'light' || saved === 'dark') document.documentElement.dataset.theme = saved;
-  } catch {
-    // sem storage: segue o tema do sistema
-  }
+  // sem escolha guardada fica "sistema": o CSS segue o prefers-color-scheme
+  applyTheme(getThemeMode());
   document.body.classList.add('ml-v2');
   document.body.prepend(el('div', { class: 'ml-aurora', 'aria-hidden': 'true' }, el('i', {}), el('i', {})));
   document.body.append(buildRail());
@@ -271,6 +262,11 @@ export function mountChrome(): void {
   wireTabPill();
   startUpdateChecks();
   document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === ',') {
+      e.preventDefault();
+      openSettings();
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
       e.preventDefault();
       if (palette) closePalette();

@@ -1,9 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod update;
+
 use std::net::TcpListener;
+use std::path::Path;
 use std::sync::Mutex;
 
-use tauri::{Manager, RunEvent, State};
+use tauri::{AppHandle, Manager, RunEvent, State};
 use tauri_plugin_shell::process::CommandChild;
 use tauri_plugin_shell::ShellExt;
 
@@ -24,10 +27,35 @@ fn api_port(port: State<'_, ApiPort>) -> u16 {
     port.0
 }
 
+/// Abre o instalador que o sidecar baixou e conferiu, e fecha o app para o
+/// instalador poder substituir os arquivos. O caminho vem do front, entao so' vale
+/// um `MangaLens_X.Y.Z_x64-setup.exe` dentro da pasta de atualizacoes do app.
+#[tauri::command]
+fn install_update(app: AppHandle, path: String) -> Result<(), String> {
+    // a mesma pasta que o sidecar usa (`CACHE_DIR/updates`, ver `setup`)
+    let updates_dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| e.to_string())?
+        .join("cache")
+        .join("updates");
+    let installer = update::validate_installer(Path::new(&path), &updates_dir)?;
+    update::launch_installer(&installer)?;
+
+    // o instalador troca o executavel do app e o do sidecar: os dois tem de estar fechados
+    if let Some(sidecar) = app.try_state::<Sidecar>() {
+        if let Some(child) = sidecar.0.lock().ok().and_then(|mut c| c.take()) {
+            let _ = child.kill();
+        }
+    }
+    app.exit(0);
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![api_port])
+        .invoke_handler(tauri::generate_handler![api_port, install_update])
         .setup(|app| {
             let port = free_port();
             app.manage(ApiPort(port));
@@ -45,6 +73,8 @@ fn main() {
                 .shell()
                 .sidecar("manga-lens-server")?
                 .env("PORT", port.to_string())
+                // so' no app instalado o servidor oferece "atualizar agora" (no navegador nao ha' o que instalar)
+                .env("MANGA_LENS_DESKTOP", "1")
                 .env("CACHE_DIR", cache_dir.to_string_lossy().to_string())
                 // se a janela morrer a seco, o sidecar percebe e se encerra sozinho
                 .env("PARENT_PID", std::process::id().to_string());

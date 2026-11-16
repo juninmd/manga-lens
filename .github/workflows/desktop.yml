@@ -1,0 +1,56 @@
+name: Desktop
+
+# O instalador so' e' compilado DEPOIS do merge (release.yml, Windows, ~8 min): um erro
+# de Rust so' apareceria la', com a release ja' publicada sem instalador e o app sem
+# ter para onde atualizar. Aqui o PR confere o shell Tauri — so' quando mexe no que o
+# compila, para nao pesar nos PRs comuns. Alvo Windows em Linux: o `cfg(windows)` do
+# instalador e' justamente o que o `cargo check` do alvo nativo nao enxergaria.
+on:
+  pull_request:
+    paths:
+      - 'src-tauri/**'
+      - '.github/workflows/desktop.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src-tauri/**'
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # o build script do Tauri embute o icone com o windres do MinGW
+      - name: MinGW (windres)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends binutils-mingw-w64-x86-64
+
+      # o Tauri confere se o sidecar existe; aqui so' se checa o Rust, entao basta o arquivo
+      - name: Sidecar de mentira
+        run: |
+          mkdir -p src-tauri/binaries
+          : > src-tauri/binaries/manga-lens-server-x86_64-pc-windows-gnu.exe
+
+      - name: cargo check (alvo Windows)
+        run: cargo check --locked --target x86_64-pc-windows-gnu --manifest-path src-tauri/Cargo.toml
+
+      - name: Testes do modulo de instalacao
+        run: |
+          rustc --edition 2021 --test src-tauri/src/update.rs -o "$RUNNER_TEMP/update_test"
+          "$RUNNER_TEMP/update_test"
