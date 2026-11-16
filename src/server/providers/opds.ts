@@ -137,6 +137,78 @@ export function parseFeed(xml: string): OpdsFeed {
   return { title: text(child(head, 'title') ?? '') || undefined, entries, links: linksOf(head) };
 }
 
+type Json = Record<string, unknown>;
+const isObj = (v: unknown): v is Json => typeof v === 'object' && v !== null && !Array.isArray(v);
+const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : v === undefined || v === null ? [] : [v]);
+const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+/** Campo de idioma do Readium (`{ "pt": "...", "en": "..." }`) ou texto puro. */
+const langStr = (v: unknown): string => (isObj(v) ? str(Object.values(v)[0]) : str(v));
+
+/** OPDS 2.0: `rel` pode ser texto ou lista; `templated` vira o `{searchTerms}` do 1.x. */
+function jsonLinks(raw: unknown): OpdsLink[] {
+  return arr(raw).flatMap((l): OpdsLink[] => {
+    if (!isObj(l) || !str(l.href)) return [];
+    const rels = arr(l.rel).map(str).filter(Boolean);
+    let href = str(l.href);
+    // RFC 6570: `{?query}` / `{?query,page}` → `?query={searchTerms}`
+    if (l.templated === true) {
+      href = href.replace(/\{\?([^}]+)\}/, (_m, vars: string) => {
+        const names = vars.split(',').map((v) => v.trim());
+        const q = names.find((n) => /^(query|q|search|title)$/i.test(n)) ?? names[0]!;
+        return `?${q}={searchTerms}`;
+      });
+    }
+    const props = isObj(l.properties) ? l.properties : {};
+    const count = Number(props.numberOfItems);
+    const base = { href, type: str(l.type).toLowerCase(), ...(Number.isInteger(count) && count > 0 ? { count } : {}) };
+    return (rels.length ? rels : ['']).map((rel) => ({ ...base, rel }));
+  });
+}
+
+function jsonPublication(pub: Json): OpdsEntry {
+  const m = isObj(pub.metadata) ? pub.metadata : {};
+  const authors = arr(m.author).map((a) => (isObj(a) ? langStr(a.name) : str(a))).filter(Boolean);
+  const tags = arr(m.subject).map((t) => (isObj(t) ? langStr(t.name) : str(t))).filter(Boolean);
+  const lang = str(arr(m.language)[0]);
+  const summary = langStr(m.description).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  const images = jsonLinks(pub.images).map((l, i) => ({ ...l, rel: i === 0 ? 'http://opds-spec.org/image/thumbnail' : 'http://opds-spec.org/image' }));
+  return {
+    title: langStr(m.title) || 'Sem titulo',
+    id: str(m.identifier),
+    authors,
+    ...(summary ? { summary: summary.slice(0, 900) } : {}),
+    tags: tags.slice(0, 8),
+    ...(lang ? { lang: lang.toLowerCase() } : {}),
+    links: [...jsonLinks(pub.links), ...images],
+  };
+}
+
+/** Entrada de navegacao do OPDS 2.0 vira o mesmo formato da entrada Atom que leva a outro feed. */
+const jsonNavigation = (nav: Json): OpdsEntry => ({
+  title: langStr(nav.title) || 'Sem titulo',
+  id: str(nav.href),
+  authors: [],
+  tags: [],
+  links: jsonLinks([{ type: 'application/opds+json', ...nav, rel: arr(nav.rel).length ? nav.rel : 'subsection' }]),
+});
+
+/**
+ * Feed OPDS 2.0 (JSON, Readium Web Publication Manifest) no mesmo formato do
+ * Atom: o resto do provider nao precisa saber qual versao o servidor fala.
+ */
+export function parseFeedJson(raw: unknown): OpdsFeed {
+  if (!isObj(raw)) throw new Error('o catalogo nao devolveu um feed OPDS');
+  const meta = isObj(raw.metadata) ? raw.metadata : {};
+  const groups = arr(raw.groups).filter(isObj);
+  const navs = [...arr(raw.navigation), ...groups.flatMap((g) => arr(g.navigation))].filter(isObj);
+  const pubs = [...arr(raw.publications), ...groups.flatMap((g) => arr(g.publications))].filter(isObj);
+  return {
+    title: langStr(meta.title) || undefined,
+    entries: [...navs.map(jsonNavigation), ...pubs.map(jsonPublication)],
+    links: jsonLinks(raw.links),
+  };
+}
+
 /** Formato do arquivo de aquisicao, pela ordem de preferencia de leitura. */
 const FORMATS: { kind: 'epub' | 'cbz' | 'cbr' | 'pdf'; re: RegExp }[] = [
   { kind: 'epub', re: /epub/ },
@@ -149,7 +221,10 @@ export type ArchiveKind = (typeof FORMATS)[number]['kind'];
 
 /** O melhor link de aquisicao da entrada, ou `null` (entrada de navegacao, ou formato que o app nao abre). */
 export function acquisitionOf(entry: OpdsEntry): { href: string; kind: ArchiveKind } | null {
-  const acquisitions = entry.links.filter((l) => l.rel.startsWith('http://opds-spec.org/acquisition'));
+  // OPDS 2.0 tambem usa `self` com o tipo do arquivo para a publicacao em si
+  const acquisitions = entry.links.filter(
+    (l) => l.rel.startsWith('http://opds-spec.org/acquisition') || (l.rel === 'self' && FORMATS.some((f) => f.re.test(l.type))),
+  );
   for (const f of FORMATS) {
     const hit = acquisitions.find((l) => f.re.test(l.type)) ?? acquisitions.find((l) => !l.type && new RegExp(`\\.${f.kind}(?:$|\\?)`, 'i').test(l.href));
     if (hit) return { href: hit.href, kind: f.kind };
@@ -157,7 +232,7 @@ export function acquisitionOf(entry: OpdsEntry): { href: string; kind: ArchiveKi
   return null;
 }
 
-const isFeedLink = (l: OpdsLink): boolean => /atom\+xml/.test(l.type) && !l.rel.startsWith('http://opds-spec.org/acquisition') && !/image|thumbnail|search|self|alternate/.test(l.rel);
+const isFeedLink = (l: OpdsLink): boolean => /atom\+xml|opds\+json/.test(l.type) && !l.rel.startsWith('http://opds-spec.org/acquisition') && !/image|thumbnail|search|self|alternate/.test(l.rel);
 
 /** Link do feed para onde a entrada de navegacao leva. */
 export const navigationOf = (entry: OpdsEntry): string | undefined =>
@@ -227,10 +302,19 @@ export function createOpdsProvider(catalog: OpdsCatalog): OpdsProvider {
 
   async function feed(href: string, signal?: AbortSignal): Promise<{ url: string; feed: OpdsFeed }> {
     const url = resolve(href);
-    const res = await get(url, 'application/atom+xml, application/xml;q=0.9', signal);
-    const xml = await res.text();
-    if (!/<feed\b/i.test(xml)) throw new Error('o catalogo nao devolveu um feed OPDS');
-    const parsed = parseFeed(xml);
+    const res = await get(url, 'application/atom+xml, application/opds+json;q=0.95, application/xml;q=0.9, application/json;q=0.8', signal);
+    const body = await res.text();
+    let parsed: OpdsFeed;
+    if (/^\s*\{/.test(body)) {
+      try {
+        parsed = parseFeedJson(JSON.parse(body));
+      } catch {
+        throw new Error('o catalogo nao devolveu um feed OPDS');
+      }
+    } else {
+      if (!/<feed\b/i.test(body)) throw new Error('o catalogo nao devolveu um feed OPDS');
+      parsed = parseFeed(body);
+    }
     // todo href do feed passa a ser absoluto aqui: o resto do codigo nao lida com relativo
     const fix = (links: OpdsLink[]): OpdsLink[] => links.flatMap((l) => {
       try {
