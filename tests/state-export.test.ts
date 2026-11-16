@@ -90,4 +90,30 @@ describe('exportStore / importStore', () => {
     expect(result.ok).toBe(false);
     expect(JSON.parse(exportStore()).store).toEqual(before);
   });
+
+  test.each([
+    ['favoritos null', { favorites: null }],
+    ['favoritos array', { favorites: [] }],
+    ['progresso null', { progress: null }],
+    ['progresso array', { progress: [1, 2] }],
+    ['settings null', { settings: null }],
+  ])('backup com %s e recusado sem tocar no estado', (_n, patch) => {
+    populate();
+    const before = JSON.parse(exportStore()).store;
+    const backup = JSON.parse(exportStore());
+    Object.assign(backup.store, patch);
+    expect(importStore(JSON.stringify(backup)).ok).toBe(false);
+    expect(JSON.parse(exportStore()).store).toEqual(before);
+  });
+
+  test('entradas que nao sao objeto sao descartadas na importacao', () => {
+    populate();
+    const backup = JSON.parse(exportStore());
+    backup.store.favorites.lixo = null;
+    backup.store.bookmarks.push(42);
+    expect(importStore(JSON.stringify(backup)).ok).toBe(true);
+    const after = JSON.parse(exportStore()).store;
+    expect(after.favorites.lixo).toBeUndefined();
+    expect(after.bookmarks).not.toContain(42);
+  });
 });

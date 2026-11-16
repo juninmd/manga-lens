@@ -150,14 +150,21 @@ function load(): Store {
 export const store: Store = load();
 
 let saveTimer: number | undefined;
+let storageWarned = false;
 
 function writeNow(): void {
   clearTimeout(saveTimer);
   saveTimer = undefined;
   try {
     localStorage.setItem(KEY, JSON.stringify(store));
-  } catch {
-    /* quota cheia: preferencia nao vale travar a leitura */
+    storageWarned = false;
+  } catch (err) {
+    // quota cheia ou storage bloqueado: nao trava a leitura, mas avisa uma vez
+    // (antes o progresso sumia calado no proximo boot)
+    if (!storageWarned) {
+      storageWarned = true;
+      window.dispatchEvent(new CustomEvent('ml:storage-failed', { detail: (err as Error)?.name ?? 'erro' }));
+    }
   }
 }
 
@@ -374,6 +381,15 @@ export function exportStore(): string {
 }
 
 /** Sobrescreve o estado a partir de um backup exportado por `exportStore`. Falha sem tocar no estado atual se o JSON for invalido ou incompleto. */
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/** Descarta entradas que nao sao objeto (null, numero, array) de um mapa importado. */
+function onlyRecords(map: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(map).filter(([, v]) => isRecord(v)));
+}
+
 export function importStore(json: string): { ok: true } | { ok: false; error: string } {
   let parsed: unknown;
   try {
@@ -382,22 +398,23 @@ export function importStore(json: string): { ok: true } | { ok: false; error: st
     return { ok: false, error: 'arquivo nao e um JSON valido' };
   }
   const backup = parsed as Partial<StoreBackup> | null;
-  const s = backup?.store as Partial<Store> | undefined;
+  const s = isRecord(backup) ? (backup.store as Partial<Store> | undefined) : undefined;
+  // `typeof null === 'object'` e array tambem: os dois passavam e corrompiam o estado
   if (
-    !s ||
-    typeof s.settings !== 'object' ||
-    typeof s.favorites !== 'object' ||
-    typeof s.progress !== 'object' ||
-    typeof s.read !== 'object' ||
+    !isRecord(s) ||
+    !isRecord(s.settings) ||
+    !isRecord(s.favorites) ||
+    !isRecord(s.progress) ||
+    !isRecord(s.read) ||
     !Array.isArray(s.bookmarks)
   ) {
     return { ok: false, error: 'arquivo nao parece um backup do MangaLens' };
   }
   store.settings = { ...DEFAULTS.settings, ...s.settings };
-  store.favorites = s.favorites as Store['favorites'];
-  store.progress = s.progress as Store['progress'];
-  store.read = s.read as Store['read'];
-  store.bookmarks = s.bookmarks as Bookmark[];
+  store.favorites = onlyRecords(s.favorites) as Store['favorites'];
+  store.progress = onlyRecords(s.progress) as Store['progress'];
+  store.read = Object.fromEntries(Object.entries(s.read).filter(([, v]) => Array.isArray(v))) as Store['read'];
+  store.bookmarks = s.bookmarks.filter(isRecord) as unknown as Bookmark[];
   readCache.clear();
   persist();
   return { ok: true };

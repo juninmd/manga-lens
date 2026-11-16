@@ -1409,9 +1409,31 @@ export class Catalog {
     const apiKeyInput = el('input', {
       class: 'ml-input',
       type: 'password',
-      value: provConfig.apiKey,
-      placeholder: provConfig.id === 'ollama' ? 'opcional para Ollama local' : 'sk-or-v1-...',
+      value: '',
+      // a chave nao volta do servidor: campo vazio mantem a salva
+      placeholder: provConfig.hasKey
+        ? `chave salva${provConfig.keyHint ? ` (${provConfig.keyHint})` : ''} — deixe vazio para manter`
+        : provConfig.id === 'ollama'
+          ? 'opcional para Ollama local'
+          : 'sk-or-v1-...',
     }) as HTMLInputElement;
+
+    const clearKeyBtn = el(
+      'button',
+      {
+        class: 'ml-btn ml-btn-ghost ml-btn-sm',
+        title: 'Remover a chave salva deste provedor',
+        disabled: !provConfig.hasKey,
+        onclick: async (e: MouseEvent) => {
+          e.preventDefault();
+          this.aiData = await saveAiConfig({ provider: this.selectedAiProvider, clearKey: true });
+          apiKeyInput.value = '';
+          apiKeyInput.placeholder = 'chave removida';
+          (e.currentTarget as HTMLButtonElement).disabled = true;
+        },
+      },
+      'remover chave',
+    );
 
     const toggleKeyVisibilityBtn = el(
       'button',
@@ -1456,7 +1478,7 @@ export class Catalog {
             await saveAiConfig({
               provider: this.selectedAiProvider,
               baseUrl: baseUrlInput.value,
-              apiKey: apiKeyInput.value,
+              apiKey: apiKeyInput.value || undefined,
             });
             const res = await getAiModels(this.selectedAiProvider);
             if (res.ok && res.models?.length) {
@@ -1508,7 +1530,7 @@ export class Catalog {
             await saveAiConfig({
               provider: this.selectedAiProvider,
               baseUrl: baseUrlInput.value,
-              apiKey: apiKeyInput.value,
+              apiKey: apiKeyInput.value || undefined,
               model: modelInput.value,
               visionModel: visionModelInput.value,
             });
@@ -1551,7 +1573,7 @@ export class Catalog {
               active: this.aiData?.active,
               provider: this.selectedAiProvider,
               baseUrl: baseUrlInput.value,
-              apiKey: apiKeyInput.value,
+              apiKey: apiKeyInput.value || undefined,
               model: modelInput.value,
               visionModel: visionModelInput.value,
             });
@@ -1598,7 +1620,7 @@ export class Catalog {
         'div',
         { class: 'ml-field' },
         el('label', {}, 'Chave de API (token)'),
-        el('div', { class: 'ml-input-with-btn' }, apiKeyInput, toggleKeyVisibilityBtn),
+        el('div', { class: 'ml-input-with-btn' }, apiKeyInput, toggleKeyVisibilityBtn, clearKeyBtn),
         el(
           'small',
           { class: 'ml-field-hint' },

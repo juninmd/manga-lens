@@ -2,8 +2,9 @@ import { Hono } from 'hono';
 import { checkForUpdate } from './version.ts';
 import { cancelUpdateDownload, getUpdateState, isDesktopApp, startUpdateDownload, UpdateError } from './updater.ts';
 import { join, extname } from 'node:path';
-import { mkdir } from 'node:fs/promises';
-import { config, getProviderConfig, hostAllowed, normalizeProvider, saveAiConfig, type AiProvider } from './config.ts';
+import { mkdir, rename, unlink } from 'node:fs/promises';
+import { gunzipSync } from 'node:zlib';
+import { config, getProviderConfig, hostAllowed, normalizeProvider, saveAiConfig } from './config.ts';
 import { normalizeProviderImage } from './provider-image.ts';
 import { signUrl, verifyUrl } from './sign.ts';
 import { HttpError, httpFetch } from './http.ts';
@@ -12,6 +13,7 @@ import type { OpdsProvider } from './providers/opds.ts';
 import type { SearchFilters, SeriesCard } from './providers/types.ts';
 import { assertInsideLibrary, localBookBlocks, localPagePaths } from './providers/local.ts';
 import { readZipEntry, readZipIndex } from './zip.ts';
+import { AiConfigError, type AiConfigPatch, parseAiConfigBody } from './ai-config-body.ts';
 import { readRarEntry } from './rar.ts';
 import { pdfPageImage } from './pdf.ts';
 import {
@@ -103,6 +105,8 @@ app.use('*', async (c, next) => {
 });
 
 app.onError((err, c) => {
+  // corpo que nao e' JSON e' erro de quem chamou: 400, nao "falha interna"
+  if (err instanceof SyntaxError) return c.json({ error: 'JSON invalido no corpo da requisicao' }, 400);
   console.error('[erro]', err.message);
   // HttpError do provider (404 de serie removida, 429...) precisa manter o status:
   // virar 500 generico fazia o cliente dizer "fonte fora do ar" para titulo que sumiu
@@ -163,6 +167,13 @@ app.get('/api/tags', async (c) => {
   return c.json(await provider.tags());
 });
 
+/** Inteiro dentro de [min, max]; ausente, invalido ou fracionario cai no padrao/limite. */
+export function clampInt(raw: string | undefined, fallback: number, min: number, max: number): number {
+  const n = Math.trunc(Number(raw));
+  if (!raw || !Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
 app.get('/api/search', async (c) => {
   const q = c.req.query();
   const filters: SearchFilters = {
@@ -180,8 +191,8 @@ app.get('/api/search', async (c) => {
     yearTo: Number(q['yearTo']) || undefined,
     sort: (q['sort'] as SearchFilters['sort']) || undefined,
     order: q['order'] === 'asc' ? 'asc' : q['order'] === 'desc' ? 'desc' : undefined,
-    page: Number(q['page']) || 1,
-    limit: Number(q['limit']) || 24,
+    page: clampInt(q['page'], 1, 1, 500),
+    limit: clampInt(q['limit'], 24, 1, 100),
   };
   const res = await searchAll(list(q['providers']), filters);
   return c.json({ ...res, items: res.items.map(cardOut) });
@@ -355,11 +366,16 @@ app.get('/api/local/page', async (c) => {
       return c.text(`pagina indisponivel no CBR: ${(err as Error).message}`, 422);
     }
   }
-  const entries = await readZipIndex(base);
-  const entry = entries.find((e) => e.name === name);
-  if (!entry) return c.text('pagina inexistente no CBZ', 404);
-  const buf = await readZipEntry(base, entry);
-  return new Response(new Uint8Array(buf), { headers: imageHeaders });
+  try {
+    const entries = await readZipIndex(base);
+    const entry = entries.find((e) => e.name === name);
+    if (!entry) return c.text('pagina inexistente no CBZ', 404);
+    const buf = await readZipEntry(base, entry);
+    return new Response(new Uint8Array(buf), { headers: imageHeaders });
+  } catch (err) {
+    // zip bomb, ZIP64, senha ou arquivo truncado: problema do arquivo, nao do servidor
+    return c.text(`pagina indisponivel no CBZ: ${(err as Error).message}`, 422);
+  }
 });
 
 /** Provider OPDS pelo id: rota de pagina/capa nao aceita outro tipo de provider. */
@@ -419,6 +435,21 @@ app.get('/api/opds/cover', async (c) => {
  * N workers do Tesseract pedem o mesmo modelo ao mesmo tempo no primeiro OCR:
  * sem isto o servidor baixava (e gravava) o arquivo N vezes.
  */
+/** Modelo plausivel: tamanho minimo e, se `.gz`, cabecalho gzip integro. */
+export function tessdataLooksValid(file: string, buf: Uint8Array): boolean {
+  if (buf.length < 1024) return false;
+  if (!file.endsWith('.gz')) return true;
+  if (buf[0] !== 0x1f || buf[1] !== 0x8b) return false;
+  try {
+    // ISIZE do rodape confere com o descompactado: pega arquivo truncado
+    const out = gunzipSync(buf);
+    const isize = new DataView(buf.buffer, buf.byteOffset + buf.length - 4, 4).getUint32(0, true);
+    return (out.length >>> 0) === isize;
+  } catch {
+    return false;
+  }
+}
+
 const tessdataInflight = new Map<string, Promise<Uint8Array<ArrayBuffer>>>();
 
 app.get('/api/tessdata/:file', async (c) => {
@@ -429,7 +460,10 @@ app.get('/api/tessdata/:file', async (c) => {
   const path = join(dir, file);
   const cachedFile = Bun.file(path);
   if (await cachedFile.exists()) {
-    return new Response(cachedFile, { headers: { 'Content-Type': 'application/octet-stream' } });
+    const buf = new Uint8Array(await cachedFile.arrayBuffer()) as Uint8Array<ArrayBuffer>;
+    if (tessdataLooksValid(file, buf)) return new Response(buf, { headers: { 'Content-Type': 'application/octet-stream' } });
+    // download antigo pela metade ficava no cache para sempre: apaga e baixa de novo
+    await unlink(path).catch(() => undefined);
   }
   let pending = tessdataInflight.get(file);
   if (!pending) {
@@ -437,7 +471,13 @@ app.get('/api/tessdata/:file', async (c) => {
       const res = await httpFetch(`https://tessdata.projectnaptha.com/4.0.0/${file}`, { timeoutMs: 120_000 });
       if (!res.ok) throw new Error(`upstream ${res.status}`);
       const buf = new Uint8Array(await res.arrayBuffer()) as Uint8Array<ArrayBuffer>;
-      await Bun.write(path, buf);
+      const declared = Number(res.headers.get('content-length') ?? 0);
+      if (declared && declared !== buf.length) throw new Error(`modelo truncado (${buf.length} de ${declared} bytes)`);
+      if (!tessdataLooksValid(file, buf)) throw new Error('modelo baixado invalido');
+      // temporario + rename: queda no meio nao deixa arquivo pela metade com o nome final
+      const tmp = `${path}.${process.pid}.tmp`;
+      await Bun.write(tmp, buf);
+      await rename(tmp, path);
       return buf;
     })();
     tessdataInflight.set(file, pending);
@@ -482,29 +522,38 @@ app.get('/api/ai/models', async (c) => {
 });
 
 app.post('/api/ai/config', async (c) => {
-  const body = (await c.req.json()) as {
-    active?: AiProvider;
-    provider?: AiProvider;
-    baseUrl?: string;
-    apiKey?: string;
-    model?: string;
-    visionModel?: string;
-  };
-  if (body.active) {
-    config.ai.provider = normalizeProvider(body.active);
+  let body: AiConfigPatch;
+  try {
+    body = parseAiConfigBody(await c.req.json().catch(() => null));
+  } catch (err) {
+    if (err instanceof AiConfigError) return c.json({ error: err.message }, 400);
+    throw err;
   }
-  const target = body.provider ? normalizeProvider(body.provider) : undefined;
+  if (body.active) config.ai.provider = body.active;
+  const target = body.provider;
   if (target) {
+    const current =
+      target === 'openrouter' ? config.ai.openrouter : target === 'openaicompatible' ? config.ai.openaiCompatible : config.ai.ollama;
     const patch: Record<string, string> = {};
-    if (typeof body.baseUrl === 'string') patch.baseUrl = body.baseUrl.trim().replace(/\/+$/, '');
-    if (typeof body.apiKey === 'string') patch.apiKey = body.apiKey.trim();
-    if (typeof body.model === 'string') patch.model = body.model.trim();
-    if (typeof body.visionModel === 'string') patch.visionModel = body.visionModel.trim();
-
-    if (target === 'openrouter') Object.assign(config.ai.openrouter, patch);
-    else if (target === 'openaicompatible') Object.assign(config.ai.openaiCompatible, patch);
-    else if (target === 'ollama') Object.assign(config.ai.ollama, patch);
-
+    if (body.baseUrl !== undefined) {
+      const hostOf = (u: string) => {
+        try {
+          return new URL(u).host;
+        } catch {
+          return '';
+        }
+      };
+      // chave salva para um host nao segue para outro sem o usuario mandar de novo
+      if (hostOf(body.baseUrl) !== hostOf(current.baseUrl) && !body.apiKey && !body.keepKey) {
+        patch.apiKey = target === 'ollama' ? 'ollama' : '';
+      }
+      patch.baseUrl = body.baseUrl;
+    }
+    if (body.clearKey) patch.apiKey = target === 'ollama' ? 'ollama' : '';
+    else if (body.apiKey) patch.apiKey = body.apiKey;
+    if (body.model !== undefined) patch.model = body.model;
+    if (body.visionModel !== undefined) patch.visionModel = body.visionModel;
+    Object.assign(current, patch);
     invalidateProvider(target);
   } else {
     invalidateProvider();
@@ -707,6 +756,9 @@ const STATIC_MIME: Record<string, string> = {
   '.wasm': 'application/wasm',
   '.woff2': 'font/woff2',
 };
+
+// rota de API inexistente devolvia o index.html com 200 e o cliente quebrava no JSON
+app.all('/api/*', (c) => c.json({ error: 'rota inexistente' }, 404));
 
 app.get('*', async (c) => {
   const pathname = new URL(c.req.url).pathname;

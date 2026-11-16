@@ -8,6 +8,11 @@ import { el, qs, toast } from './ui.ts';
 import { getProgress, nextUnreadChapter } from './state.ts';
 import { isDesktop, resolveApiBase, waitForApi } from './base.ts';
 
+// o localStorage cheio ou bloqueado fazia o progresso sumir calado no proximo boot
+window.addEventListener('ml:storage-failed', () => {
+  toast('nao consegui salvar progresso e favoritos (armazenamento cheio ou bloqueado) — exporte um backup em Configuracoes', 'error');
+});
+
 // no desktop a API vive num sidecar: descobre a porta antes de qualquer fetch.
 // Se isso falhar, todo fetch cairia no index.html do bundle e o erro apareceria
 // como "Unexpected token '<'" — melhor falhar aqui, com a causa na tela.
