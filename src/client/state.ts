@@ -1,3 +1,5 @@
+import type { TtsEngineId } from './api.ts';
+
 export type ReadingMode = 'single' | 'double' | 'strip';
 export type FitMode = 'width' | 'page' | 'height' | 'free';
 
@@ -46,6 +48,10 @@ export interface Settings {
   /** leitor de livro: original e traducao lado a lado */
   bookBilingual: boolean;
   bookFont: BookFont;
+  /** leitura em voz alta: motor (local primeiro), voz e velocidade (1 = normal) */
+  ttsEngine: TtsEngineId;
+  ttsVoice: string;
+  ttsRate: number;
 }
 
 export interface Bookmark {
@@ -105,6 +111,10 @@ const DEFAULTS: Store = {
     bookTheme: 'dark',
     bookBilingual: false,
     bookFont: 'serif',
+    // local por padrao: sem chave, sem custo, o texto nao sai da maquina
+    ttsEngine: 'kokoro',
+    ttsVoice: '',
+    ttsRate: 1,
   },
   favorites: {},
   progress: {},

@@ -1,6 +1,19 @@
-import { getBookChapter, getTargets, humanizeError, translate, type ChapterRef, type SeriesDetail, type TargetLangInfo } from './api.ts';
+import {
+  getBookChapter,
+  getTargets,
+  getTtsEngines,
+  humanizeError,
+  saveTtsConfig,
+  translate,
+  type ChapterRef,
+  type SeriesDetail,
+  type TargetLangInfo,
+  type TtsEngineId,
+  type TtsEngineInfo,
+} from './api.ts';
 import { openGlossary } from './glossary.ts';
 import { markChapterRead, persist, saveProgress, store, translateStyle, type BookTheme, type Honorifics, type Tone } from './state.ts';
+import { browserSpeechAvailable, Speaker, systemVoices } from './tts.ts';
 import { el, toast } from './ui.ts';
 
 interface Para {
@@ -29,6 +42,15 @@ const THEMES: [BookTheme, string][] = [
   ['dark', 'escuro'],
   ['sepia', 'sepia'],
   ['light', 'claro'],
+];
+
+const TTS_RATES: [number, string][] = [
+  [0.75, '0.75x'],
+  [1, '1x'],
+  [1.25, '1.25x'],
+  [1.5, '1.5x'],
+  [1.75, '1.75x'],
+  [2, '2x'],
 ];
 
 const isAbortError = (err: unknown): boolean => err instanceof DOMException && err.name === 'AbortError';
@@ -104,6 +126,18 @@ export class BookReader {
   /** opcoes de traducao: popover nativo (fecha no Esc e no clique fora, sem codigo) */
   private optionsEl = el('div', { class: 'ml-book-options', id: 'ml-book-options', popover: 'auto', 'aria-label': 'Opcoes de traducao' });
   private targets: TargetLangInfo[] = [];
+  /** leitura em voz alta */
+  private speakBtn = el(
+    'button',
+    { class: 'ml-btn ml-btn-sm', onclick: () => this.toggleSpeech(), title: 'Ler em voz alta a partir do paragrafo visivel (L)', 'aria-pressed': 'false' },
+    '🔊 ouvir',
+  );
+  private ttsEl = el('div', { class: 'ml-book-options ml-book-tts', id: 'ml-book-tts', popover: 'auto', 'aria-label': 'Opcoes de voz' });
+  private ttsEngines: TtsEngineInfo[] = [];
+  private speaker?: Speaker;
+  private speakingIndex = -1;
+  /** fim do capitulo lendo: o proximo abre e continua falando */
+  private speakOnOpen = false;
   /** fio fino no topo: quanto do capitulo ja' rolou */
   private readFill = el('div', { class: 'ml-book-read-fill' });
 
@@ -125,9 +159,16 @@ export class BookReader {
 
   constructor(private readonly onExit: () => void) {
     document.body.append(this.host);
-    this.host.append(this.buildTopBar(), this.article, this.optionsEl);
+    this.host.append(this.buildTopBar(), this.article, this.optionsEl, this.ttsEl);
     this.optionsEl.addEventListener('toggle', (e) => {
       if ((e as ToggleEvent).newState === 'open') this.buildOptions();
+    });
+    this.ttsEl.addEventListener('toggle', (e) => {
+      if ((e as ToggleEvent).newState === 'open') void this.loadTtsEngines().then(() => this.buildTtsOptions());
+    });
+    // vozes do sistema chegam depois do primeiro getVoices() em alguns navegadores
+    if (browserSpeechAvailable()) speechSynthesis.addEventListener('voiceschanged', () => {
+      if (this.ttsEl.matches(':popover-open')) this.buildTtsOptions();
     });
     void getTargets()
       .then((t) => {
@@ -165,6 +206,8 @@ export class BookReader {
       el(
         'div',
         { class: 'ml-top-right' },
+        this.speakBtn,
+        el('button', { class: 'ml-btn ml-btn-sm', popovertarget: 'ml-book-tts', title: 'Motor de voz (Kokoro, Piper, SaaS), voz e velocidade', 'aria-label': 'Opcoes de voz' }, '⚙ voz'),
         this.bilingualBtn,
         el(
           'button',
@@ -200,6 +243,9 @@ export class BookReader {
   async open(detail: SeriesDetail, chapter: ChapterRef, startBlock = 0): Promise<void> {
     const gen = ++this.gen;
     this.cancel();
+    const keepSpeaking = this.speakOnOpen;
+    this.speakOnOpen = false;
+    this.stopSpeech();
     this.detail = detail;
     this.chapter = chapter;
     this.paras = [];
@@ -239,6 +285,7 @@ export class BookReader {
     this.scrollTo(startBlock);
     this.paintReadProgress();
     if (store.settings.autoTranslate && this.paras.some((p) => !p.pt)) void this.runTranslate();
+    if (keepSpeaking) this.startSpeech(0);
   }
 
   /** O sumario na barra: o capitulo atual vira o titulo, e trocar e' um clique. */
@@ -249,6 +296,8 @@ export class BookReader {
   }
 
   close(): void {
+    this.speakOnOpen = false;
+    this.stopSpeech();
     this.cancel();
     this.gen++;
     this.host.classList.remove('is-open');
@@ -399,6 +448,12 @@ export class BookReader {
   /** Clicar num paragrafo troca entre original e traducao — o equivalente ao balao do manga. */
   private toggleOriginal(id: number): void {
     // lado a lado o original ja' esta' na tela: trocar a coluna da traducao so' duplicaria o texto
+    if (this.speaker) {
+      // lendo em voz alta, o clique leva a leitura para o paragrafo
+      const at = this.paras.findIndex((p) => p.id === id);
+      if (at >= 0) this.startSpeech(at);
+      return;
+    }
     if (store.settings.bookBilingual) return;
     const para = this.paras.find((p) => p.id === id);
     if (!para?.pt) return;
@@ -572,6 +627,195 @@ export class BookReader {
     });
   }
 
+  private async loadTtsEngines(): Promise<void> {
+    try {
+      this.ttsEngines = await getTtsEngines();
+    } catch {
+      /* sem servidor: o painel mostra so' a voz do sistema */
+    }
+  }
+
+  private toggleSpeech(): void {
+    if (this.speaker) {
+      this.speakOnOpen = false;
+      this.stopSpeech();
+      this.statusEl.textContent = 'leitura em voz alta parada';
+      return;
+    }
+    this.startSpeech(this.currentIndex());
+  }
+
+  /**
+   * Le do paragrafo `from` ate' o fim do capitulo e segue para o proximo. Fala o
+   * que esta' na tela: a traducao quando ja' veio, senao o original.
+   */
+  private startSpeech(from: number): void {
+    this.stopSpeech();
+    if (!this.paras.length || !this.detail) return;
+    const s = store.settings;
+    const origin = this.detail.origin && this.detail.origin !== 'unknown' ? this.detail.origin : undefined;
+    const items = this.paras.slice(from).map((p, i) => ({
+      index: from + i,
+      text: p.pt ?? p.text,
+      lang: p.pt ? s.targetLang : origin,
+    }));
+    const speaker = new Speaker({
+      engine: s.ttsEngine,
+      voice: s.ttsVoice,
+      rate: s.ttsRate,
+      onPara: (index) => this.markSpeaking(index),
+      onEnd: () => {
+        if (this.speaker !== speaker) return;
+        this.stopSpeech();
+        const list = this.detail?.chapters ?? [];
+        const at = list.findIndex((c) => c.id === this.chapter?.id);
+        if (list[at + 1]) {
+          this.speakOnOpen = true;
+          this.goChapter(1);
+        } else this.statusEl.textContent = 'fim do livro';
+      },
+      onError: (message) => {
+        if (this.speaker !== speaker) return;
+        this.stopSpeech();
+        toast(`leitura em voz alta falhou: ${message}`, 'error');
+      },
+      onFallback: (message) => toast(`${message} — lendo com a voz do sistema`, 'error'),
+    });
+    this.speaker = speaker;
+    this.speakBtn.textContent = '⏹ parar';
+    this.speakBtn.classList.add('is-active');
+    this.speakBtn.setAttribute('aria-pressed', 'true');
+    this.statusEl.textContent = 'lendo em voz alta...';
+    speaker.start(items);
+  }
+
+  private stopSpeech(): void {
+    this.speaker?.stop();
+    this.speaker = undefined;
+    this.markSpeaking(-1);
+    this.speakBtn.textContent = '🔊 ouvir';
+    this.speakBtn.classList.remove('is-active');
+    this.speakBtn.setAttribute('aria-pressed', 'false');
+  }
+
+  private markSpeaking(index: number): void {
+    this.paras[this.speakingIndex]?.row.classList.remove('is-speaking');
+    this.speakingIndex = index;
+    const row = this.paras[index]?.row;
+    if (!row) return;
+    row.classList.add('is-speaking');
+    row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+
+  /** Painel de voz: motor, voz, velocidade e, para SaaS, a chave de API. */
+  private buildTtsOptions(): void {
+    const s = store.settings;
+    const engines: TtsEngineInfo[] = this.ttsEngines.length
+      ? this.ttsEngines
+      : [{ id: 'browser', name: 'Voz do sistema (navegador)', local: true, needsKey: false, hasKey: false, ready: true, voices: [], baseUrl: '', voice: '', model: '', region: '' }];
+    const current = engines.find((e) => e.id === s.ttsEngine) ?? engines[0]!;
+    const restart = (): void => {
+      persist();
+      if (this.speaker) this.startSpeech(Math.max(0, this.speakingIndex));
+    };
+    const option = (e: TtsEngineInfo): HTMLOptionElement =>
+      el('option', { value: e.id, selected: e.id === current.id }, `${e.name}${e.needsKey && !e.hasKey ? ' — sem chave' : ''}`);
+    const engineSelect = el(
+      'select',
+      {
+        id: 'ml-tts-engine',
+        class: 'ml-select ml-select-sm',
+        onchange: (ev: Event) => {
+          s.ttsEngine = (ev.target as HTMLSelectElement).value as TtsEngineId;
+          s.ttsVoice = '';
+          restart();
+          this.buildTtsOptions();
+        },
+      },
+      el('optgroup', { label: 'Local (sem chave)' }, ...engines.filter((e) => e.local).map(option)),
+      el('optgroup', { label: 'Nuvem (chave de API)' }, ...engines.filter((e) => !e.local).map(option)),
+    );
+    const voices: [string, string][] =
+      current.id === 'browser'
+        ? systemVoices(s.targetLang).map((v) => [v.voiceURI, `${v.name} (${v.lang})`])
+        : current.voices.map((v) => [v.id, v.name]);
+    const voiceSelect = el(
+      'select',
+      {
+        id: 'ml-tts-voice',
+        class: 'ml-select ml-select-sm',
+        onchange: (ev: Event) => {
+          s.ttsVoice = (ev.target as HTMLSelectElement).value;
+          restart();
+        },
+      },
+      el('option', { value: '', selected: !s.ttsVoice }, current.voice ? `padrao (${current.voice})` : 'padrao'),
+      ...voices.map(([id, name]) => el('option', { value: id, selected: id === s.ttsVoice }, name)),
+    );
+    const rateSelect = el(
+      'select',
+      {
+        id: 'ml-tts-rate',
+        class: 'ml-select ml-select-sm',
+        onchange: (ev: Event) => {
+          s.ttsRate = Number((ev.target as HTMLSelectElement).value) || 1;
+          restart();
+        },
+      },
+      ...TTS_RATES.map(([v, label]) => el('option', { value: String(v), selected: v === s.ttsRate }, label)),
+    );
+
+    const fields: HTMLElement[] = [];
+    const inputs: Record<string, HTMLInputElement> = {};
+    const field = (key: string, label: string, value: string, attrs: Record<string, string> = {}): void => {
+      const input = el('input', { id: `ml-tts-${key}`, class: 'ml-input', value, autocomplete: 'off', spellcheck: 'false', ...attrs });
+      inputs[key] = input;
+      fields.push(el('label', { for: input.id }, label), input);
+    };
+    const serverSide = current.id !== 'browser' && current.id !== 'azure' && current.id !== 'google' && current.id !== 'elevenlabs';
+    if (serverSide) field('baseUrl', current.local ? 'Endereco do servidor' : 'URL da API', current.baseUrl);
+    if (current.needsKey) field('apiKey', 'Chave de API', '', { type: 'password', placeholder: current.hasKey ? '•••••• (salva)' : 'cole a chave aqui' });
+    if (current.id === 'azure') field('region', 'Regiao', current.region);
+    if (current.id === 'openai' || current.id === 'elevenlabs') field('model', 'Modelo', current.model);
+    const save = async (): Promise<void> => {
+      const patch: Record<string, string> = {};
+      for (const [k, input] of Object.entries(inputs)) if (k !== 'apiKey' || input.value) patch[k] = input.value;
+      try {
+        this.ttsEngines = await saveTtsConfig({ engine: current.id, ...patch });
+        toast('configuracao de voz salva');
+        this.buildTtsOptions();
+      } catch (err) {
+        toast(`nao consegui salvar: ${humanizeError(err)}`, 'error');
+      }
+    };
+
+    const hint = current.local
+      ? current.id === 'kokoro'
+        ? 'Kokoro roda local (ex.: docker run -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-cpu). Vozes PT-BR: pf_dora, pm_alex.'
+        : current.id === 'piper'
+          ? 'Piper roda local: python -m piper.http_server -m pt_BR-faber-medium.'
+          : 'Usa as vozes instaladas no sistema. Sem servidor e sem chave.'
+      : 'O texto do capitulo vai para o servico na nuvem e pode ter custo. A chave fica so neste computador.';
+
+    this.ttsEl.replaceChildren(
+      el('span', { class: 'ml-popover-label' }, 'Leitura em voz alta'),
+      el(
+        'div',
+        { class: 'ml-style-grid' },
+        el('label', { for: engineSelect.id }, 'Motor'),
+        engineSelect,
+        el('label', { for: voiceSelect.id }, 'Voz'),
+        voiceSelect,
+        el('label', { for: rateSelect.id }, 'Velocidade'),
+        rateSelect,
+        ...fields,
+      ),
+      ...(fields.length ? [el('button', { class: 'ml-btn ml-btn-sm ml-btn-action-primary', onclick: () => void save() }, 'salvar')] : []),
+      el('span', { class: 'ml-popover-hint' }, hint),
+      el('span', { class: 'ml-popover-hint' }, 'Le a traducao quando ja existe; senao, o original. Se o motor local estiver fora, cai na voz do sistema.'),
+    );
+  }
+
   private scrollTo(index: number): void {
     const target = this.paras[index]?.row;
     if (target) target.scrollIntoView({ block: 'start' });
@@ -649,6 +893,9 @@ export class BookReader {
     } else if (e.key === 'b' || e.key === 'B') {
       e.preventDefault();
       this.toggleBilingual();
+    } else if (e.key === 'l' || e.key === 'L') {
+      e.preventDefault();
+      this.toggleSpeech();
     } else if (e.key === 'g' || e.key === 'G') {
       e.preventDefault();
       this.showGlossary();

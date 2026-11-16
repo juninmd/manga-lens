@@ -396,6 +396,7 @@ parágrafos numerados e abre num leitor próprio — coluna de leitura com medid
 | **📖 glossário** (`G`) | o mesmo [glossário editável](#memória-da-obra-e-página-para-o-modelo-de-visão) do leitor de páginas |
 | **⚙ tradução** | motor (Tradutor Web ou IA), idioma de chegada, tom e honoríficos |
 | **papel** / **Aa** / `A−` `A+` | escuro, sépia ou claro · serifada ou sem serifa · corpo da letra |
+| **🔊 ouvir** (`L`) / **⚙ voz** | lê em voz alta a partir do parágrafo visível e segue para o próximo capítulo; motor, voz e velocidade |
 
 A tradução usa o **mesmo endpoint** do mangá, em modo **prosa**: prompt de
 tradutor literário (parágrafo inteiro, voz do narrador, travessão de diálogo em
@@ -407,6 +408,20 @@ todo parágrafo comprido; nos motores web o parágrafo longo vai em pedaços, se
 em fim de frase. **Clicar num parágrafo volta ao original** — o equivalente ao `t`
 do leitor de páginas. O que já foi traduzido na sessão fica guardado: voltar a um
 capítulo não paga a tradução de novo.
+
+**Leitura em voz alta (TTS PT-BR).** Lê a tradução quando já existe; senão, o
+original. O parágrafo falado fica destacado e clicar em outro leva a leitura até
+ele. Motores, locais primeiro:
+
+| Motor | Tipo | Como ligar |
+|---|---|---|
+| **Kokoro** (padrão) | local | `docker run -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-cpu` · vozes `pf_dora`, `pm_alex` |
+| **Piper** | local | `python -m piper.http_server -m pt_BR-faber-medium` |
+| **Voz do sistema** | local | nada: usa as vozes instaladas (Web Speech API) |
+| **OpenAI TTS**, **ElevenLabs**, **Azure Speech**, **Google Cloud TTS** | nuvem | chave no painel **⚙ voz** (ou no `.env`) |
+
+A chave fica em `.cache/tts-config.json` e nunca volta para o navegador. Se o
+motor escolhido estiver fora do ar, a leitura continua na voz do sistema.
 
 No EPUB a ordem de leitura vem do *spine* do OPF, e item marcado `linear="no"`
 (notas da editora, propaganda) fica fora do fio principal.

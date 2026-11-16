@@ -31,6 +31,7 @@ import { parseStyle } from './translate-prompt.ts';
 import { modelBytes } from './models.ts';
 import { forget, memorySummary, removeTerm, setTerm } from './series-memory.ts';
 import { engines, targets, translateWithEngine, type Engine } from './translators.ts';
+import { applyTtsPatch, isTtsEngine, MAX_TTS_CHARS, speak, ttsEngines } from './tts.ts';
 
 const app = new Hono();
 
@@ -515,6 +516,42 @@ app.post('/api/ai/config', async (c) => {
 app.get('/api/translate/engines', (c) => c.json(engines));
 
 app.get('/api/translate/targets', (c) => c.json(targets));
+
+/** Motores de leitura em voz alta (locais primeiro). A chave de API nunca sai daqui. */
+app.get('/api/tts/engines', (c) => c.json(ttsEngines()));
+
+app.post('/api/tts/config', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!body || !isTtsEngine(body.engine)) return c.json({ error: 'motor de voz desconhecido' }, 400);
+  try {
+    applyTtsPatch(body.engine, body);
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+  return c.json(ttsEngines());
+});
+
+/** Sintetiza um trecho e devolve o audio. O cliente fatia o capitulo em frases e pede uma de cada vez. */
+app.post('/api/tts/speak', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { engine?: unknown; text?: unknown; voice?: unknown; speed?: unknown } | null;
+  if (!body || !isTtsEngine(body.engine)) return c.json({ error: 'motor de voz desconhecido' }, 400);
+  const text = typeof body.text === 'string' ? body.text.replace(/[\p{Cc}]+/gu, ' ').trim() : '';
+  if (!text) return c.json({ error: 'texto vazio' }, 400);
+  if (text.length > MAX_TTS_CHARS) return c.json({ error: `trecho longo demais (max ${MAX_TTS_CHARS} letras)` }, 413);
+  try {
+    const { audio, type } = await speak({
+      engine: body.engine,
+      text,
+      voice: typeof body.voice === 'string' ? body.voice : undefined,
+      speed: typeof body.speed === 'number' ? body.speed : undefined,
+    });
+    return new Response(audio, { headers: { 'Content-Type': type, 'Cache-Control': 'no-store' } });
+  } catch (err) {
+    const message = (err as Error).message;
+    const offline = /fetch failed|ECONNREFUSED|Unable to connect|timed out|timeout/i.test(message);
+    return c.json({ error: offline ? 'motor de voz fora do ar — o servidor local esta rodando?' : message }, offline ? 503 : 502);
+  }
+});
 
 /** Ordem do modo automatico: os gratuitos primeiro, a IA so' como ultimo recurso. */
 const AUTO_ORDER = ['google', 'mymemory', 'llm'] as const;

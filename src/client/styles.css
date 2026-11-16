@@ -2439,6 +2439,17 @@ body.is-reading #toasts {
   color: var(--accent-2-soft, var(--accent-2));
 }
 
+/* leitura em voz alta: o paragrafo que esta' sendo falado */
+.ml-book-row.is-speaking {
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: -3px 0 0 var(--accent);
+}
+.ml-book-tts .ml-input {
+  width: 100%;
+  min-width: 0;
+}
+
 /* como no leitor de paginas: o selo global de IA ficava por cima do texto do livro */
 .ml-book.is-open ~ .ml-ai-badge {
   display: none;
