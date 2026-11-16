@@ -37,9 +37,27 @@ jobs:
         with:
           workspaces: src-tauri
 
-      # o build script do Tauri embute o icone com o windres do MinGW
-      - name: MinGW (windres)
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends binutils-mingw-w64-x86-64
+      # O build script do Tauri embute o icone com o windres do MinGW, que por sua vez
+      # precisa do gcc do MinGW. Para checar so' o Rust o icone nao importa: um windres
+      # que cria o arquivo pedido poupa instalar o MinGW inteiro (~1 min de apt).
+      - name: windres de mentira
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          cat > "$HOME/.local/bin/x86_64-w64-mingw32-windres" <<'EOF'
+          #!/bin/bash
+          out=""
+          while [ $# -gt 0 ]; do
+            case "$1" in
+              -o) out="$2"; shift ;;
+              --output=*) out="${1#--output=}" ;;
+            esac
+            shift
+          done
+          [ -n "$out" ] && : > "$out"
+          exit 0
+          EOF
+          chmod +x "$HOME/.local/bin/x86_64-w64-mingw32-windres"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       # o Tauri confere se o sidecar existe; aqui so' se checa o Rust, entao basta o arquivo
       - name: Sidecar de mentira
