@@ -1,0 +1,82 @@
+name: Desktop
+
+# O instalador so' e' compilado DEPOIS do merge (release.yml, Windows, ~8 min): um erro
+# de Rust so' apareceria la', com a release ja' publicada sem instalador e o app sem
+# ter para onde atualizar. Aqui o PR confere o shell Tauri — so' quando mexe no que o
+# compila, para nao pesar nos PRs comuns. Alvo Windows em Linux: o `cfg(windows)` do
+# instalador e' justamente o que o `cargo check` do alvo nativo nao enxergaria.
+on:
+  pull_request:
+    paths:
+      - 'src-tauri/**'
+      - '.github/workflows/desktop.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src-tauri/**'
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # O build script do Tauri embute o icone com o windres do MinGW, que por sua vez
+      # precisa do gcc do MinGW. Para checar so' o Rust o icone nao importa: um windres
+      # que cria o arquivo pedido poupa instalar o MinGW inteiro (~1 min de apt).
+      - name: windres de mentira
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          cat > "$HOME/.local/bin/x86_64-w64-mingw32-windres" <<'EOF'
+          #!/bin/bash
+          out=""
+          while [ $# -gt 0 ]; do
+            case "$1" in
+              -o) out="$2"; shift ;;
+              --output=*) out="${1#--output=}" ;;
+            esac
+            shift
+          done
+          [ -n "$out" ] && : > "$out"
+          exit 0
+          EOF
+          chmod +x "$HOME/.local/bin/x86_64-w64-mingw32-windres"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # O Tauri confere, em tempo de compilacao, que o sidecar e o front (`frontendDist`,
+      # que o git ignora) existem. Aqui so' se checa o Rust: basta o arquivo e a pasta.
+      - name: Sidecar e front de mentira
+        run: |
+          mkdir -p src-tauri/binaries public
+          : > src-tauri/binaries/manga-lens-server-x86_64-pc-windows-gnu.exe
+
+      # No alvo `gnu` o tauri-build le `<target>/debug/build`, mas calcula esse caminho subindo 3
+      # niveis a partir do OUT_DIR — e o cargo novo (build-dir v2) tem um nivel a mais
+      # (`build/<crate>/<hash>/out`), entao ele acaba em `build/build` e falha com ENOENT.
+      # So' afeta este check: o instalador real e' msvc e nao passa por esse trecho.
+      - name: Diretorio que o tauri-build espera
+        run: mkdir -p src-tauri/target/x86_64-pc-windows-gnu/debug/build/build
+
+      - name: cargo check (alvo Windows)
+        run: cargo check --locked --target x86_64-pc-windows-gnu --manifest-path src-tauri/Cargo.toml
+
+      - name: Testes do modulo de instalacao
+        run: |
+          rustc --edition 2021 --test src-tauri/src/update.rs -o "$RUNNER_TEMP/update_test"
+          "$RUNNER_TEMP/update_test"

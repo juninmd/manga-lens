@@ -106,3 +106,44 @@ describe('checkForUpdate', () => {
     expect(info.disabled).toBe(true);
   });
 });
+
+describe('checagem desligada pelo usuario', () => {
+  test('`offline` devolve a versao instalada sem consultar o GitHub', async () => {
+    let calls = 0;
+    const info = await checkForUpdate({
+      current: '0.4.0',
+      offline: true,
+      fetcher: async () => {
+        calls++;
+        return new Response('{}');
+      },
+    });
+    expect(calls).toBe(0);
+    expect(info).toMatchObject({ current: '0.4.0', latest: null, available: false });
+    expect(info.error).toBeUndefined();
+  });
+});
+
+describe('instalador da release', () => {
+  const asset = (over: Record<string, unknown>) => ({ name: 'MangaLens_0.2.0_x64-setup.exe', browser_download_url: 'https://example/setup.exe', ...over });
+  const HEX = 'ab'.repeat(32);
+
+  test('tamanho e SHA-256 vem do que o GitHub publica para o arquivo', async () => {
+    const info = await checkForUpdate({ fetcher: release('v0.2.0', { assets: [asset({ size: 37955988, digest: `sha256:${HEX.toUpperCase()}` })] }), current: '0.1.0' });
+    expect(info.installerSize).toBe(37955988);
+    // hex em minusculas: e' assim que o hash calculado e' comparado
+    expect(info.installerSha256).toBe(HEX);
+  });
+
+  test('release sem digest, ou com digest que nao e sha256, nao autoriza instalar', async () => {
+    for (const digest of [undefined, null, 'md5:abc', `sha256:${HEX.slice(2)}`, `sha256:${HEX}zz`]) {
+      resetUpdateCache();
+      const info = await checkForUpdate({ fetcher: release('v0.2.0', { assets: [asset({ size: 10, digest })] }), current: '0.1.0' });
+      expect(info.installerSha256).toBeNull();
+      expect(info.available).toBe(true);
+    }
+    resetUpdateCache();
+    const noSize = await checkForUpdate({ fetcher: release('v0.2.0', { assets: [asset({ size: 'x' })] }), current: '0.1.0' });
+    expect(noSize.installerSize).toBeNull();
+  });
+});

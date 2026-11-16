@@ -55,6 +55,8 @@ e um visualizador no estilo Picasa. Nada sai da sua máquina além do texto reco
 | 🧠 **Memória da obra** | glossário de nomes com gênero (editável: o que você corrige fica fixado) e resumo das páginas anteriores, por obra e idioma |
 | 📚 **Leitor de livro** | EPUB, TXT, Markdown, FB2 e PDF de texto, com tradução em prosa, modo bilíngue lado a lado, sumário e papel escuro/sépia/claro |
 | 🖼️ **Visualizador Picasa** | zoom ancorado no cursor, arrasto com inércia, navegador em miniatura |
+| ⚙️ **Configurações** | tela única (`Ctrl ,`) com tema, leitura, tradução, livros, dados e **atualização**; a versão instalada fica sempre à vista |
+| 🔄 **Atualiza sozinho** | a cada release o app baixa, confere o hash, instala e reabre na versão nova, com cada etapa na tela |
 | 🔒 **Local por padrão** | progresso no `localStorage`, imagens por proxy assinado em HMAC, backup em `.json` |
 
 ---
@@ -564,21 +566,63 @@ bun run scripts/release-notes.ts
 
 #### Versão e atualização no app
 
-- A versão instalada aparece sempre no pé do trilho lateral. Rodando do código-fonte
-  (`bun run dev`) ela é `dev` e a checagem não roda; só o build da release tem versão.
-- O app consulta a última release do GitHub (só o número da versão; nada do usuário
-  sai da máquina) ao abrir e a cada 6 h. Quando há versão mais nova, o trilho ganha
-  um selo, um aviso aparece uma vez por versão e **Atualização** (ou Ctrl K →
-  "Versão e atualizações") mostra instalada × disponível, as notas e o botão
-  **Baixar vX.Y.Z**, que abre o instalador `.exe` anexado à release.
-- `UPDATE_CHECK=off` desliga a consulta. `GET /api/version` devolve o mesmo dado.
+O ciclo inteiro, do commit ao app atualizado:
+
+```
+commit semântico na principal ──► release.yml calcula a versão, cria a tag e a release
+                                  └─► job desktop compila o instalador e o anexa à release
+app aberto ──► consulta a última release ──► há versão nova?
+                                  └─► tela cheia: contagem → download → SHA-256 → instalador → reabre
+app reaberto ──► "MangaLens atualizado: v0.8.0 → v0.9.0" com as notas da release
+```
+
+- **Versão sempre visível**: no pé do trilho lateral, no cabeçalho das
+  **Configurações** e na seção **Sobre**. Rodando do código-fonte (`bun run dev`) ela é
+  `dev` e a checagem não roda; só o build da release tem versão.
+- **Atualização automática** (só no app instalado): ao achar versão nova, o app abre uma
+  tela cheia com **contagem de 5 s** (botões *Atualizar agora* e *Agora não*) e depois
+  mostra cada etapa — `Baixando a v0.9.0… 11,4 de 36,2 MB (31%)`, `Conferindo a
+  integridade (SHA-256)…`, `Abrindo o instalador…` — antes de abrir o instalador do
+  Windows com a barra de progresso dele e **reabrir sozinho na versão nova**. *Agora
+  não* adia por um dia; instalador que falha também não vira laço de "atualizando…" a
+  cada abertura.
+- **Depois de atualizar**, a primeira abertura mostra *de qual versão para qual* e as
+  notas da release.
+- **Nas Configurações → Atualização**: verificar agora, **Atualizar agora**, e dois
+  interruptores — *verificar automaticamente* (ao abrir e a cada 6 h; desligado, o
+  servidor nem consulta o GitHub) e *instalar sozinho*. No navegador, e quando a
+  release não publica o hash do instalador, o botão vira **Baixar vX.Y.Z** (manual).
+- `UPDATE_CHECK=off` desliga a consulta por completo. `GET /api/version` devolve o dado.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/evidence/update-downloading.png" alt="Tela cheia Atualizando o MangaLens, de v0.8.0 para v0.9.0, com barra de progresso e 20,2 de 36,2 MB baixados" /><br/><b>Atualizando</b> &ndash; cada etapa na tela, com as notas da release.</td>
+<td width="50%"><img src="docs/evidence/settings-atualizacao.png" alt="Configurações, seção Atualização, com versão instalada e disponível e os interruptores de verificação e instalação automáticas" /><br/><b>Configurações → Atualização</b> &ndash; versão, verificar agora e os interruptores.</td>
+</tr>
+</table>
+
+**Como o instalador é conferido.** O sidecar só baixa a URL que ele mesmo montou a
+partir da release deste repositório (`github.com/juninmd/manga-lens/releases/download/vX.Y.Z/…exe`),
+segue redirects um salto por vez e só aceita `github.com` e `*.githubusercontent.com`.
+O arquivo só é aceito se o tamanho e o **SHA-256 publicado pelo GitHub** para ele
+baterem e se começar com a assinatura de executável do Windows. Quem abre o instalador
+é o shell Rust (`install_update`), que só roda um `MangaLens_X.Y.Z_x64-setup.exe`
+dentro da pasta de atualizações do app — o front não escolhe o programa.
+
+> **Isto não é a assinatura do atualizador oficial do Tauri.** O hash vem da mesma
+> API que a URL: protege de download corrompido ou de CDN trocando o arquivo, não de
+> uma conta do GitHub comprometida. Para isso é preciso o par de chaves do Tauri
+> (`bunx tauri signer generate`, chave pública em `tauri.conf.json`, privada no secret
+> `TAURI_SIGNING_PRIVATE_KEY`) — só o dono do repositório pode criá-lo.
+
 - O job `desktop` do `release.yml` carimba a versão da tag (`scripts/set-version.ts` →
-  `src/server/build-info.json` e os manifestos do Tauri; nunca commitado), compila o instalador NSIS e o anexa à release.
+  `src/server/build-info.json` e os manifestos do Tauri; nunca commitado), compila o
+  instalador NSIS, o anexa à release e escreve nome, tamanho e SHA-256 no resumo do job.
 - `commits.yml` confere, no PR, se commits e título seguem Conventional Commits
   (`bun run commits` roda o mesmo teste localmente).
-- Atualização **sem passar pelo navegador** (plugin updater do Tauri) exige um par
-  de chaves de assinatura: `bunx tauri signer generate`, a chave pública em
-  `tauri.conf.json` e a privada no secret `TAURI_SIGNING_PRIVATE_KEY`.
+- `desktop.yml` roda `cargo check` (alvo Windows) e os testes do módulo de instalação
+  quando um PR mexe em `src-tauri/`: o instalador só é compilado **depois** do merge, e
+  um erro de Rust só apareceria com a release já publicada sem instalador.
 
 ### Armadilhas já pagas
 

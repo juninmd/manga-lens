@@ -599,3 +599,335 @@ body.ml-v2 .ml-popover {
     opacity: 1;
   }
 }
+
+/* ---------- atualizar agora: tela cheia, com cada etapa visivel ---------- */
+.ml-upd-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(5 6 10 / 82%);
+  backdrop-filter: blur(8px);
+  animation: ml-fade 0.2s ease-out;
+}
+.ml-upd-card {
+  width: min(520px, 100%);
+  display: grid;
+  gap: 16px;
+  padding: 28px;
+  background: var(--bg-2);
+  color: var(--fg);
+  border: 1px solid var(--line-strong);
+  border-radius: 20px;
+  box-shadow: 0 40px 90px -20px rgb(0 0 0 / 80%);
+}
+.ml-upd-card h2 {
+  margin: 0;
+  font-size: 22px;
+}
+.ml-upd-flow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font: 600 18px ui-monospace, monospace;
+  color: var(--fg-dim);
+}
+.ml-upd-flow .is-new {
+  color: var(--accent);
+}
+.ml-upd-bar {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--bg-3);
+}
+.ml-upd-bar-fill {
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transition: width 0.3s ease-out;
+}
+/* sem tamanho conhecido: faixa que corre, em vez de uma barra parada em 0% */
+.ml-upd-bar.is-indeterminate .ml-upd-bar-fill {
+  width: 35%;
+  animation: ml-upd-slide 1.2s ease-in-out infinite;
+}
+.ml-upd-bar.is-error .ml-upd-bar-fill {
+  width: 100%;
+  background: var(--bad);
+}
+@keyframes ml-upd-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+.ml-upd-live {
+  margin: 0;
+  min-height: 2.8em;
+  line-height: 1.4;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ml-upd-bar.is-indeterminate .ml-upd-bar-fill {
+    animation: none;
+    width: 100%;
+    opacity: 0.5;
+  }
+  .ml-upd-overlay {
+    animation: none;
+  }
+}
+
+/* ---------- tela de configuracoes ---------- */
+.ml-set-card {
+  top: 6vh;
+  width: min(900px, calc(100% - 32px));
+  height: min(680px, 88vh);
+  display: flex;
+  flex-direction: column;
+  color: var(--fg);
+}
+.ml-set-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--line);
+}
+.ml-set-head h2 {
+  margin: 0;
+  font-size: 20px;
+  flex: 1;
+}
+.ml-set-version {
+  font: 600 12px ui-monospace, monospace;
+  padding: 3px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--fg-dim);
+}
+.ml-set-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+}
+.ml-set-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px;
+  border-right: 1px solid var(--line);
+  overflow-y: auto;
+}
+.ml-set-tab {
+  text-align: left;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: var(--fg-dim);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ml-set-tab:hover {
+  background: var(--hover-veil);
+  color: var(--fg);
+}
+.ml-set-tab.is-on {
+  background: var(--bg-3);
+  color: var(--fg);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.ml-set-panel {
+  padding: 8px 24px 24px;
+  overflow-y: auto;
+}
+.ml-set-panel h3 {
+  margin: 16px 0 4px;
+  font-size: 16px;
+}
+.ml-set-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+.ml-set-text {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.ml-set-text small {
+  color: var(--fg-dim);
+  line-height: 1.4;
+}
+.ml-set-control {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ml-set-control .ml-select {
+  min-width: 190px;
+}
+.ml-set-range {
+  width: 190px;
+  accent-color: var(--accent);
+}
+.ml-switch {
+  position: relative;
+  width: 46px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--bg-3);
+  cursor: pointer;
+  transition: background 0.18s;
+}
+.ml-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--fg-dim);
+  transition: transform 0.18s, background 0.18s;
+}
+.ml-switch[aria-checked='true'] {
+  background: color-mix(in srgb, var(--accent) 35%, var(--bg-3));
+  border-color: var(--accent);
+}
+.ml-switch[aria-checked='true']::after {
+  transform: translateX(20px);
+  background: var(--accent);
+}
+.ml-switch:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.ml-set-ver-card {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 16px 0 8px;
+}
+.ml-set-ver-card > div {
+  display: grid;
+  gap: 2px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg);
+}
+.ml-set-ver-card small {
+  color: var(--fg-dim);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.ml-set-ver-card strong {
+  font: 700 26px ui-monospace, monospace;
+}
+.ml-set-ver-card .is-new {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.ml-set-status {
+  margin: 4px 0 12px;
+  color: var(--fg-dim);
+}
+.ml-set-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-bottom: 8px;
+}
+.ml-set-note {
+  margin: 16px 0 0;
+  color: var(--fg-dim);
+  line-height: 1.5;
+}
+.ml-set-about {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 0 8px;
+}
+.ml-set-about > div {
+  display: grid;
+}
+.ml-set-about strong {
+  font-size: 20px;
+}
+.ml-set-about small {
+  font: 600 13px ui-monospace, monospace;
+  color: var(--fg-dim);
+}
+.ml-set-keys {
+  display: grid;
+  gap: 8px;
+  padding: 16px 0;
+}
+.ml-set-keys > div {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--fg-dim);
+}
+.ml-set-keys kbd {
+  min-width: 64px;
+  text-align: center;
+  font: 600 11px ui-monospace, monospace;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 3px 7px;
+  color: var(--fg);
+}
+@media (max-width: 760px) {
+  .ml-set-card {
+    top: 0;
+    left: 0;
+    transform: none;
+    width: 100%;
+    height: 100%;
+    border-radius: 0;
+  }
+  .ml-set-body {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .ml-set-nav {
+    flex-direction: row;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    overflow-x: auto;
+  }
+  .ml-set-tab {
+    white-space: nowrap;
+  }
+  .ml-set-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .ml-set-control .ml-select,
+  .ml-set-range {
+    width: 100%;
+  }
+  .ml-set-ver-card {
+    grid-template-columns: 1fr;
+  }
+}

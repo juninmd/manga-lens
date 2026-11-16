@@ -56,6 +56,17 @@ describe('correcao manual de balao', () => {
     expect(saved[editKey(scope, 'LONG')]).toBeUndefined();
   });
 
+  test('conta e apaga tudo (tela de configuracoes)', () => {
+    const storage = memoryStorage();
+    const store = createEditStore(storage);
+    store.set(scope, 'A', 'a');
+    store.set(scope, 'B', 'b');
+    expect(store.count()).toBe(2);
+    store.clear();
+    expect(store.count()).toBe(0);
+    expect(createEditStore(storage).count()).toBe(0);
+  });
+
   test('armazenamento corrompido ou indisponivel nao derruba o leitor', () => {
     const broken = { getItem: () => '{nao e json', setItem: () => { throw new Error('cota'); } };
     const store = createEditStore(broken);

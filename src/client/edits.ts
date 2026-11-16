@@ -35,6 +35,10 @@ export interface EditStore {
   get(scope: EditScope, original: string): string | undefined;
   set(scope: EditScope, original: string, pt: string): void;
   remove(scope: EditScope, original: string): void;
+  /** quantas correcoes estao guardadas */
+  count(): number;
+  /** apaga todas */
+  clear(): void;
   /** aplica as correcoes guardadas a uma pagina recem-traduzida */
   apply<T extends { text: string; pt?: string; edited?: boolean }>(scope: EditScope, blocks: T[]): T[];
 }
@@ -81,6 +85,13 @@ export function createEditStore(storage: Storage | undefined): EditStore {
     },
     remove(scope, original) {
       delete load()[editKey(scope, original)];
+      save();
+    },
+    count() {
+      return Object.keys(load()).length;
+    },
+    clear() {
+      cache = {};
       save();
     },
     apply(scope, blocks) {
