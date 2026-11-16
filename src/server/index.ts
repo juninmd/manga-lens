@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { checkForUpdate } from './version.ts';
 import { cancelUpdateDownload, getUpdateState, isDesktopApp, startUpdateDownload, UpdateError } from './updater.ts';
 import { join, extname } from 'node:path';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, rename } from 'node:fs/promises';
 import { config, getProviderConfig, hostAllowed, normalizeProvider, saveAiConfig, type AiProvider } from './config.ts';
 import { normalizeProviderImage } from './provider-image.ts';
 import { signUrl, verifyUrl } from './sign.ts';
@@ -12,6 +12,7 @@ import type { OpdsProvider } from './providers/opds.ts';
 import type { SearchFilters, SeriesCard } from './providers/types.ts';
 import { assertInsideLibrary, localBookBlocks, localPagePaths } from './providers/local.ts';
 import { readZipEntry, readZipIndex } from './zip.ts';
+import { buildStoredZip, imageExt, safeFileName, type ZipInput } from './zip-write.ts';
 import { readRarEntry } from './rar.ts';
 import { pdfPageImage } from './pdf.ts';
 import {
@@ -264,6 +265,59 @@ app.get('/api/img', async (c) => {
       // liberado para o canvas do OCR conseguir ler os pixels no app desktop
       'Cross-Origin-Resource-Policy': 'cross-origin',
       'Access-Control-Allow-Origin': '*',
+    },
+  });
+});
+
+/**
+ * Baixa um capitulo online inteiro como CBZ. Com `LOCAL_LIBRARY` configurada o
+ * arquivo vai para `<biblioteca>/<obra>/<capitulo>.cbz` e passa a abrir
+ * offline pela aba local; sem biblioteca, volta como download para o navegador.
+ */
+app.post('/api/download', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { provider?: unknown; chapter?: unknown; series?: unknown; label?: unknown } | null;
+  if (!body || typeof body.provider !== 'string' || typeof body.chapter !== 'string' || !body.chapter) {
+    return c.json({ error: 'provider e chapter obrigatorios' }, 400);
+  }
+  if (body.provider === 'local' || opdsProvider(body.provider)) return c.json({ error: 'este capitulo ja esta no seu disco' }, 400);
+  const provider = getProvider(body.provider);
+  const pages = await provider.pages(body.chapter);
+  if (!pages.length) return c.json({ error: 'capitulo sem paginas' }, 422);
+  if (pages.length > 2000) return c.json({ error: 'capitulo com paginas demais' }, 422);
+
+  const files: ZipInput[] = new Array(pages.length);
+  let next = 0;
+  const width = String(pages.length).length < 3 ? 3 : String(pages.length).length;
+  const worker = async (): Promise<void> => {
+    while (next < pages.length) {
+      const i = next++;
+      const page = pages[i]!;
+      const res = await fetchImage(page.url, page.referer);
+      if (!res.ok) throw new HttpError(`pagina ${i + 1}: upstream ${res.status}`, 502);
+      const data = new Uint8Array(await res.arrayBuffer());
+      files[i] = { name: `${String(i + 1).padStart(width, '0')}${imageExt(res.headers.get('content-type') ?? '')}`, data };
+    }
+  };
+  // 3 por vez: rapido sem parecer ataque ao CDN da fonte
+  await Promise.all(Array.from({ length: Math.min(3, pages.length) }, worker));
+  const zip = buildStoredZip(files);
+
+  const series = safeFileName(typeof body.series === 'string' ? body.series : '', 'obra');
+  const label = safeFileName(typeof body.label === 'string' ? body.label : '', 'capitulo');
+  const root = config.localRoots[0];
+  if (root) {
+    const dir = join(root, series);
+    await mkdir(dir, { recursive: true });
+    const path = join(dir, `${label}.cbz`);
+    const tmp = `${path}.${process.pid}.tmp`;
+    await Bun.write(tmp, zip);
+    await rename(tmp, path);
+    return c.json({ saved: path, pages: files.length, bytes: zip.length });
+  }
+  return new Response(zip, {
+    headers: {
+      'Content-Type': 'application/vnd.comicbook+zip',
+      'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(`${series} - ${label}.cbz`)}`,
     },
   });
 });
