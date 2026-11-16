@@ -69,7 +69,7 @@ export const ENGINE_META: Record<TtsEngine, EngineMeta> = {
     name: 'OpenAI TTS',
     local: false,
     needsKey: true,
-    voices: ['nova', 'alloy', 'coral', 'echo', 'fable', 'onyx', 'sage', 'shimmer'].map((id) => ({ id, name: id })),
+    voices: ['nova', 'alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'onyx', 'sage', 'shimmer', 'verse', 'marin', 'cedar'].map((id) => ({ id, name: id })),
     defaults: {
       ...blank,
       baseUrl: env('OPENAI_TTS_BASE_URL', 'https://api.openai.com/v1'),
@@ -252,34 +252,44 @@ export async function speak(req: SpeakRequest): Promise<SpeakResult> {
       // Kokoro-FastAPI fala o mesmo dialeto da OpenAI
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (c.apiKey) headers.Authorization = `Bearer ${c.apiKey}`;
-      const body: Record<string, unknown> = { model: c.model || 'kokoro', input: text, voice, speed, response_format: 'mp3' };
-      if (engine === 'kokoro') body.lang_code = 'p';
+      const model = c.model || (engine === 'kokoro' ? 'kokoro' : 'gpt-4o-mini-tts');
+      const body: Record<string, unknown> = { model, input: text, voice, speed, response_format: 'mp3' };
+      // Kokoro-FastAPI: 'p' = portugues do Brasil; sem stream o arquivo chega inteiro
+      if (engine === 'kokoro') Object.assign(body, { lang_code: 'p', stream: false });
+      // gpt-4o-mini-tts aceita direcao de fala; tts-1 recusaria o campo
+      else if (/gpt-4o/.test(model)) body.instructions = 'Leia em portugues do Brasil, com sotaque brasileiro e ritmo natural de narracao de audiolivro.';
       const res = await fetch(`${c.baseUrl}/audio/speech`, { method: 'POST', headers, body: JSON.stringify(body), signal });
       return audioOf(await ok(res, engine), 'audio/mpeg');
     }
     case 'piper': {
-      // servidor HTTP do Piper: POST com JSON, devolve WAV
-      const res = await fetch(`${c.baseUrl}/`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, voice, length_scale: 1 / speed }),
-        signal,
-      });
+      // piper-tts (piper1-gpl): POST /synthesize com JSON, devolve WAV. O servidor
+      // antigo (rhasspy/piper) atendia em POST /: cai nele quando a rota nova nao existe
+      const init = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, voice, length_scale: 1 / speed }), signal };
+      let res = await fetch(`${c.baseUrl}/synthesize`, init);
+      if (res.status === 404 || res.status === 405) res = await fetch(`${c.baseUrl}/`, init);
       return audioOf(await ok(res, engine), 'audio/wav');
     }
     case 'elevenlabs': {
+      const model11 = c.model || 'eleven_multilingual_v2';
       const res = await fetch(`${c.baseUrl || 'https://api.elevenlabs.io/v1'}/text-to-speech/${encodeURIComponent(voice)}?output_format=mp3_44100_128`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'xi-api-key': c.apiKey, Accept: 'audio/mpeg' },
-        body: JSON.stringify({ text, model_id: c.model || 'eleven_multilingual_v2', language_code: 'pt', voice_settings: { speed: Math.min(1.2, Math.max(0.7, speed)) } }),
+        body: JSON.stringify({
+          text,
+          model_id: model11,
+          // so' Flash/Turbo v2.5 aceitam forcar o idioma; o multilingual_v2 detecta sozinho
+          ...(/(flash|turbo)_v2_5/.test(model11) ? { language_code: 'pt' } : {}),
+          voice_settings: { speed: Math.min(1.2, Math.max(0.7, speed)) },
+        }),
         signal,
       });
       return audioOf(await ok(res, engine), 'audio/mpeg');
     }
     case 'azure': {
       if (!/^[a-z0-9-]+$/i.test(c.region)) throw new Error('Azure Speech: regiao invalida');
-      const rate = `${Math.round((speed - 1) * 100)}%`;
-      const ssml = `<speak version="1.0" xml:lang="pt-BR"><voice name="${escapeXml(voice)}"><prosody rate="${rate}">${escapeXml(text)}</prosody></voice></speak>`;
+      const pct = Math.round((speed - 1) * 100);
+      const rate = `${pct >= 0 ? '+' : ''}${pct}%`;
+      const ssml = `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="pt-BR"><voice name="${escapeXml(voice)}"><prosody rate="${rate}">${escapeXml(text)}</prosody></voice></speak>`;
       const res = await fetch(`https://${c.region}.tts.speech.microsoft.com/cognitiveservices/v1`, {
         method: 'POST',
         headers: {
