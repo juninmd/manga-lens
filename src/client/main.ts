@@ -6,6 +6,7 @@ import { BookReader } from './book.ts';
 import { mountChrome } from './chrome.ts';
 import { el, qs, toast } from './ui.ts';
 import { getProgress, nextUnreadChapter } from './state.ts';
+import { syncNow } from './sync.ts';
 import { isDesktop, resolveApiBase, waitForApi } from './base.ts';
 
 // no desktop a API vive num sidecar: descobre a porta antes de qualquer fetch.
@@ -125,6 +126,23 @@ const catalog = new Catalog({
       void surfaceFor(chapter).open(detail, chapter, page);
     })();
   },
+});
+
+// pasta sincronizada: junta o progresso de outras maquinas no boot, a cada
+// 5 min e ao esconder a janela. Desligada, cada rodada e' so' um GET local que
+// responde 409 — e ligar depois pelas configuracoes ja' entra no ciclo
+const runSync = (): void => {
+  void syncNow().then((r) => {
+    if (r.ok && r.changed) {
+      toast('progresso de outra maquina sincronizado');
+      window.dispatchEvent(new CustomEvent('ml:favorites-updated'));
+    }
+  });
+};
+window.setInterval(runSync, 5 * 60 * 1000);
+window.setTimeout(runSync, 3_000);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') runSync();
 });
 
 /**

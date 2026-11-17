@@ -12,6 +12,7 @@ import type { OpdsProvider } from './providers/opds.ts';
 import type { SearchFilters, SeriesCard } from './providers/types.ts';
 import { assertInsideLibrary, localBookBlocks, localPagePaths } from './providers/local.ts';
 import { readZipEntry, readZipIndex } from './zip.ts';
+import { readSync, setSyncDir, SyncError, syncDir, writeSync } from './sync.ts';
 import { buildStoredZip, imageExt, safeFileName, type ZipInput } from './zip-write.ts';
 import { readRarEntry } from './rar.ts';
 import { pdfPageImage } from './pdf.ts';
@@ -761,6 +762,42 @@ const STATIC_MIME: Record<string, string> = {
   '.wasm': 'application/wasm',
   '.woff2': 'font/woff2',
 };
+
+/** Pasta de sincronizacao (Dropbox, OneDrive, Syncthing...): progresso entre maquinas sem servidor. */
+app.get('/api/sync/config', (c) => c.json({ dir: syncDir(), enabled: Boolean(syncDir()) }));
+
+app.post('/api/sync/config', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { dir?: unknown } | null;
+  if (!body || typeof body.dir !== 'string') return c.json({ error: 'dir obrigatorio' }, 400);
+  try {
+    setSyncDir(body.dir);
+  } catch (err) {
+    if (err instanceof SyncError) return c.json({ error: err.message }, 400);
+    throw err;
+  }
+  return c.json({ dir: syncDir(), enabled: Boolean(syncDir()) });
+});
+
+app.get('/api/sync', (c) => {
+  try {
+    return c.json({ data: readSync() });
+  } catch (err) {
+    if (err instanceof SyncError) return c.json({ error: err.message }, 409);
+    throw err;
+  }
+});
+
+app.post('/api/sync', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { data?: unknown } | null;
+  if (!body || typeof body.data !== 'object' || body.data === null) return c.json({ error: 'data obrigatorio' }, 400);
+  try {
+    writeSync(body.data);
+  } catch (err) {
+    if (err instanceof SyncError) return c.json({ error: err.message }, 409);
+    throw err;
+  }
+  return c.json({ ok: true });
+});
 
 app.get('*', async (c) => {
   const pathname = new URL(c.req.url).pathname;
