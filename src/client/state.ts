@@ -85,6 +85,11 @@ interface Store {
   /** capitulos ja' lidos, por serie */
   read: Record<string, string[]>;
   bookmarks: Bookmark[];
+  /**
+   * Quando um favorito ou marcador foi removido (`fav:<obra>`, `bm:<fonte>:<cap>:<pag>`).
+   * Sem isto a sincronizacao traria de volta o que voce tirou nesta maquina.
+   */
+  removed: Record<string, number>;
 }
 
 const DEFAULTS: Store = {
@@ -120,6 +125,7 @@ const DEFAULTS: Store = {
   progress: {},
   read: {},
   bookmarks: [],
+  removed: {},
 };
 
 function load(): Store {
@@ -133,6 +139,7 @@ function load(): Store {
       progress: parsed.progress ?? {},
       read: parsed.read ?? {},
       bookmarks: parsed.bookmarks ?? [],
+      removed: parsed.removed ?? {},
     };
   } catch {
     // JSON quebrado: o proximo persist() sobrescreveria o valor cru, que ainda
@@ -216,9 +223,11 @@ export function toggleFavorite(s: { provider: string; id: string; title: string;
   const k = seriesKey(s.provider, s.id);
   if (store.favorites[k]) {
     delete store.favorites[k];
+    store.removed[`fav:${k}`] = Date.now();
     persist();
     return false;
   }
+  delete store.removed[`fav:${k}`];
   store.favorites[k] = { ...s, at: Date.now() };
   persist();
   return true;
@@ -347,11 +356,14 @@ const sameSpot = (a: Bookmark, provider: string, chapterId: string, page: number
 
 export function toggleBookmark(mark: Omit<Bookmark, 'at'>): boolean {
   const i = store.bookmarks.findIndex((b) => sameSpot(b, mark.provider, mark.chapterId, mark.page));
+  const tomb = `bm:${mark.provider}:${mark.chapterId}:${mark.page}`;
   if (i >= 0) {
     store.bookmarks.splice(i, 1);
+    store.removed[tomb] = Date.now();
     persist();
     return false;
   }
+  delete store.removed[tomb];
   store.bookmarks.unshift({ ...mark, at: Date.now() });
   store.bookmarks = store.bookmarks.slice(0, 200);
   persist();

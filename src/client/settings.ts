@@ -4,6 +4,7 @@ import { edits } from './edits.ts';
 import { TESS_LANG_OPTIONS } from './ocr.ts';
 import { persist, resetSettings, store, type Settings } from './state.ts';
 import { applyTheme, getThemeMode, type ThemeMode } from './theme.ts';
+import { getSyncConfig, setSyncConfig, syncNow } from './sync.ts';
 import { el, plural, toast } from './ui.ts';
 import {
   REPO_URL,
@@ -51,6 +52,48 @@ function changed(): void {
 const rerender = (): void => {
   if (root) paint();
 };
+
+// ---------- sincronizacao ----------
+
+let syncDirCache: string | undefined;
+
+/**
+ * Pasta sincronizada: o caminho fica no servidor local (e' ele que grava o
+ * arquivo), entao a linha carrega o valor atual depois de desenhada.
+ */
+function syncRow(): HTMLElement {
+  const input = el('input', {
+    class: 'ml-input ml-set-input',
+    type: 'text',
+    placeholder: 'ex.: C:\\Users\\voce\\Dropbox\\MangaLens',
+    value: syncDirCache ?? '',
+    'aria-label': 'Pasta de sincronização',
+  }) as HTMLInputElement;
+  if (syncDirCache === undefined) {
+    void getSyncConfig()
+      .then((c) => {
+        syncDirCache = c.dir;
+        if (!input.value) input.value = c.dir;
+      })
+      .catch(() => undefined);
+  }
+  const save = button('Salvar e sincronizar', () => {
+    void setSyncConfig(input.value)
+      .then(async (c) => {
+        syncDirCache = c.dir;
+        if (!c.enabled) return toast('sincronização desligada');
+        const r = await syncNow();
+        toast(r.ok ? 'progresso sincronizado com a pasta' : `não consegui sincronizar: ${r.error}`, r.ok ? 'info' : 'error');
+        if (r.ok && r.changed) window.dispatchEvent(new CustomEvent('ml:favorites-updated'));
+      })
+      .catch((err) => toast(`pasta recusada: ${(err as Error).message}`, 'error'));
+  });
+  return row(
+    'Sincronizar entre máquinas',
+    'Escolha uma pasta que você já sincroniza (Dropbox, OneDrive, Syncthing). Favoritos, progresso, marcadores e capítulos lidos vão para um arquivo lá a cada 5 minutos. Deixe vazio para desligar.',
+    [input, save],
+  );
+}
 
 // ---------- controles ----------
 
@@ -289,6 +332,7 @@ const sections: Section[] = [
     render: () => [
       row('Backup', 'Baixa um .json com favoritos, progresso, marcadores e capítulos lidos.', button('Baixar backup', () => press('backup'))),
       row('Importar backup', 'Restaura esse arquivo, em qualquer máquina.', button('Importar…', () => press('import'))),
+      syncRow(),
       row(
         'Restaurar preferências',
         'Volta modo, ajuste, motor, idioma e letra ao padrão. Favoritos e progresso ficam.',
@@ -302,7 +346,7 @@ const sections: Section[] = [
           rerender();
         }),
       ),
-      el('p', { class: 'ml-set-note' }, 'Tudo fica neste aparelho: progresso, favoritos e correções vivem no armazenamento do app. Só o texto reconhecido vai ao tradutor que você escolheu.'),
+      el('p', { class: 'ml-set-note' }, 'Tudo fica neste aparelho: progresso, favoritos e correções vivem no armazenamento do app (e na pasta de sincronização, se você ligar). Só o texto reconhecido vai ao tradutor que você escolheu.'),
     ],
   },
   {
