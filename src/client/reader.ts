@@ -1,6 +1,7 @@
 import {
   aiHealth,
   clearSeriesMemory,
+  downloadChapter,
   explain,
   getAiProviders,
   getEngines,
@@ -813,6 +814,12 @@ export class Reader {
         ...iconLabel('🔊 Ouvir').aria,
       }, ...iconLabel('🔊 Ouvir').children)),
       (this.bookmarkBtn = this.bookmarkButton()),
+      el('button', {
+        class: 'ml-btn ml-btn-sm',
+        onclick: (e: MouseEvent) => void this.downloadCurrent(e.currentTarget as HTMLButtonElement),
+        title: 'Baixa o capitulo como CBZ para ler offline (vai para a pasta da obra na biblioteca local, se configurada)',
+        ...iconLabel('⬇ Baixar').aria,
+      }, ...iconLabel('⬇ Baixar').children),
       // iPhone nao tem requestFullscreen: botao inerte confunde mais que a ausencia
       document.fullscreenEnabled
         ? el('button', {
@@ -2427,7 +2434,7 @@ export class Reader {
   }
 
   /** vira a pagina; no fim/inicio do capitulo passa para o vizinho em vez de nao fazer nada */
-  // ---------- voz ----------
+// ---------- voz ----------
 
   private toggleSpeech(): void {
     if (this.speaker) this.stopSpeech();
@@ -2488,6 +2495,37 @@ export class Reader {
     this.speakBtn?.setAttribute('aria-pressed', 'true');
     this.speakBtn?.classList.add('is-active');
     speaker.start(items);
+  }
+
+  /** Capitulo online vira CBZ: na biblioteca local (abre offline) ou salvo pelo navegador. */
+  private async downloadCurrent(btn: HTMLButtonElement): Promise<void> {
+    const detail = this.detail;
+    const chapter = this.chapter;
+    if (!detail || !chapter) return;
+    if (chapter.provider === 'local') return toast('este capitulo ja esta no seu disco');
+    btn.disabled = true;
+    this.setStatus('baixando capitulo...');
+    try {
+      const res = await downloadChapter({ provider: chapter.provider, chapter: chapter.id, series: detail.title, label: this.chapterLabel() });
+      if ('saved' in res) {
+        toast(`capitulo salvo na biblioteca local (${res.pages} paginas)`);
+        this.setStatus(`salvo em ${res.saved}`);
+      } else {
+        const url = URL.createObjectURL(res.file);
+        const a = el('a', { href: url, download: res.name }) as HTMLAnchorElement;
+        document.body.append(a);
+        a.click();
+        a.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+        this.setStatus('capitulo baixado');
+      }
+    } catch (err) {
+      this.setStatus(`download falhou: ${humanizeError(err)}`, true);
+      toast(`nao consegui baixar o capitulo: ${humanizeError(err)}`, 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  }
   }
 
   private turn(dir: 1 | -1): void {

@@ -246,3 +246,65 @@ describe('rotas do catalogo', () => {
     }
   });
 });
+
+describe('OPDS 2.0 (JSON)', () => {
+  const ROOT2 = 'http://kavita.lan:5000/opds2/catalog';
+  const json2 = 'application/opds+json';
+  const root2 = {
+    metadata: { title: 'Kavita' },
+    links: [
+      { rel: 'self', href: '/opds2/catalog', type: json2 },
+      { rel: 'search', href: '/opds2/search{?query}', type: json2, templated: true },
+    ],
+    navigation: [{ title: 'Recentes', href: '/opds2/new', type: json2, rel: 'http://opds-spec.org/sort/new' }],
+  };
+  const shelf2 = {
+    metadata: { title: 'Recentes' },
+    groups: [
+      {
+        metadata: { title: 'Livros' },
+        publications: [
+          {
+            metadata: { title: { pt: 'Dom Casmurro' }, identifier: 'urn:dc', author: [{ name: 'Machado de Assis' }], language: 'pt-BR', subject: ['Romance'], description: '<p>Bentinho e Capitu</p>' },
+            links: [
+              { rel: 'http://opds-spec.org/acquisition/open-access', href: '/files/dc.pdf', type: 'application/pdf' },
+              { rel: 'http://opds-spec.org/acquisition/open-access', href: '/files/dc.epub', type: 'application/epub+zip' },
+            ],
+            images: [{ href: '/covers/dc.jpg', type: 'image/jpeg' }],
+          },
+        ],
+      },
+    ],
+  };
+
+  test('feed JSON vira o mesmo formato do Atom', async () => {
+    const { parseFeedJson } = await import('../src/server/providers/opds.ts');
+    const parsed = parseFeedJson(shelf2);
+    const [book] = parsed.entries;
+    expect(book).toMatchObject({ title: 'Dom Casmurro', authors: ['Machado de Assis'], summary: 'Bentinho e Capitu', lang: 'pt-br', tags: ['Romance'] });
+    expect(acquisitionOf(book!)).toEqual({ href: '/files/dc.epub', kind: 'epub' });
+    const nav = parseFeedJson(root2);
+    expect(navigationOf(nav.entries[0]!)).toBe('/opds2/new');
+    expect(nav.links.find((l) => l.rel === 'search')?.href).toBe('/opds2/search?query={searchTerms}');
+  });
+
+  test('JSON invalido e recusado com mensagem clara', async () => {
+    const { parseFeedJson } = await import('../src/server/providers/opds.ts');
+    expect(() => parseFeedJson([])).toThrow('feed OPDS');
+  });
+
+  test('catalogo que so fala OPDS 2.0: estante e busca funcionam', async () => {
+    const urls: string[] = [];
+    globalThis.fetch = ((input: string | URL | Request) => {
+      const url = new URL(String(input));
+      urls.push(url.pathname + url.search);
+      const body = url.pathname === '/opds2/catalog' ? root2 : shelf2;
+      return Promise.resolve(new Response(JSON.stringify(body), { headers: { 'Content-Type': json2 } }));
+    }) as typeof fetch;
+    const p = createOpdsProvider({ id: 'opds-kavita', name: 'Kavita', url: ROOT2, contentType: 'hq' });
+    const { items } = await p.search({});
+    expect(items.map((i) => [i.title, i.contentType])).toEqual([['Dom Casmurro', 'livro']]);
+    await p.search({ q: 'casmurro' });
+    expect(urls.at(-1)).toBe('/opds2/search?query=casmurro');
+  });
+});
