@@ -2433,8 +2433,7 @@ export class Reader {
     this.endCard = undefined;
   }
 
-  /** vira a pagina; no fim/inicio do capitulo passa para o vizinho em vez de nao fazer nada */
-// ---------- voz ----------
+  // ---------- voz ----------
 
   private toggleSpeech(): void {
     if (this.speaker) this.stopSpeech();
@@ -2526,8 +2525,8 @@ export class Reader {
       btn.disabled = false;
     }
   }
-  }
 
+  /** vira a pagina; no fim/inicio do capitulo passa para o vizinho em vez de nao fazer nada */
   private turn(dir: 1 | -1): void {
     if (!this.pages.length) return;
     const moved = dir > 0 ? this.viewer.next() : this.viewer.prev();
