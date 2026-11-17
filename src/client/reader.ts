@@ -40,6 +40,8 @@ import {
   type OcrBlock,
 } from './ocr.ts';
 import { numberedPage } from './page-image.ts';
+import { speakablePage } from './reader-speech.ts';
+import { Speaker } from './tts.ts';
 import { FITS, MODES, iconLabel, imageReady, loadPageImage, plural, type RunCtx, type RunStats } from './reader-util.ts';
 import { buildChatInput, closeChat, openChat, pushMessage } from './reader-chat.ts';
 import { checkBalloonHover, editScope, findBlockAt, hideTooltip, scheduleHideTooltip, showTooltip } from './reader-tooltip.ts';
@@ -125,6 +127,10 @@ export class Reader {
   /** sentido efetivo da obra aberta: HQ ocidental le ao contrario de manga */
   private rtl = true;
   private pages: PageRef[] = [];
+  /** leitura em voz alta dos baloes traduzidos; `speakingPage` e' a pagina que esta' tocando */
+  private speaker?: Speaker;
+  private speakingPage = -1;
+  private speakBtn?: HTMLElement;
   /** @internal usado pelos modulos reader-* */
   ocrCache = new Map<string, OcrBlock[]>();
   /**
@@ -491,6 +497,13 @@ export class Reader {
         title: 'Assistente de leitura',
         ...iconLabel('💬 Explicar').aria,
       }, ...iconLabel('💬 Explicar').children),
+      (this.speakBtn = el('button', {
+        class: 'ml-btn ml-btn-sm',
+        onclick: () => this.toggleSpeech(),
+        title: 'Le em voz alta os baloes traduzidos desta pagina e segue pelas proximas (motor e voz em Configuracoes > Livros)',
+        'aria-pressed': String(Boolean(this.speaker)),
+        ...iconLabel('🔊 Ouvir').aria,
+      }, ...iconLabel('🔊 Ouvir').children)),
       (this.bookmarkBtn = this.bookmarkButton()),
       el('button', {
         class: 'ml-btn ml-btn-sm',
@@ -1115,6 +1128,7 @@ export class Reader {
   }
 
   close(): void {
+    this.stopSpeech();
     hideTooltip(this);
     this.hideEndCard();
     this.toggleHelp(false);
@@ -1156,6 +1170,8 @@ export class Reader {
     // capitulo que nao abriu nao tem pagina: sem esta guarda o `page >= length-1`
     // abaixo daria verdadeiro em 0 >= -1 e marcaria como lido o que nunca abriu
     if (!this.pages.length) return;
+    // virar a pagina na mao interrompe a voz; a virada que a propria voz faz, nao
+    if (this.speaker && page !== this.speakingPage) this.stopSpeech();
     hideTooltip(this);
     this.hideEndCard();
     // OCR da pagina que ficou para tras nao precisa terminar; a traducao do
@@ -1783,7 +1799,69 @@ export class Reader {
     this.endCard = undefined;
   }
 
-  /** vira a pagina; no fim/inicio do capitulo passa para o vizinho em vez de nao fazer nada */
+  // ---------- voz ----------
+
+  private toggleSpeech(): void {
+    if (this.speaker) this.stopSpeech();
+    else this.startSpeech(this.viewer.currentPage);
+  }
+
+  private stopSpeech(): void {
+    this.speaker?.stop();
+    this.speaker = undefined;
+    this.speakingPage = -1;
+    this.speakBtn?.setAttribute('aria-pressed', 'false');
+    this.speakBtn?.classList.remove('is-active');
+  }
+
+  /** Le os baloes traduzidos de `page`; no fim vira a pagina e segue enquanto houver traducao. */
+  private startSpeech(page: number, chained = false): void {
+    const s = store.settings;
+    const blocks = this.ocrCache.get(this.pageKey(page)) ?? [];
+    const items = speakablePage(blocks, this.rtl, s.showOriginal);
+    if (!items.length) {
+      this.stopSpeech();
+      if (!chained) toast('traduza a pagina antes (tecla R) para ouvir os baloes');
+      else this.setStatus('leitura em voz alta parou: a proxima pagina ainda nao foi traduzida');
+      return;
+    }
+    this.speaker?.stop();
+    this.speakingPage = page;
+    const total = items.length;
+    const speaker = new Speaker({
+      engine: s.ttsEngine,
+      voice: s.ttsVoice,
+      rate: s.ttsRate,
+      onPara: (id) => {
+        if (this.speaker !== speaker) return;
+        const at = items.findIndex((it) => it.index === id) + 1;
+        this.setStatus(`🔊 lendo balao ${at} de ${total}`);
+      },
+      onEnd: () => {
+        if (this.speaker !== speaker) return;
+        const next = page + 1;
+        if (next >= this.pages.length) {
+          this.stopSpeech();
+          this.setStatus('leitura em voz alta terminou o capitulo');
+          return;
+        }
+        this.speakingPage = next;
+        this.viewer.goToPage(next);
+        this.startSpeech(next, true);
+      },
+      onError: (message) => {
+        if (this.speaker !== speaker) return;
+        this.stopSpeech();
+        toast(`leitura em voz alta falhou: ${message}`, 'error');
+      },
+      onFallback: (message) => toast(`${message} — lendo com a voz do sistema`, 'error'),
+    });
+    this.speaker = speaker;
+    this.speakBtn?.setAttribute('aria-pressed', 'true');
+    this.speakBtn?.classList.add('is-active');
+    speaker.start(items);
+  }
+
   /** Capitulo online vira CBZ: na biblioteca local (abre offline) ou salvo pelo navegador. */
   private async downloadCurrent(btn: HTMLButtonElement): Promise<void> {
     const detail = this.detail;
@@ -1814,6 +1892,7 @@ export class Reader {
     }
   }
 
+  /** vira a pagina; no fim/inicio do capitulo passa para o vizinho em vez de nao fazer nada */
   private turn(dir: 1 | -1): void {
     if (!this.pages.length) return;
     const moved = dir > 0 ? this.viewer.next() : this.viewer.prev();
