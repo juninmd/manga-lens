@@ -169,7 +169,8 @@ export interface AiProviderInfo {
   model: string;
   visionModel?: string;
   hasKey: boolean;
-  apiKey: string;
+  /** `••••1234` ou vazio: a chave em si nunca volta do servidor */
+  keyHint: string;
 }
 
 export const aiHealth = (provider?: string): Promise<{
@@ -202,6 +203,7 @@ export const saveAiConfig = (data: {
   apiKey?: string;
   model?: string;
   visionModel?: string;
+  clearKey?: boolean;
 }): Promise<{
   active: AiProviderName;
   providers: AiProviderInfo[];

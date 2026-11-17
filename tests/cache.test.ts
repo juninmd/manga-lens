@@ -56,3 +56,43 @@ describe('cache de duas camadas', () => {
     expect(await cached('k:a', 60_000, async () => 'outro')).toBe('A');
   });
 });
+
+describe('deduplicacao e expurgo (#23)', () => {
+  test('chamadas simultaneas da mesma chave fazem um unico load', async () => {
+    let hits = 0;
+    const load = async (): Promise<number> => {
+      hits++;
+      await Bun.sleep(20);
+      return 7;
+    };
+    const values = await Promise.all([1, 2, 3, 4, 5].map(() => cached('k:dedupe', 60_000, load)));
+    expect(values).toEqual([7, 7, 7, 7, 7]);
+    expect(hits).toBe(1);
+  });
+
+  test('load que falha nao fica preso: a proxima chamada tenta de novo', async () => {
+    let hits = 0;
+    const load = async (): Promise<number> => {
+      if (++hits === 1) throw new Error('falhou');
+      return 1;
+    };
+    await expect(cached('k:falha', 60_000, load)).rejects.toThrow('falhou');
+    expect(await cached('k:falha', 60_000, load)).toBe(1);
+  });
+
+  test('memoria nao passa do teto', async () => {
+    const { MAX_MEM_ENTRIES, memSize } = await import('../src/server/cache.ts');
+    for (let i = 0; i < MAX_MEM_ENTRIES + 50; i++) await cached(`k:teto:${i}`, 60_000, async () => i);
+    expect(memSize()).toBeLessThanOrEqual(MAX_MEM_ENTRIES);
+  });
+
+  test('expurgo apaga so arquivo de cache velho, nunca ai-config.json', async () => {
+    const { purgeDisk } = await import('../src/server/cache.ts');
+    await cached('k:velho', 60_000, async () => 1);
+    await writeFile(join(dir, 'ai-config.json'), '{}');
+    const removed = await purgeDisk(-1);
+    expect(removed).toBeGreaterThan(0);
+    expect(await Bun.file(fileFor('k:velho')).exists()).toBe(false);
+    expect(await Bun.file(join(dir, 'ai-config.json')).exists()).toBe(true);
+  });
+});

@@ -1,6 +1,7 @@
 import { generateText, streamText, type LanguageModel, type ModelMessage } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
+import { keyHint } from './ai-config-body.ts';
 import { realign } from './align.ts';
 import { config, getProviderConfig, normalizeProvider, type AiProvider } from './config.ts';
 import { readingOrder, type PageBlock } from './page-text.ts';
@@ -506,7 +507,8 @@ export function getAvailableProviders(): {
     model: string;
     visionModel?: string;
     hasKey: boolean;
-    apiKey: string;
+    /** no maximo os 4 ultimos caracteres; a chave em si nunca sai do servidor */
+    keyHint: string;
   }[];
 } {
   const ollama = getProviderConfig('ollama');
@@ -522,7 +524,7 @@ export function getAvailableProviders(): {
         model: ollama.model,
         visionModel: ollama.visionModel ?? '',
         hasKey: Boolean(ollama.apiKey && ollama.apiKey !== 'ollama'),
-        apiKey: ollama.apiKey ?? '',
+        keyHint: keyHint(ollama.apiKey),
       },
       {
         id: 'openrouter',
@@ -531,7 +533,7 @@ export function getAvailableProviders(): {
         model: openrouter.model,
         visionModel: openrouter.visionModel ?? '',
         hasKey: Boolean(openrouter.apiKey),
-        apiKey: openrouter.apiKey ?? '',
+        keyHint: keyHint(openrouter.apiKey),
       },
       {
         id: 'openaicompatible',
@@ -540,7 +542,7 @@ export function getAvailableProviders(): {
         model: openai.model,
         visionModel: openai.visionModel ?? '',
         hasKey: Boolean(openai.apiKey && openai.apiKey !== 'ollama'),
-        apiKey: openai.apiKey ?? '',
+        keyHint: keyHint(openai.apiKey),
       },
     ],
   };
