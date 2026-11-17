@@ -2492,3 +2492,23 @@ body.ml-v2 .ml-book[data-theme='light'] .ml-book-top {
   flex-wrap: wrap;
   gap: 6px;
 }
+
+/* selo de capitulos novos nos favoritos */
+.ml-card,
+.ml-resume {
+  position: relative;
+}
+.ml-new-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  min-width: 22px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font: 700 12px/1.4 system-ui, sans-serif;
+  text-align: center;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.35);
+  pointer-events: none;
+}
