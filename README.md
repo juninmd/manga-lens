@@ -710,7 +710,8 @@ dentro da pasta de atualizações do app — o front não escolhe o programa.
 - PDF de **texto** sem sumário abre em blocos de 10 páginas. PDF **misto** — texto
   com páginas escaneadas no meio — é tratado pelo que predomina na amostra.
 - Série OPDS com volumes em EPUB abre cada volume inteiro como um capítulo (o EPUB
-  avulso, buscado direto, abre capítulo a capítulo). OPDS 2.0 (JSON) não é lido.
+  avulso, buscado direto, abre capítulo a capítulo). OPDS 2.0 (JSON) é lido, mas sem
+  autenticação OAuth e sem o perfil de streaming de páginas (OPDS-PSE só no Atom).
 - O acervo do Gutenberg é majoritariamente em inglês (~483 títulos em português);
   título sem EPUB no espelho (~21 mil, só TXT ou áudio) fica fora da busca.
 - Glossário, tom e honoríficos só valem nos motores de IA: Google e MyMemory
