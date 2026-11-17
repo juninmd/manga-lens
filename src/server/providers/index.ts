@@ -1,3 +1,4 @@
+import { HttpError } from '../http.ts';
 import { config } from '../config.ts';
 import { mangadex } from './mangadex.ts';
 import { mangapill } from './mangapill.ts';
@@ -41,7 +42,8 @@ export const enabledProviders = (contentType?: ContentType): Provider[] =>
 
 export function getProvider(id: string): Provider {
   const p = providers.find((x) => x.id === id);
-  if (!p) throw new Error(`provider desconhecido: ${id}`);
+  // 404 e' do cliente (link velho, fonte removida), nao falha do servidor
+  if (!p) throw new HttpError(`provider desconhecido: ${id}`, 404);
   return p;
 }
 

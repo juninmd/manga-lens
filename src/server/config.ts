@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
 
 const env = (k: string, d = ''): string => (process.env[k] ?? d).trim();
 const num = (k: string, d: number): number => {
@@ -195,7 +195,11 @@ export function saveAiConfig(): void {
       openrouter: config.ai.openrouter,
       openaiCompatible: config.ai.openaiCompatible,
     };
-    writeFileSync(p, JSON.stringify(data, null, 2), 'utf-8');
+    // 0o600 + temporario/rename: a chave nao fica legivel por outros usuarios nem
+    // pela metade se o processo cair no meio. No Windows o mode e' ignorado.
+    const tmp = `${p}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(data, null, 2), { encoding: 'utf-8', mode: 0o600 });
+    renameSync(tmp, p);
   } catch (err) {
     console.error('[config] erro ao salvar ai-config.json:', err);
   }

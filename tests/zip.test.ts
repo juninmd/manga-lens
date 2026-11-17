@@ -3,7 +3,7 @@ import { deflateRawSync } from 'node:zlib';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readZipEntry, readZipIndex } from '../src/server/zip.ts';
+import { MAX_ENTRY_BYTES, readZipEntry, readZipIndex } from '../src/server/zip.ts';
 
 const dir = await mkdtemp(join(tmpdir(), 'manga-lens-zip-'));
 afterAll(() => rm(dir, { recursive: true, force: true }));
@@ -117,17 +117,72 @@ describe('leitor de CBZ', () => {
   test('arquivo que nao e zip acusa erro claro', async () => {
     const path = join(dir, 'nao-e-zip.cbz');
     await writeFile(path, Buffer.alloc(4096, 7));
-    expect(readZipIndex(path)).rejects.toThrow('CBZ invalido');
+    await expect(readZipIndex(path)).rejects.toThrow('CBZ invalido');
   });
 
   test('metodo de compressao exotico e recusado, nao devolve lixo', async () => {
     const path = await write('lzma.cbz', [{ name: 'a.jpg', data: PAGE_2, method: 14 }]);
     const [entry] = await readZipIndex(path);
-    expect(readZipEntry(path, entry!)).rejects.toThrow('nao suportado');
+    await expect(readZipEntry(path, entry!)).rejects.toThrow('nao suportado');
   });
 
   test('zip vazio devolve lista vazia sem estourar', async () => {
     const path = await write('vazio.cbz', []);
     expect(await readZipIndex(path)).toEqual([]);
+  });
+});
+
+describe('limites e arquivos hostis', () => {
+  test('arquivo de 0 bytes acusa CBZ invalido', async () => {
+    const path = join(dir, 'zero.cbz');
+    await writeFile(path, Buffer.alloc(0));
+    await expect(readZipIndex(path)).rejects.toThrow('CBZ invalido');
+  });
+
+  test('tamanho comprimido declarado fora do arquivo e recusado sem alocar', async () => {
+    const zip = buildZip([{ name: 'a.jpg', data: PAGE_2, method: 0 }]);
+    const cen = zip.length - 22 - (46 + 5);
+    zip.writeUInt32LE(0x03fffff0, cen + 20);
+    const path = join(dir, 'forjado.cbz');
+    await writeFile(path, zip);
+    const [entry] = await readZipIndex(path);
+    await expect(readZipEntry(path, entry!)).rejects.toThrow(/limite|fora do arquivo/);
+  });
+
+  test('diretorio central fora do arquivo e recusado', async () => {
+    const zip = buildZip([{ name: 'a.jpg', data: PAGE_2, method: 0 }]);
+    zip.writeUInt32LE(0x7ffffff0, zip.length - 22 + 16);
+    const path = join(dir, 'cen-fora.cbz');
+    await writeFile(path, zip);
+    await expect(readZipIndex(path)).rejects.toThrow('fora do arquivo');
+  });
+
+  test('zip bomb: entrada que expande alem do limite e recusada', async () => {
+    const bomb = Buffer.alloc(MAX_ENTRY_BYTES + 1024);
+    const zip = buildZip([{ name: 'a.jpg', data: bomb, method: 8 }]);
+    // mente o tamanho descompactado para passar da checagem declarada
+    const cen = zip.length - 22 - (46 + 5);
+    zip.writeUInt32LE(1000, cen + 24);
+    const path = join(dir, 'bomb.cbz');
+    await writeFile(path, zip);
+    const [entry] = await readZipIndex(path);
+    await expect(readZipEntry(path, entry!)).rejects.toThrow('limite');
+  });
+
+  test('entrada criptografada e recusada com mensagem clara', async () => {
+    const zip = buildZip([{ name: 'a.jpg', data: PAGE_2, method: 0 }]);
+    const cen = zip.length - 22 - (46 + 5);
+    zip.writeUInt16LE(1, cen + 8);
+    const path = join(dir, 'senha.cbz');
+    await writeFile(path, zip);
+    await expect(readZipIndex(path)).rejects.toThrow('senha');
+  });
+
+  test('marcador ZIP64 e recusado em vez de ler dados errados', async () => {
+    const zip = buildZip([{ name: 'a.jpg', data: PAGE_2, method: 0 }]);
+    zip.writeUInt16LE(0xffff, zip.length - 22 + 10);
+    const path = join(dir, 'zip64.cbz');
+    await writeFile(path, zip);
+    await expect(readZipIndex(path)).rejects.toThrow('ZIP64');
   });
 });
