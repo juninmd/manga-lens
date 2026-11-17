@@ -4,7 +4,7 @@ import { cancelUpdateDownload, getUpdateState, isDesktopApp, startUpdateDownload
 import { join, extname } from 'node:path';
 import { mkdir, rename, unlink } from 'node:fs/promises';
 import { gunzipSync } from 'node:zlib';
-import { config, getProviderConfig, hostAllowed, normalizeProvider, saveAiConfig, type AiProvider } from './config.ts';
+import { config, getProviderConfig, hostAllowed, normalizeProvider, saveAiConfig } from './config.ts';
 import { normalizeProviderImage } from './provider-image.ts';
 import { signUrl, verifyUrl } from './sign.ts';
 import { HttpError, httpFetch } from './http.ts';
