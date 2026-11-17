@@ -6,6 +6,7 @@ import {
   isFavorite,
   nextUnreadChapter,
   markChapterRead,
+  markChaptersSeen,
   markUpTo,
   toggleFavorite,
 } from './state.ts';
@@ -56,6 +57,8 @@ export class SeriesPanel {
     );
     try {
       this.detail = await getSeries(provider, id);
+      // abrir a obra e' "ver" os capitulos novos: some o selo do favorito
+      markChaptersSeen(provider, id, this.detail.chapters.length);
       const langs = this.detail.availableLangs ?? [];
       this.lang = langs.includes('pt-br') ? 'pt-br' : (langs[0] ?? '');
       this.render();

@@ -7,6 +7,7 @@ import { mountChrome } from './chrome.ts';
 import { el, qs, toast } from './ui.ts';
 import { getProgress, nextUnreadChapter } from './state.ts';
 import { syncNow } from './sync.ts';
+import { CHECK_EVERY_MS, checkFavorites, updatesMessage } from './updates.ts';
 import { isDesktop, resolveApiBase, waitForApi } from './base.ts';
 
 // no desktop a API vive num sidecar: descobre a porta antes de qualquer fetch.
@@ -144,6 +145,17 @@ window.setTimeout(runSync, 3_000);
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') runSync();
 });
+
+// capitulo novo nos favoritos: confere no boot e a cada 6 h com o app aberto
+const runUpdateCheck = (): void => {
+  void checkFavorites().then((found) => {
+    if (!found.length) return;
+    toast(updatesMessage(found));
+    window.dispatchEvent(new CustomEvent('ml:favorites-updated'));
+  });
+};
+window.setTimeout(runUpdateCheck, 5_000);
+window.setInterval(runUpdateCheck, CHECK_EVERY_MS);
 
 /**
  * Progresso salvo na ultima pagina significa "terminei": reabrir o capitulo

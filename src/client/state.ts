@@ -80,7 +80,7 @@ const KEY = 'manga-lens:v1';
 
 interface Store {
   settings: Settings;
-  favorites: Record<string, { provider: string; id: string; title: string; cover?: string; at: number }>;
+  favorites: Record<string, Favorite>;
   progress: Record<string, Progress>;
   /** capitulos ja' lidos, por serie */
   read: Record<string, string[]>;
@@ -198,6 +198,20 @@ export const translateStyle = (): { honorifics: Honorifics; tone: Tone; sfx: Sfx
   sfx: store.settings.sfx,
 });
 
+export interface Favorite {
+  provider: string;
+  id: string;
+  title: string;
+  cover?: string;
+  at: number;
+  /** capitulos vistos na ultima vez que a obra foi aberta ou conferida */
+  knownCount?: number;
+  /** capitulos novos desde `knownCount` (zera quando a obra e' aberta) */
+  newChapters?: number;
+  /** ultima consulta a fonte, para nao martelar o provider a cada boot */
+  checkedAt?: number;
+}
+
 export function toggleFavorite(s: { provider: string; id: string; title: string; cover?: string }): boolean {
   const k = seriesKey(s.provider, s.id);
   if (store.favorites[k]) {
@@ -215,8 +229,18 @@ export function toggleFavorite(s: { provider: string; id: string; title: string;
 export const isFavorite = (provider: string, id: string): boolean => Boolean(store.favorites[seriesKey(provider, id)]);
 
 /** Favoritos do mais recente para o mais antigo. */
-export const favorites = (): { provider: string; id: string; title: string; cover?: string; at: number }[] =>
-  Object.values(store.favorites).sort((a, b) => b.at - a.at);
+export const favorites = (): Favorite[] => Object.values(store.favorites).sort((a, b) => b.at - a.at);
+
+/** Obra aberta: o que esta' na lista agora passa a ser "visto". */
+export function markChaptersSeen(provider: string, id: string, count: number): void {
+  const fav = store.favorites[seriesKey(provider, id)];
+  if (!fav || (fav.knownCount === count && !fav.newChapters)) return;
+  fav.knownCount = count;
+  fav.newChapters = 0;
+  fav.checkedAt = Date.now();
+  persist();
+  window.dispatchEvent(new CustomEvent('ml:favorites-updated'));
+}
 
 export function saveProgress(p: Progress): void {
   store.progress[seriesKey(p.provider, p.seriesId)] = {
