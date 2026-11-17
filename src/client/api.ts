@@ -369,3 +369,22 @@ export async function ttsSpeak(body: { engine: TtsEngineId; text: string; voice?
   if (!res.ok) throw new ApiError(errorMessage(res.status, await res.text().catch(() => '')), res.status);
   return res.blob();
 }
+
+/**
+ * Baixa o capitulo como CBZ. Com biblioteca local o servidor grava no disco e
+ * devolve o caminho; sem ela, devolve o arquivo para salvar pelo navegador.
+ */
+export async function downloadChapter(body: { provider: string; chapter: string; series: string; label: string }): Promise<{ saved: string; pages: number } | { file: Blob; name: string }> {
+  let res: Response;
+  try {
+    res = await fetch(api('/api/download'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  } catch (err) {
+    if (isNetworkError(err)) throw new ApiError('servidor indisponivel', 0);
+    throw err;
+  }
+  if (!res.ok) throw new ApiError(errorMessage(res.status, await res.text().catch(() => '')), res.status);
+  if ((res.headers.get('content-type') ?? '').includes('json')) return (await res.json()) as { saved: string; pages: number };
+  const disposition = res.headers.get('content-disposition') ?? '';
+  const name = decodeURIComponent(/filename\*=UTF-8''([^;]+)/.exec(disposition)?.[1] ?? 'capitulo.cbz');
+  return { file: await res.blob(), name };
+}
