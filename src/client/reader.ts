@@ -1,6 +1,6 @@
 import {
   aiHealth,
-downloadChapter, explain
+  downloadChapter,
   getAiProviders,
   getEngines,
   getPages,
