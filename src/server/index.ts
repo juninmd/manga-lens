@@ -14,6 +14,7 @@ import type { SearchFilters, SeriesCard } from './providers/types.ts';
 import { assertInsideLibrary, localBookBlocks, localPagePaths } from './providers/local.ts';
 import { readZipEntry, readZipIndex } from './zip.ts';
 import { readSync, setSyncDir, SyncError, syncDir, writeSync } from './sync.ts';
+import { AiBodyError, parseExplainBody, parseVisionBody } from './ai-body.ts';
 import { AiConfigError, type AiConfigPatch, parseAiConfigBody } from './ai-config-body.ts';
 import { buildStoredZip, imageExt, safeFileName, type ZipInput } from './zip-write.ts';
 import { readRarEntry } from './rar.ts';
@@ -772,13 +773,24 @@ app.post('/api/ai/memory/clear', async (c) => {
 });
 
 app.post('/api/ai/vision', async (c) => {
-  const body = (await c.req.json()) as Parameters<typeof visionTranslate>[0];
-  if (!body?.imageDataUrl?.startsWith('data:image/')) return c.json({ error: 'imagem da pagina invalida — recarregue a pagina e tente de novo' }, 400);
+  let body: ReturnType<typeof parseVisionBody>;
+  try {
+    body = parseVisionBody(await c.req.json());
+  } catch (err) {
+    if (err instanceof AiBodyError) return c.json({ error: err.message }, 400);
+    throw err;
+  }
   return c.json({ balloons: await visionTranslate(body) });
 });
 
 app.post('/api/ai/explain', async (c) => {
-  const body = (await c.req.json()) as Parameters<typeof explainStream>[0];
+  let body: ReturnType<typeof parseExplainBody>;
+  try {
+    body = parseExplainBody(await c.req.json());
+  } catch (err) {
+    if (err instanceof AiBodyError) return c.json({ error: err.message }, 400);
+    throw err;
+  }
   const stream = await explainStream(body);
   return new Response(stream, {
     headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no' },
