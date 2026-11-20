@@ -1,3 +1,4 @@
+import { decodeEntities } from './entities.ts';
 import type { TextBlock } from './epub.ts';
 
 export interface TextChapter {
@@ -141,17 +142,6 @@ export function parseMarkdown(raw: string): TextBook {
   }));
   return { title, chapters: chapters.filter((c) => c.paragraphs.length) };
 }
-
-const decodeEntities = (s: string): string =>
-  s
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;|&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&#x([0-9a-f]+);/gi, (_, h: string) => String.fromCodePoint(Number.parseInt(h, 16)))
-    .replace(/&#(\d+);/g, (_, d: string) => String.fromCodePoint(Number(d)))
-    .replace(/&amp;/g, '&');
 
 const plain = (xml: string): string => decodeEntities(xml.replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
 

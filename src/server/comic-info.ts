@@ -1,3 +1,5 @@
+import { decodeEntities } from './entities.ts';
+
 /**
  * ComicInfo.xml e' o padrao de metadados que acompanha CBZ/CBR desde o ComicRack;
  * Calibre, Komga, Kavita e os scrapers de HQ gravam ele. Ler daqui e' melhor que
@@ -26,15 +28,6 @@ export interface ComicInfo {
 /** Nome da entrada dentro do arquivo, em qualquer caixa e em qualquer pasta. */
 export const COMIC_INFO_RE = /(^|\/)comicinfo\.xml$/i;
 
-const unescapeXml = (s: string): string =>
-  s
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&#(\d+);/g, (_, d: string) => String.fromCodePoint(Number(d)))
-    .replace(/&amp;/g, '&');
-
 /**
  * Leitor proprio em vez de parser de XML: o ComicInfo e' plano (um nivel de
  * elementos de texto sob <ComicInfo>) e trazer uma dependencia de XML para ler
@@ -44,7 +37,7 @@ function field(xml: string, name: string): string | undefined {
   // `\\s` e nao `\\b`: dentro de template literal `\b` e' o caractere de backspace,
   // nao a borda de palavra do regex — a busca nunca casava com <Series attr="...">
   const m = new RegExp(`<${name}(?:\\s[^>]*)?>([^]*?)</${name}>`, 'i').exec(xml);
-  const value = m?.[1] ? unescapeXml(m[1]).trim() : '';
+  const value = m?.[1] ? decodeEntities(m[1]).trim() : '';
   return value || undefined;
 }
 

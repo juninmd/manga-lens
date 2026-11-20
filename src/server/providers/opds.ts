@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { config } from '../config.ts';
+import { decodeEntities as decodeXmlEntities } from '../entities.ts';
 import { epubToTextBook, readEpub, type TextBlock } from '../epub.ts';
 import { httpFetch } from '../http.ts';
 import { pdfPageCount } from '../pdf.ts';
@@ -80,17 +81,7 @@ export interface OpdsFeed {
   links: OpdsLink[];
 }
 
-const decodeEntities = (s: string): string =>
-  s
-    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;|&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&#x([0-9a-f]+);/gi, (_, h: string) => String.fromCodePoint(Number.parseInt(h, 16)))
-    .replace(/&#(\d+);/g, (_, d: string) => String.fromCodePoint(Number(d)))
-    .replace(/&amp;/g, '&');
+const decodeEntities = (s: string): string => decodeXmlEntities(s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1'));
 
 const text = (xml: string): string =>
   decodeEntities(decodeEntities(xml).replace(/<[^>]+>/g, ' '))
