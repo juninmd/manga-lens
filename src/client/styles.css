@@ -335,6 +335,16 @@ textarea:focus-visible {
 .ml-status-error {
   color: var(--bad);
 }
+.ml-status-errors {
+  flex-basis: 100%;
+}
+.ml-status-errors summary {
+  cursor: pointer;
+  width: fit-content;
+}
+.ml-status-errors > div {
+  padding: 2px 0 0 14px;
+}
 
 .ml-section {
   margin: 22px 0 10px;

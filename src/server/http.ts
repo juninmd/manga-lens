@@ -232,7 +232,16 @@ export async function httpFetch(url: string, opts: FetchOpts = {}): Promise<Resp
 export async function fetchJson<T>(url: string, opts: FetchOpts = {}): Promise<T> {
   const res = await httpFetch(url, { accept: 'application/json', ...opts });
   if (!res.ok) throw upstreamError(res.status, url);
-  return (await res.json()) as T;
+  const body = await res.text();
+  try {
+    return JSON.parse(body) as T;
+  } catch {
+    // Cloudflare/manutencao devolvem 200 com HTML: "JSON Parse error: <" nao
+    // dizia nada a quem le o aviso na busca
+    const host = new URL(url).hostname;
+    const hint = body.trimStart().startsWith('<') ? 'pagina HTML no lugar de JSON (bloqueio/manutencao?)' : 'JSON invalido';
+    throw new HttpError(`${hint} (${host})`, 502);
+  }
 }
 
 export async function fetchText(url: string, opts: FetchOpts = {}): Promise<string> {

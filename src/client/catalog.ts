@@ -974,15 +974,40 @@ export class Catalog {
   }
 
   private render(res: SearchResponse): void {
-    const counts = Object.entries(res.perProvider)
+    const entries = Object.entries(res.perProvider);
+    const counts = entries.map(([k, v]) => `${k}: ${v}`).join(' · ');
+    // so' quem trouxe algo aparece no texto; as zeradas viviam empurrando a grade
+    // para baixo com dezenas de "fonte: 0" — a lista completa segue no title
+    const hits = entries
+      .filter(([, v]) => v > 0)
       .map(([k, v]) => `${k}: ${v}`)
       .join(' · ');
     this.statusBar.innerHTML = '';
     this.statusBar.append(
       // por fonte fica no title e some no celular: quebrava em duas linhas
-      el('span', { title: counts }, plural(res.items.length, 'resultado'), el('span', { class: 'ml-status-detail' }, ` — ${counts}`)),
-      ...res.errors.map((e) => el('span', { class: 'ml-status-error' }, `${e.provider}: ${e.message}`)),
+      el('span', { title: counts }, plural(res.items.length, 'resultado'), el('span', { class: 'ml-status-detail' }, hits ? ` — ${hits}` : '')),
     );
+    const skipped = res.skipped ?? [];
+    if (res.errors.length || skipped.length) {
+      // erros recolhidos: uma linha por fonte morta tomava metade da tela
+      const label = [
+        res.errors.length ? `${plural(res.errors.length, 'fonte')} com erro` : '',
+        skipped.length ? `${skipped.length} em pausa` : '',
+      ]
+        .filter(Boolean)
+        .join(' · ');
+      this.statusBar.append(
+        el(
+          'details',
+          { class: 'ml-status-errors' },
+          el('summary', { class: 'ml-status-error' }, label),
+          ...res.errors.map((e) => el('div', { class: 'ml-status-error' }, `${e.provider}: ${e.message}`)),
+          ...(skipped.length
+            ? [el('div', {}, `em pausa por falha recente (10 min): ${skipped.join(', ')}`)]
+            : []),
+        ),
+      );
+    }
 
     this.grid.innerHTML = '';
     // "continuar lendo"/marcadores/favoritos so' na home de verdade: com qualquer
@@ -1156,6 +1181,8 @@ export class Catalog {
       img.replaceWith(typeCover(img.dataset['title'] || img.alt));
       return;
     }
+    // a capa nova tambem pode falhar: sem este fallback o card ficava em branco
+    img.addEventListener('error', () => img.replaceWith(typeCover(img.dataset['title'] || img.alt)), { once: true });
     img.src = fresh;
     updateStoredCover(provider, id, fresh);
   }

@@ -51,6 +51,21 @@ export interface AggregatedSearch {
   items: SeriesCard[];
   errors: { provider: string; message: string }[];
   perProvider: Record<string, number>;
+  /** Fontes puladas por terem falhado ha' pouco (ver `cooldownUntil`). */
+  skipped: string[];
+}
+
+/**
+ * Fonte que caiu (dominio morto, Cloudflare, 5xx) fica fora das buscas padrao
+ * por um tempo: sem isso cada busca esperava os mesmos sites mortos ate' o
+ * prazo e enchia a tela com o mesmo erro. Escolhida explicitamente, sempre roda.
+ */
+const COOLDOWN_MS = 10 * 60_000;
+const cooldownUntil = new Map<string, number>();
+
+/** Para testes: esquece as fontes em pausa. */
+export function resetProviderCooldown(): void {
+  cooldownUntil.clear();
 }
 
 /**
@@ -111,7 +126,15 @@ function mergeDuplicates(items: SeriesCard[]): SeriesCard[] {
 
 /** Busca em N providers em paralelo; provider que cai vira aviso, nao erro fatal. */
 export async function searchAll(ids: string[], filters: SearchFilters): Promise<AggregatedSearch> {
-  const chosen = ids.length ? ids.map(getProvider) : enabledProviders(filters.contentType);
+  const now = Date.now();
+  const skipped: string[] = [];
+  const chosen = ids.length
+    ? ids.map(getProvider)
+    : enabledProviders(filters.contentType).filter((p) => {
+        const paused = (cooldownUntil.get(p.id) ?? 0) > now;
+        if (paused) skipped.push(p.id);
+        return !paused;
+      });
   // um site fora do ar segurava a busca inteira ate' o timeout+retries dele
   // (~60s) e o cliente via "servidor indisponivel"; passado o prazo, devolve o
   // que respondeu e marca o resto como esgotado
@@ -139,6 +162,7 @@ export async function searchAll(ids: string[], filters: SearchFilters): Promise<
   settled.forEach((r, i) => {
     const provider = chosen[i]!;
     if (r.status === 'fulfilled') {
+      cooldownUntil.delete(provider.id);
       // safety net: provider misto (ex. biblioteca local com mangá + livro)
       // pode devolver card de outro tipo — o card decide, provider e' so' o default
       const filtered = filters.contentType
@@ -148,6 +172,8 @@ export async function searchAll(ids: string[], filters: SearchFilters): Promise<
       items.push(...filtered);
     } else {
       perProvider[provider.id] = 0;
+      // so' fontes online entram em pausa: a biblioteca local nao "cai"
+      if (provider.kind === 'online') cooldownUntil.set(provider.id, now + COOLDOWN_MS);
       errors.push({ provider: provider.id, message: String(r.reason?.message ?? r.reason) });
     }
   });
@@ -165,7 +191,7 @@ export async function searchAll(ids: string[], filters: SearchFilters): Promise<
     for (const l of lists) if (l[i]) interleaved.push(l[i]!);
   }
 
-  return { items: interleaved, errors, perProvider };
+  return { items: interleaved, errors, perProvider, skipped };
 }
 
 export type { ContentType, Provider, SearchFilters, SeriesCard };

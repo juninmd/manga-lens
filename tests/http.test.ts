@@ -114,6 +114,15 @@ describe('fetchJson / fetchText', () => {
     expect(err.message).toContain('upstream 403');
   });
 
+  test('fetchJson com HTML no lugar de JSON explica o bloqueio, sem "JSON Parse error"', async () => {
+    stubFetch([ok('<!DOCTYPE html><title>Just a moment...</title>')]);
+    const err = (await fetchJson('https://api.x.test/a').catch((e) => e)) as HttpError;
+    expect(err).toBeInstanceOf(HttpError);
+    expect(err.status).toBe(502);
+    expect(err.message).toContain('pagina HTML no lugar de JSON');
+    expect(err.message).toContain('api.x.test');
+  });
+
   test('fetchText transforma 4xx em HttpError com status', async () => {
     stubFetch([status(451)]);
     const err = (await fetchText('https://x.test/a').catch((e) => e)) as HttpError;
