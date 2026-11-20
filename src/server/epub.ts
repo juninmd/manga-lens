@@ -1,3 +1,4 @@
+import { decodeEntities } from './entities.ts';
 import { readZipEntry, readZipIndex, type ZipEntry } from './zip.ts';
 import { buildChapters, isHeading, type TextBook, type TextItem } from './text-book.ts';
 
@@ -25,17 +26,6 @@ export interface TextBlock {
 }
 
 const CONTAINER = 'META-INF/container.xml';
-
-const decodeEntities = (s: string): string =>
-  s
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;|&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&#x([0-9a-f]+);/gi, (_, h: string) => String.fromCodePoint(parseInt(h, 16)))
-    .replace(/&#(\d+);/g, (_, d: string) => String.fromCodePoint(Number(d)))
-    .replace(/&amp;/g, '&');
 
 const attr = (tag: string, name: string): string | undefined =>
   // dentro de template literal uma barra so' nao vira escape de regex: `\s`
