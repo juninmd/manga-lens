@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { providers, searchAll } from '../src/server/providers/index.ts';
+import { providers, resetProviderCooldown, searchAll } from '../src/server/providers/index.ts';
 import type { ContentType, Provider, SeriesCard } from '../src/server/providers/types.ts';
 
 const originalCount = providers.length;
@@ -167,6 +167,48 @@ describe('searchAll: provider lento', () => {
       expect(res.errors).toEqual([{ provider: 'lento', message: 'tempo esgotado (0s)' }]);
     } finally {
       config.searchTimeoutMs = original;
+    }
+  });
+});
+
+describe('searchAll: fonte que caiu fica em pausa', () => {
+  test('busca padrao pula a fonte que acabou de falhar; explicita ainda roda', async () => {
+    const saved = providers.splice(0, providers.length);
+    resetProviderCooldown();
+    try {
+      let calls = 0;
+      providers.push({
+        id: 'morta',
+        name: 'morta',
+        kind: 'online',
+        contentType: 'manga',
+        supports: ['q'],
+        search: async () => {
+          calls++;
+          throw new Error('falha de rede');
+        },
+        series: async () => {
+          throw new Error('nao usado');
+        },
+        pages: async () => [],
+      } satisfies Provider);
+      fake('viva', [card({ provider: 'viva', title: 'Bleach' })]);
+
+      const first = await searchAll([], {});
+      expect(first.errors.map((e) => e.provider)).toEqual(['morta']);
+      expect(first.skipped).toEqual([]);
+
+      const second = await searchAll([], {});
+      expect(second.errors).toEqual([]);
+      expect(second.skipped).toEqual(['morta']);
+      expect(second.items).toHaveLength(1);
+      expect(calls).toBe(1);
+
+      await searchAll(['morta'], {});
+      expect(calls).toBe(2);
+    } finally {
+      providers.splice(0, providers.length, ...saved);
+      resetProviderCooldown();
     }
   });
 });

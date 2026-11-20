@@ -74,6 +74,8 @@ export interface SearchResponse {
   items: SeriesCard[];
   errors: { provider: string; message: string }[];
   perProvider: Record<string, number>;
+  /** fontes puladas por terem caido ha' pouco */
+  skipped?: string[];
 }
 
 /** URLs de imagem voltam relativas ('/api/img?...'); no desktop precisam apontar para o sidecar. */
