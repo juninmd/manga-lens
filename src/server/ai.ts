@@ -220,13 +220,17 @@ export async function translateBlocks(input: TranslateInput): Promise<{ id: numb
   const series = input.series?.trim();
   const locked = series ? (await contextFor(series, target, input.chapter ?? '', 0)).glossary.filter((g) => g.locked) : [];
   const key = translationKey({ input, providerName, modelId, image, locked });
-  const hit = await readCached<{ id: number; pt: string }[]>(key, TRANSLATION_TTL_MS);
-  if (hit) return hit;
+  const hit = await readCached<unknown>(key, TRANSLATION_TTL_MS);
+  // arquivo de cache e' JSON valido mas pode vir de outra versao ou ter sido editado: so' serve no formato certo
+  if (isTranslationList(hit)) return hit;
   const { out, complete } = await translateUncached(input, providerName, modelId, image);
   // so' guarda pagina inteira: balao que falhou tem de voltar ao modelo no proximo R
   if (complete) await writeCached(key, out);
   return out;
 }
+
+const isTranslationList = (v: unknown): v is { id: number; pt: string }[] =>
+  Array.isArray(v) && v.every((t: { id?: unknown; pt?: unknown } | null) => Number.isInteger(t?.id) && typeof t?.pt === 'string');
 
 /** Traducao reaberta (outro dia, outra sessao) nao paga o LLM de novo. */
 export const TRANSLATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;

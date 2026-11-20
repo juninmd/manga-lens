@@ -127,3 +127,21 @@ describe('cache de traducao', () => {
     expect(calls.length).toBeGreaterThan(before);
   });
 });
+
+describe('cache de traducao corrompido', () => {
+  test('entrada com formato errado e ignorada e a pagina volta ao modelo', async () => {
+    const { readdir, writeFile } = await import('node:fs/promises');
+    fakeLlm((batch) => batch.map((b) => b.id));
+    const blocks = page(1);
+    await translateBlocks({ provider: 'openaicompatible', blocks });
+    const { memSize } = await import('../src/server/cache.ts');
+    expect(memSize()).toBeGreaterThan(0);
+    // estraga todos os arquivos de cache em disco e reinicia a camada de memoria via outro processo simulado
+    for (const name of await readdir(dir)) if (name.endsWith('.json')) await writeFile(join(dir, name), JSON.stringify({ at: Date.now(), value: { nao: 'lista' } }));
+    const { clearMemCache } = await import('../src/server/cache.ts');
+    clearMemCache();
+    const out = await translateBlocks({ provider: 'openaicompatible', blocks });
+    expect(out).toEqual([{ id: 0, pt: `PT:${blocks[0]!.text}` }]);
+    expect(calls).toHaveLength(2);
+  });
+});

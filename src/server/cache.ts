@@ -55,6 +55,9 @@ export async function purgeDisk(maxAgeMs = DISK_MAX_AGE_MS, now = Date.now()): P
 /** Quantas entradas estao em memoria (para teste e diagnostico). */
 export const memSize = (): number => mem.size;
 
+/** Esvazia a camada de memoria (teste: simula o processo reiniciado lendo so' o disco). */
+export const clearMemCache = (): void => mem.clear();
+
 /**
  * Cache em duas camadas (memoria + disco) com TTL. Evita queimar rate limit dos
  * providers. Chamadas simultaneas da mesma chave compartilham um unico `load`.
