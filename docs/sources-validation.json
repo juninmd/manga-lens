@@ -16,15 +16,6 @@
       "checkedAt": "2026-09-30T20:43:07.301Z"
     },
     {
-      "provider": "mangalivre",
-      "ok": true,
-      "series": "naruto",
-      "chapters": 700,
-      "pages": 20,
-      "images": 4,
-      "checkedAt": "2026-10-16T10:00:00.000Z"
-    },
-    {
       "provider": "mangadistrict",
       "ok": true,
       "series": "my-doll-diary-uncensored",
@@ -142,38 +133,11 @@
       "checkedAt": "2026-09-30T20:43:07.301Z"
     },
     {
-      "provider": "richtoscan",
-      "ok": true,
-      "series": "del-combate-a-la-oficina",
-      "chapters": 5,
-      "pages": 33,
-      "images": 4,
-      "checkedAt": "2026-09-30T20:43:07.301Z"
-    },
-    {
       "provider": "yurionline",
       "ok": true,
       "series": "damdam",
       "chapters": 1,
       "pages": 51,
-      "images": 4,
-      "checkedAt": "2026-09-30T20:43:07.301Z"
-    },
-    {
-      "provider": "bananascan",
-      "ok": true,
-      "series": "the-novices-frontline",
-      "chapters": 8,
-      "pages": 19,
-      "images": 4,
-      "checkedAt": "2026-09-30T20:43:07.301Z"
-    },
-    {
-      "provider": "vermanhwas",
-      "ok": true,
-      "series": "dulce-venganza-sin-censura",
-      "chapters": 13,
-      "pages": 69,
       "images": 4,
       "checkedAt": "2026-09-30T20:43:07.301Z"
     },
@@ -192,15 +156,6 @@
       "series": "meninos-tambem-podem-ficar-fofos-vestidos-de-maid",
       "chapters": 4,
       "pages": 9,
-      "images": 4,
-      "checkedAt": "2026-09-30T20:43:07.301Z"
-    },
-    {
-      "provider": "fleurblanche",
-      "ok": true,
-      "series": "from-your-almighty-cradle",
-      "chapters": 1,
-      "pages": 22,
       "images": 4,
       "checkedAt": "2026-09-30T20:43:07.301Z"
     },
@@ -313,15 +268,6 @@
       "checkedAt": "2026-09-30T20:43:07.301Z"
     },
     {
-      "provider": "anisascans",
-      "ok": true,
-      "series": "mr-kim-strikes-it-rich-with-auto-hunting",
-      "chapters": 23,
-      "pages": 4,
-      "images": 4,
-      "checkedAt": "2026-09-30T20:43:07.301Z"
-    },
-    {
       "provider": "decadencescans",
       "ok": true,
       "series": "christmas",
@@ -381,15 +327,6 @@
       "series": "sayounara-ryuusei-konnichiwa-jinsei",
       "chapters": 7,
       "pages": 30,
-      "images": 4,
-      "checkedAt": "2026-09-30T20:43:07.301Z"
-    },
-    {
-      "provider": "likemangain",
-      "ok": true,
-      "series": "i-regressed-so-im-entering-a-fake-engagement-with-my-favorite-grand-duke",
-      "chapters": 20,
-      "pages": 14,
       "images": 4,
       "checkedAt": "2026-09-30T20:43:07.301Z"
     },
@@ -565,15 +502,6 @@
       "checkedAt": "2026-09-30T20:43:07.301Z"
     },
     {
-      "provider": "tsundokutraducoes",
-      "ok": true,
-      "series": "manga/o-apartamento-onde-ecoam-lamentos-estranhos",
-      "chapters": 1,
-      "pages": 13,
-      "images": 4,
-      "checkedAt": "2026-09-30T20:43:07.301Z"
-    },
-    {
       "provider": "akazascans",
       "ok": true,
       "series": "manga/the-investment-method-of-a-wall-street-genius-on-borrowed-time",
@@ -610,15 +538,6 @@
       "checkedAt": "2026-09-30T20:43:07.301Z"
     },
     {
-      "provider": "culturedworks",
-      "ok": true,
-      "series": "manga/beethoven-reborn",
-      "chapters": 13,
-      "pages": 12,
-      "images": 4,
-      "checkedAt": "2026-09-30T20:43:07.301Z"
-    },
-    {
       "provider": "elftoon",
       "ok": false,
       "error": "Error: upstream 403 (elftoon.com)",
@@ -630,15 +549,6 @@
       "series": "series/i-bought-the-villains-with-money",
       "chapters": 1,
       "pages": 20,
-      "images": 4,
-      "checkedAt": "2026-09-30T20:43:07.301Z"
-    },
-    {
-      "provider": "galaxymanga",
-      "ok": true,
-      "series": "manga/in-the-grasp-of-a-loving-yet-possessive-male-lead",
-      "chapters": 43,
-      "pages": 9,
       "images": 4,
       "checkedAt": "2026-09-30T20:43:07.301Z"
     },
@@ -675,15 +585,6 @@
       "series": "manga/delivery-king",
       "chapters": 8,
       "pages": 9,
-      "images": 4,
-      "checkedAt": "2026-09-30T20:43:07.301Z"
-    },
-    {
-      "provider": "ravenscans",
-      "ok": true,
-      "series": "manga/isekai-glory-hole-it-feels-too-good-inside-this-hole-uncensored",
-      "chapters": 5,
-      "pages": 3,
       "images": 4,
       "checkedAt": "2026-09-30T20:43:07.301Z"
     },

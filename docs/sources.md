@@ -1,6 +1,6 @@
 # Fontes de HQs, mangás e livros
 
-Foram adicionadas **82 fontes**: 81 de mangás e uma de HQs (HQ Now, em português). Com a fonte de livros (Project Gutenberg), o catálogo padrão tem **90 fontes online** — 86 de mangá, 3 de HQ e 1 de livros — e a biblioteca local. As fontes novas e MangaRead cobrem português, inglês, espanhol e francês.
+Foram adicionadas **82 fontes**: 81 de mangás e uma de HQs (HQ Now, em português). Com a fonte de livros (Project Gutenberg), o catálogo padrão tem **79 fontes online** — 75 de mangá, 3 de HQ e 1 de livros — e a biblioteca local. As fontes novas e MangaRead cobrem português, inglês, espanhol e francês. Em 20/11/2026 foram removidas 11 fontes cujo site estava fora do ar (DNS, HTTP 403, 500, 526 ou tempo esgotado): MangaLivre, RichtoScan, Harmony-Scan, Ver Manhwas, Fleur Blanche, Anisa Scans, MangaYY, Tsundoku Traduções, CulturedWorks, Galaxy Manga e Raven Scans.
 
 ## Livros: Project Gutenberg
 
@@ -41,7 +41,7 @@ Os testes locais passaram: `bun run check` (280 testes) e `bun run build:client`
 | Fonte | ID | Idioma | Conteúdo | Adaptador | Resultado pelo app |
 |---|---|---|---|---|---|
 | [MangaRead](https://www.mangaread.org) | mangaread | en | Mangá | Madara | Leitura validada |
-| [MangaLivre](https://mangalivre.xyz) | mangalivre | pt-br | Mangá | Madara | Leitura validada |
+
 | [Manhua Plus](https://manhuaplus.com) | manhuaplus | en | Mangá | Madara | Leitura validada |
 | [Manga District](https://mangadistrict.com) | mangadistrict | en | Mangá | Madara | Leitura validada |
 | [Zinmanga](https://mangazin.org) | zinmanga | en | Mangá | Madara | Leitura validada |
@@ -56,13 +56,13 @@ Os testes locais passaram: `bun run check` (280 testes) e `bun run build:client`
 | [Monopoly Scan](https://monopolymanhua.com) | monopolyscan | es | Mangá | Madara | Leitura validada |
 | [Mundo Manhwa](https://mundomanhwa.com) | mundomanhwa | es | Mangá | Madara | Leitura validada |
 | [Ragnarok Scanlation](https://ragnarokscanlation.org) | ragnarokscanlation | es | Mangá | Madara | Leitura validada |
-| [RichtoScan](https://r1.richtoon.top) | richtoscan | es | Mangá | Madara | Leitura validada |
+
 | [Yuri-Online](https://yuri-online.com) | yurionline | es | Mangá | Madara | Leitura validada |
-| [Harmony-Scan](https://harmony-scan.fr) | bananascan | fr | Mangá | Madara | Leitura validada |
-| [Ver Manhwas](https://vermanhwa.com) | vermanhwas | es | Mangá | Madara | Leitura validada |
+
+
 | [Euphoria Scan](https://euphoriascan.com) | euphoriascan | pt-br | Mangá | Madara | Leitura validada |
 | [Café com Yaoi](https://cafecomyaoi.com.br) | cafecomyaoi | pt-br | Mangá | Madara | Leitura validada |
-| [Fleur Blanche](https://fbsquadx.com) | fleurblanche | pt-br | Mangá | Madara | Leitura validada |
+
 | [Amuy](https://www.apenasmaisumyaoi.com) | amuy | pt-br | Mangá | Madara | Leitura validada |
 | [Hunters Scans](https://readhunters.xyz) | huntersscans | pt-br | Mangá | Madara | Leitura validada |
 | [Kami Sama Explorer](https://leitor.kamisama.com.br) | kamisamaexplorer | pt-br | Mangá | Madara | Leitura validada |
@@ -75,7 +75,7 @@ Os testes locais passaram: `bun run check` (280 testes) e `bun run build:client`
 | [Nocturne Summer](https://nocfsb.com) | nocturnesummer | pt-br | Mangá | Madara | Leitura validada |
 | [Yuri on Air](https://yurionair.top) | yuriverso | pt-br | Mangá | Madara | Leitura validada |
 | [MR Tenzus](https://mrtenzus.com) | mrtenzus | pt-br | Mangá | Madara | Leitura validada |
-| [Anisa Scans](https://anisascans.in) | anisascans | en | Mangá | Madara | Leitura validada |
+
 | [Decadence Scans](https://reader.decadencescans.com) | decadencescans | en | Mangá | Madara | Leitura validada |
 | [Bun Manga](https://bunmanga.com) | bunmanga | en | Mangá | Madara | Leitura validada |
 | [Cocomic](https://cocomic.co) | cocomic | en | Mangá | Madara | Leitura validada |
@@ -83,7 +83,7 @@ Os testes locais passaram: `bun run check` (280 testes) e `bun run build:client`
 | [Hunlight Comics](https://hunlightcomics.com) | hunlightcomics | en | Mangá | Madara | Leitura validada |
 | [KSGroupScans](https://ksgroupscans.com) | ksgroupscans | en | Mangá | Madara | Leitura validada |
 | [LHTranslation](https://lhtranslation.net) | lhtranslation | en | Mangá | Madara | Leitura validada |
-| [MangaYY](https://mangayy.org) | likemangain | en | Mangá | Madara | Leitura validada |
+
 | [Mangasushi](https://mangasushi.org) | mangasushi | en | Mangá | Madara | Leitura validada |
 | [ManhuaHot](https://manhuahot.com) | manhuahot | en | Mangá | Madara | Leitura validada |
 | [MangaOwl.io (unoriginal)](https://mangaowl.io) | mangaowlio | en | Mangá | Madara | Leitura validada |
@@ -103,20 +103,20 @@ Os testes locais passaram: `bun run check` (280 testes) e `bun run build:client`
 | [Cerberus Series](https://legionscans.com) | cerberusseries | es | Mangá | MangaThemesia | Leitura validada |
 | [Uchuujin Projects](https://uchuujinmangas.com) | uchuujinprojects | es | Mangá | MangaThemesia | Leitura validada |
 | [Lelmanga](https://www.lelmanga.com) | lelmanga | fr | Mangá | MangaThemesia | Leitura validada |
-| [Tsundoku Traduções](https://tsundoku.com.br) | tsundokutraducoes | pt-br | Mangá | MangaThemesia | Leitura validada |
+
 | [Akaza Scans](https://akazascans.org) | akazascans | en | Mangá | MangaThemesia | Leitura validada |
 | [Aster Scans](https://asterscans.com) | asterscans | en | Mangá | MangaThemesia | Leitura validada |
 | [Arena Scans](https://arenascan.com) | arenascans | en | Mangá | MangaThemesia | Leitura validada |
 | [Athrea Scans](https://athreascans.com) | athreascans | en | Mangá | MangaThemesia | Leitura validada |
-| [CulturedWorks](https://culturedworks.com) | culturedworks | en | Mangá | MangaThemesia | Leitura validada |
+
 | [Elf Toon](https://elftoon.com) | elftoon | en | Mangá | MangaThemesia | Upstream 403 |
 | [Eva Scans](https://evascans.net) | evascans | en | Mangá | MangaThemesia | Leitura validada |
-| [Galaxy Manga](https://galaxymanga.io) | galaxymanga | en | Mangá | MangaThemesia | Leitura validada |
+
 | [King of Shojo](https://kingofshojo.com) | kingofshojo | en | Mangá | MangaThemesia | Leitura validada |
 | [Lagoon Scans](https://lagoonscans.com) | lagoonscans | en | Mangá | MangaThemesia | Leitura validada |
 | [Manga Trend](https://mangatrend.org) | mangatrend | en | Mangá | MangaThemesia | Leitura validada |
 | [Rackus](https://rackusreads.com) | rackus | en | Mangá | MangaThemesia | Leitura validada |
-| [Raven Scans](https://ravenscans.org) | ravenscans | en | Mangá | MangaThemesia | Leitura validada |
+
 | [RokariComics](https://rokaricomics.com) | rokaricomics | en | Mangá | MangaThemesia | Leitura validada |
 | [Rizz Comic](https://rizzfables.com) | rizzcomic | en | Mangá | MangaThemesia | CDN 526 |
 | [Thunder Scans](https://en-thunderscans.com) | thunderscans | en | Mangá | MangaThemesia | Leitura validada |

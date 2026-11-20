@@ -167,16 +167,6 @@ export const builtinMadaraSites: MadaraSite[] = [
     "imageHosts": []
   },
   {
-    "id": "richtoscan",
-    "name": "RichtoScan",
-    "base": "https://r1.richtoon.top",
-    "lang": "es",
-    "contentType": "manga",
-    "seriesPath": "manga",
-    "userAgent": "MangaLens/0.1.0",
-    "imageHosts": []
-  },
-  {
     "id": "yurionline",
     "name": "Yuri-Online",
     "base": "https://yuri-online.com",
@@ -185,28 +175,6 @@ export const builtinMadaraSites: MadaraSite[] = [
     "seriesPath": "manga",
     "userAgent": "MangaLens/0.1.0",
     "imageHosts": []
-  },
-  {
-    "id": "bananascan",
-    "name": "Harmony-Scan",
-    "base": "https://harmony-scan.fr",
-    "lang": "fr",
-    "contentType": "manga",
-    "seriesPath": "manga",
-    "userAgent": "MangaLens/0.1.0",
-    "imageHosts": []
-  },
-  {
-    "id": "vermanhwas",
-    "name": "Ver Manhwas",
-    "base": "https://vermanhwa.com",
-    "lang": "es",
-    "contentType": "manga",
-    "seriesPath": "manga",
-    "userAgent": "MangaLens/0.1.0",
-    "imageHosts": [
-      "cdn4.vermanhwa.com"
-    ]
   },
   {
     "id": "euphoriascan",
@@ -222,16 +190,6 @@ export const builtinMadaraSites: MadaraSite[] = [
     "id": "cafecomyaoi",
     "name": "Café com Yaoi",
     "base": "https://cafecomyaoi.com.br",
-    "lang": "pt-br",
-    "contentType": "manga",
-    "seriesPath": "manga",
-    "userAgent": "MangaLens/0.1.0",
-    "imageHosts": []
-  },
-  {
-    "id": "fleurblanche",
-    "name": "Fleur Blanche",
-    "base": "https://fbsquadx.com",
     "lang": "pt-br",
     "contentType": "manga",
     "seriesPath": "manga",
@@ -361,18 +319,6 @@ export const builtinMadaraSites: MadaraSite[] = [
     "imageHosts": []
   },
   {
-    "id": "anisascans",
-    "name": "Anisa Scans",
-    "base": "https://anisascans.in",
-    "lang": "en",
-    "contentType": "manga",
-    "seriesPath": "manga",
-    "userAgent": "MangaLens/0.1.0",
-    "imageHosts": [
-      "like.mgread.io"
-    ]
-  },
-  {
     "id": "decadencescans",
     "name": "Decadence Scans",
     "base": "https://reader.decadencescans.com",
@@ -445,18 +391,6 @@ export const builtinMadaraSites: MadaraSite[] = [
     "seriesPath": "manga",
     "userAgent": "MangaLens/0.1.0",
     "imageHosts": []
-  },
-  {
-    "id": "likemangain",
-    "name": "MangaYY",
-    "base": "https://mangayy.org",
-    "lang": "en",
-    "contentType": "manga",
-    "seriesPath": "manga",
-    "userAgent": "MangaLens/0.1.0",
-    "imageHosts": [
-      "like.mgread.io"
-    ]
   },
   {
     "id": "mangasushi",
@@ -603,16 +537,6 @@ export const builtinMadaraSites: MadaraSite[] = [
     "seriesPath": "manga",
     "userAgent": "MangaLens/0.1.0",
     "imageHosts": []
-  },
-  {
-    "id": "mangalivre",
-    "name": "MangaLivre",
-    "base": "https://mangalivre.to",
-    "lang": "pt-br",
-    "contentType": "manga",
-    "seriesPath": "manga",
-    "userAgent": "MangaLens/0.1.0",
-    "imageHosts": []
   }
 ];
 
@@ -692,21 +616,6 @@ export const builtinThemesiaSites: MadaraSite[] = [
     ]
   },
   {
-    "id": "tsundokutraducoes",
-    "name": "Tsundoku Traduções",
-    "base": "https://tsundoku.com.br",
-    "lang": "pt-br",
-    "contentType": "manga",
-    "seriesPath": "manga",
-    "userAgent": "MangaLens/0.1.0",
-    "imageHosts": [
-      "i3.wp.com",
-      "i0.wp.com",
-      "i1.wp.com",
-      "i2.wp.com"
-    ]
-  },
-  {
     "id": "akazascans",
     "name": "Akaza Scans",
     "base": "https://akazascans.org",
@@ -754,18 +663,6 @@ export const builtinThemesiaSites: MadaraSite[] = [
     "imageHosts": []
   },
   {
-    "id": "culturedworks",
-    "name": "CulturedWorks",
-    "base": "https://culturedworks.com",
-    "lang": "en",
-    "contentType": "manga",
-    "seriesPath": "manga",
-    "userAgent": "MangaLens/0.1.0",
-    "imageHosts": [
-      "cdn.uqni.net"
-    ]
-  },
-  {
     "id": "elftoon",
     "name": "Elf Toon",
     "base": "https://elftoon.com",
@@ -793,18 +690,6 @@ export const builtinThemesiaSites: MadaraSite[] = [
       "i0.wp.com",
       "i2.wp.com",
       "i3.wp.com"
-    ]
-  },
-  {
-    "id": "galaxymanga",
-    "name": "Galaxy Manga",
-    "base": "https://galaxymanga.io",
-    "lang": "en",
-    "contentType": "manga",
-    "seriesPath": "manga",
-    "userAgent": "MangaLens/0.1.0",
-    "imageHosts": [
-      "dl.galaxymanga.io"
     ]
   },
   {
@@ -858,18 +743,6 @@ export const builtinThemesiaSites: MadaraSite[] = [
     "seriesPath": "manga",
     "userAgent": "MangaLens/0.1.0",
     "imageHosts": []
-  },
-  {
-    "id": "ravenscans",
-    "name": "Raven Scans",
-    "base": "https://ravenscans.org",
-    "lang": "en",
-    "contentType": "manga",
-    "seriesPath": "manga",
-    "userAgent": "MangaLens/0.1.0",
-    "imageHosts": [
-      "cdn5.ravenscans.org"
-    ]
   },
   {
     "id": "rokaricomics",
