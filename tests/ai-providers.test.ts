@@ -1,9 +1,11 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { normalizeProvider, getProviderConfig, config } from '../src/server/config.ts';
-import { aiHealth, getAvailableProviders, translateBlocks, visionTranslate, explainStream } from '../src/server/ai.ts';
+import { aiHealth, getAvailableProviders, invalidateProvider, translateBlocks, visionTranslate, explainStream } from '../src/server/ai.ts';
 import server from '../src/server/index.ts';
 
 const realFetch = globalThis.fetch;
+// resolveModel caches per provider at module level; other test files warm it with their own stubs
+beforeEach(() => invalidateProvider());
 afterEach(() => {
   globalThis.fetch = realFetch;
 });
