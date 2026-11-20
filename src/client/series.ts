@@ -24,6 +24,8 @@ export class SeriesPanel {
   private listObserver?: IntersectionObserver;
   /** quem tinha o foco antes de abrir: devolve ao fechar */
   private opener?: HTMLElement;
+  /** geracao do open(): clicar em A e depois B nao deixa a resposta tardia de A sobrescrever B */
+  private openGen = 0;
 
   constructor(private onRead: (detail: SeriesDetail, chapter: ChapterRef) => void) {
     document.body.append(this.host);
@@ -34,6 +36,8 @@ export class SeriesPanel {
 
   close(): void {
     if (!this.host.classList.contains('is-open')) return;
+    // invalida o open() em voo: senao a resposta chega depois, repinta e rouba o foco
+    this.openGen++;
     this.host.classList.remove('is-open');
     // A hash `#/s/...` fica de proposito: o "voltar" do leitor faz history.back()
     // e precisa cair nela para reabrir o painel. Reabrir o mesmo card com a hash
@@ -50,13 +54,21 @@ export class SeriesPanel {
       const active = document.activeElement;
       this.opener = active instanceof HTMLElement && !this.host.contains(active) ? active : undefined;
     }
+    const gen = ++this.openGen;
     this.host.classList.add('is-open');
     this.host.innerHTML = '';
     this.host.append(
-      el('div', { class: 'ml-loading' }, el('div', { class: 'ml-spinner' }), el('span', {}, 'carregando obra...')),
+      el(
+        'div',
+        { class: 'ml-loading', role: 'status' },
+        el('div', { class: 'ml-spinner', 'aria-hidden': 'true' }),
+        el('span', {}, 'carregando obra...'),
+      ),
     );
     try {
-      this.detail = await getSeries(provider, id);
+      const detail = await getSeries(provider, id);
+      if (gen !== this.openGen) return undefined;
+      this.detail = detail;
       // abrir a obra e' "ver" os capitulos novos: some o selo do favorito
       markChaptersSeen(provider, id, this.detail.chapters.length);
       const langs = this.detail.availableLangs ?? [];
@@ -65,6 +77,7 @@ export class SeriesPanel {
       this.focusTitle();
       return this.detail;
     } catch (err) {
+      if (gen !== this.openGen) return undefined;
       const status = errorStatus(err);
       const why =
         status === 404
@@ -76,7 +89,7 @@ export class SeriesPanel {
       this.host.append(
         el(
           'div',
-          { class: 'ml-loading' },
+          { class: 'ml-loading', role: 'alert' },
           el('span', {}, `obra nao carregou: ${why}`),
           el('button', { class: 'ml-btn ml-btn-sm', onclick: () => void this.open(provider, id) }, 'tentar de novo'),
         ),
