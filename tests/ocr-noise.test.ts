@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { cleanOcrText, isOcrNoise } from '../src/client/ocr.ts';
+import { cleanOcrText, isOcrNoise, isWrongScript } from '../src/client/ocr.ts';
 import { isNoise } from '../src/server/translators.ts';
 
 describe('OCR text cleaner and noise detection', () => {
@@ -64,5 +64,19 @@ describe('erros classicos do Tesseract em letra de HQ', () => {
     for (const text of ['I AM A HERO', 'HA HA HA', 'GO GO GO', 'NO NO NO!', 'O QUE E ISSO', 'Y A-T-IL', 'McDONALD IS OPEN', 'ドドド ドド ド']) {
       expect(isOcrNoise(text, 85)).toBe(false);
     }
+  });
+
+  test('isWrongScript descarta latim lido por OCR japones, coreano ou chines', () => {
+    expect(isWrongScript('OCEMON FOX', 'jpn+jpn_vert')).toBe(true);
+    expect(isWrongScript('ルフィだ！', 'jpn+jpn_vert')).toBe(false);
+    // sigla latina dentro da fala japonesa nao derruba o balao
+    expect(isWrongScript('TVを見たか？', 'jpn+jpn_vert')).toBe(false);
+    expect(isWrongScript('ABC 가', 'kor')).toBe(true);
+    expect(isWrongScript('안녕하세요', 'kor')).toBe(false);
+    expect(isWrongScript('你好 OK', 'chi_sim')).toBe(false);
+    // idioma desconhecido (com eng) e latino nao sao julgados
+    expect(isWrongScript('HELLO', 'jpn+jpn_vert+eng')).toBe(false);
+    expect(isWrongScript('HELLO', 'eng')).toBe(false);
+    expect(isWrongScript('…！？', 'jpn')).toBe(false);
   });
 });

@@ -97,3 +97,30 @@ export async function cached<T>(key: string, ttlMs: number, load: () => Promise<
 }
 
 export const defaultTtl = (): number => config.cacheTtlMs;
+
+/**
+ * Leitura avulsa (sem `load`): para quem decide depois se o valor merece ir ao
+ * cache — a traducao so' e' gravada quando a pagina saiu inteira.
+ */
+export async function readCached<T>(key: string, ttlMs: number, now = Date.now()): Promise<T | undefined> {
+  const hit = mem.get(key);
+  if (hit && now - hit.at < ttlMs) return hit.value as T;
+  await ensureDir();
+  const file = Bun.file(fileFor(key));
+  if (!(await file.exists())) return undefined;
+  try {
+    const raw = (await file.json()) as { at: number; value: T };
+    if (now - raw.at >= ttlMs) return undefined;
+    remember(key, raw);
+    return raw.value;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function writeCached(key: string, value: unknown): Promise<void> {
+  const entry = { at: Date.now(), value };
+  remember(key, entry);
+  await ensureDir();
+  await Bun.write(fileFor(key), JSON.stringify(entry)).catch(() => undefined);
+}
