@@ -195,6 +195,7 @@ const sections: Section[] = [
       row('Ajuste da página', undefined, bound('fit', 'Ajuste', [['page', 'Página inteira'], ['width', 'Largura'], ['height', 'Altura'], ['free', 'Livre (zoom manual)']])),
       row('Mangá: da direita para a esquerda', 'HQ ocidental e PDF abrem da esquerda para a direita, qualquer que seja esta opção.', flag('rtl', 'Direita para a esquerda')),
       row('Abrir mostrando o texto original', 'A tradução continua a um toque de distância (tecla T).', flag('showOriginal', 'Mostrar o original')),
+      row('Lente: segurar para espiar', 'A página fica como foi desenhada; segure o ponteiro parado para ver a tradução numa lupa (tecla L, roda muda o aumento).', flag('lens', 'Usar a lente')),
       row('Inverter o sentido da rolagem', undefined, flag('invertScroll', 'Inverter rolagem')),
       row('Letra dos balões', 'Família usada para letrear a tradução dentro do balão.', bound('font', 'Letra dos balões', [['comic', 'Balão de HQ'], ['sans', 'Moderna (limpa)'], ['serif', 'Clássica (livro)']])),
       row(

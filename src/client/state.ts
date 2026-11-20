@@ -19,6 +19,8 @@ export interface Settings {
   rtl: boolean;
   ocrLang: string;
   showOriginal: boolean;
+  /** lente: a pagina fica original e a traducao aparece numa lupa ao segurar o ponteiro */
+  lens: boolean;
   invertScroll: boolean;
   engine: TranslateEngine;
   /** traduz o capitulo inteiro sozinho assim que ele abre */
@@ -100,6 +102,7 @@ const DEFAULTS: Store = {
     ocrLang: 'auto',
     autoTranslate: false,
     showOriginal: false,
+    lens: false,
     invertScroll: false,
     engine: 'auto',
     // primeiro uso sem IA configurada: o motor web traduz sem chave nenhuma

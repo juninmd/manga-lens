@@ -1632,6 +1632,24 @@ textarea:focus-visible {
   height: 100%;
   pointer-events: none;
 }
+/* lente ligada: a pagina fica como o autor desenhou; a traducao so' aparece na lupa */
+.ml-stage.is-lens .ml-ocr {
+  visibility: hidden;
+}
+.ml-peek {
+  position: fixed;
+  z-index: 110;
+  border-radius: 50%;
+  border: 3px solid var(--accent, #4f8cff);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 45%);
+  background: #fff;
+  pointer-events: none;
+}
+/* pagina ainda sem traducao: aro tracejado, para esperar nao parecer defeito */
+.ml-peek.is-empty {
+  border-style: dashed;
+  opacity: 0.85;
+}
 
 .ml-nav {
   position: absolute;
