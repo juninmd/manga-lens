@@ -175,7 +175,7 @@ export class Catalog {
       this.buildProviderModal(),
       this.buildAiDrawer(),
       this.aiBackdrop,
-      (this.statusBar = el('div', { class: 'ml-status' })),
+      (this.statusBar = el('div', { class: 'ml-status', role: 'status', 'aria-live': 'polite' })),
       (this.grid = el('div', { class: 'ml-grid' })),
     );
 

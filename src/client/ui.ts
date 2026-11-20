@@ -15,7 +15,6 @@ export function el<K extends keyof HTMLElementTagNameMap>(
     else if (k === 'dataset' && typeof v === 'object') Object.assign(node.dataset, v);
     else if (k.startsWith('on') && typeof v === 'function')
       node.addEventListener(k.slice(2).toLowerCase(), v as EventListener);
-    else if (k === 'html') node.innerHTML = String(v);
     else node.setAttribute(k, v === true ? '' : String(v));
   }
   for (const child of children.flat()) {
