@@ -8,6 +8,7 @@ const GENDERS: [GlossaryTerm['gender'], string][] = [
 ];
 
 let open: HTMLElement | undefined;
+const FIELDS = 'input, select, button';
 
 /**
  * Glossario da obra, editavel. A memoria aprende nomes sozinha, e um erro de OCR
@@ -47,8 +48,17 @@ export function openGlossary(series: string, target: string, opts: { usesAi: boo
     count.textContent = terms.length
       ? `${plural(terms.length, 'termo')} · ${locked ? `${plural(locked, 'fixado')} por voce` : 'todos aprendidos pela IA'}`
       : 'nenhum termo ainda — a IA aprende ao traduzir, ou adicione abaixo';
+    // salvar dispara no `change` (Tab): refazer a lista jogava o foco no <body>, onde as
+    // teclas seguintes caiam nos atalhos do leitor. O foco volta ao mesmo campo do mesmo termo.
+    const active = document.activeElement;
+    const activeRow = active instanceof HTMLElement && list.contains(active) ? active.closest('li') : null;
+    const slot = activeRow ? [...activeRow.querySelectorAll(FIELDS)].indexOf(active as Element) : -1;
     // fixados primeiro: sao os que a pessoa veio conferir
     list.replaceChildren(...[...terms].sort((a, b) => Number(b.locked ?? false) - Number(a.locked ?? false)).map(row));
+    if (activeRow && slot >= 0) {
+      const again = [...list.children].find((li) => (li as HTMLElement).dataset['orig'] === activeRow.dataset['orig']);
+      again?.querySelectorAll<HTMLElement>(FIELDS)[slot]?.focus();
+    }
   };
 
   const save = async (term: { orig: string; pt: string; gender: string; was?: string }): Promise<boolean> => {
@@ -84,7 +94,7 @@ export function openGlossary(series: string, target: string, opts: { usesAi: boo
     gender.addEventListener('change', commit);
     return el(
       'li',
-      { class: `ml-gloss-row ${term.locked ? 'is-locked' : ''}` },
+      { class: `ml-gloss-row ${term.locked ? 'is-locked' : ''}`, dataset: { orig: term.orig } },
       el('span', { class: 'ml-gloss-orig', title: term.locked ? 'fixado por voce: a IA nao altera' : 'aprendido pela IA — edite para fixar' }, term.locked ? '🔒 ' : '', term.orig),
       pt,
       gender,
