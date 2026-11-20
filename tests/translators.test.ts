@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { DEFAULT_TARGET, engines, splitForRequest, targetOf, targets, translateWithEngine } from '../src/server/translators.ts';
+import { DEFAULT_TARGET, engines, parseConcurrency, splitForRequest, targetOf, targets, translateWithEngine } from '../src/server/translators.ts';
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -252,5 +252,16 @@ describe('texto que o motor devolve igual', () => {
       { id: 0, pt: '' },
       { id: 1, pt: 'OLA' },
     ]);
+  });
+});
+
+describe('parseConcurrency', () => {
+  test('valor invalido cai no padrao em vez de virar NaN (que travaria toda traducao)', () => {
+    for (const bad of [undefined, '', '  ', 'abc', '0', '-3', 'NaN']) expect(parseConcurrency(bad)).toBe(5);
+  });
+  test('inteiro valido e respeitado, decimal e truncado', () => {
+    expect(parseConcurrency('1')).toBe(1);
+    expect(parseConcurrency(' 8 ')).toBe(8);
+    expect(parseConcurrency('2.7')).toBe(2);
   });
 });

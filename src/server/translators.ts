@@ -144,7 +144,12 @@ export const isNoise = (text: string): boolean => {
  * rajada, entao paralelismo aqui e' com teto: sem teto a pagina inteira dispara
  * de uma vez e o motor devolve erro em vez de traducao.
  */
-const CONCURRENCY = Math.max(1, Number(process.env['TRANSLATE_CONCURRENCY'] ?? 5));
+/** Invalido (NaN, vazio, < 1) cai no padrao: com NaN `inFlight < CONCURRENCY` nunca vale e toda traducao fica esperando para sempre. */
+export const parseConcurrency = (raw: string | undefined, fallback = 5): number => {
+  const n = Math.floor(Number(raw?.trim() || fallback));
+  return Number.isFinite(n) && n >= 1 ? n : fallback;
+};
+const CONCURRENCY = parseConcurrency(process.env['TRANSLATE_CONCURRENCY']);
 
 /**
  * O teto e' do processo, nao da requisicao: o leitor traduz varias paginas em
