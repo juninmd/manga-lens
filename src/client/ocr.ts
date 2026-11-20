@@ -785,6 +785,32 @@ export function isOcrNoise(text: string, confidence: number): boolean {
   return false;
 }
 
+/** Escrita que cada modelo de OCR de lingua asiatica tem de devolver; latino e' lido por qualquer um. */
+const SCRIPT_OF: Record<string, RegExp> = {
+  jpn: /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u,
+  jpn_vert: /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u,
+  kor: /[\p{Script=Hangul}\p{Script=Han}]/u,
+  chi_sim: /\p{Script=Han}/u,
+  chi_tra: /\p{Script=Han}/u,
+  rus: /\p{Script=Cyrillic}/u,
+};
+
+/**
+ * O modelo leu na escrita errada? Com OCR japones, rosto, cabelo e trama saem
+ * como letras latinas soltas ("OCEMON FOX"), que passam no filtro de ruido,
+ * vao ao LLM e congelam no glossario. Mesma ideia do `is_valid_japanese` do
+ * FrankYomik: conta so' letras (pontuacao e digito nao votam) e exige metade na
+ * escrita esperada. Modelo misto com `eng` (idioma desconhecido) nao julga.
+ */
+export function isWrongScript(text: string, tessLang: string): boolean {
+  const models = tessLang.split('+');
+  if (!models.every((m) => SCRIPT_OF[m])) return false;
+  const letters = [...text].filter((ch) => /\p{L}/u.test(ch));
+  if (!letters.length) return false;
+  const expected = letters.filter((ch) => models.some((m) => SCRIPT_OF[m]!.test(ch))).length;
+  return expected * 2 < letters.length;
+}
+
 /**
  * Segunda passada, na pagina inteira: le o que nao mora em balao — epigrafe,
  * caixa de narracao, legenda de tempo/lugar, titulo. O detector de baloes procura
@@ -987,7 +1013,7 @@ async function recognize(
 
         const rawText = (data.text ?? '').replace(/\s*\n\s*/g, '\n').trim();
         const text = cleanOcrText(rawText);
-        if (isOcrNoise(text, data.confidence ?? 0)) continue;
+        if (isOcrNoise(text, data.confidence ?? 0) || isWrongScript(text, lang)) continue;
 
         const letters = text.replace(/[^\p{L}]/gu, '');
         const uppers = text.replace(/[^\p{Lu}]/gu, '');

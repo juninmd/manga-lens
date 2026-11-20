@@ -26,7 +26,7 @@ function distance(a: string, b: string): number {
 }
 
 /** O eco bate com o inicio do texto? Tolera o OCR que o modelo corrigiu ("OID YOU" -> "DID YOU"). */
-function echoes(src: string, text: string): boolean {
+export function echoes(src: string, text: string): boolean {
   const a = [...norm(src)];
   const b = [...norm(text)];
   const n = Math.min(a.length, b.length);

@@ -55,6 +55,9 @@ export async function purgeDisk(maxAgeMs = DISK_MAX_AGE_MS, now = Date.now()): P
 /** Quantas entradas estao em memoria (para teste e diagnostico). */
 export const memSize = (): number => mem.size;
 
+/** Esvazia a camada de memoria (teste: simula o processo reiniciado lendo so' o disco). */
+export const clearMemCache = (): void => mem.clear();
+
 /**
  * Cache em duas camadas (memoria + disco) com TTL. Evita queimar rate limit dos
  * providers. Chamadas simultaneas da mesma chave compartilham um unico `load`.
@@ -97,3 +100,30 @@ export async function cached<T>(key: string, ttlMs: number, load: () => Promise<
 }
 
 export const defaultTtl = (): number => config.cacheTtlMs;
+
+/**
+ * Leitura avulsa (sem `load`): para quem decide depois se o valor merece ir ao
+ * cache — a traducao so' e' gravada quando a pagina saiu inteira.
+ */
+export async function readCached<T>(key: string, ttlMs: number, now = Date.now()): Promise<T | undefined> {
+  const hit = mem.get(key);
+  if (hit && now - hit.at < ttlMs) return hit.value as T;
+  await ensureDir();
+  const file = Bun.file(fileFor(key));
+  if (!(await file.exists())) return undefined;
+  try {
+    const raw = (await file.json()) as { at: number; value: T };
+    if (now - raw.at >= ttlMs) return undefined;
+    remember(key, raw);
+    return raw.value;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function writeCached(key: string, value: unknown): Promise<void> {
+  const entry = { at: Date.now(), value };
+  remember(key, entry);
+  await ensureDir();
+  await Bun.write(fileFor(key), JSON.stringify(entry)).catch(() => undefined);
+}

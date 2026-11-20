@@ -2,7 +2,9 @@ import { generateText, streamText, type LanguageModel, type ModelMessage } from 
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { keyHint } from './ai-config-body.ts';
-import { realign } from './align.ts';
+import { createHash } from 'node:crypto';
+import { echoes, realign } from './align.ts';
+import { readCached, writeCached } from './cache.ts';
 import { config, getProviderConfig, normalizeProvider, type AiProvider } from './config.ts';
 import { readingOrder, type PageBlock } from './page-text.ts';
 import { contextFor, remember } from './series-memory.ts';
@@ -194,40 +196,118 @@ const PAGE_BATCH = 24;
 export const PAGE_IMAGE_RE = /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/;
 export const MAX_PAGE_IMAGE = 2_000_000;
 
+/**
+ * Erro de rede, de autenticacao ou de limite: repetir o lote menor so' gasta mais
+ * um timeout inteiro. Recuperacao balao a balao e' para resposta torta do modelo.
+ */
+export const isTransientAiError = (message: string): boolean =>
+  /fetch failed|ECONNREFUSED|ECONNRESET|ENOTFOUND|Unable to connect|timed? ?out|aborted|\b(401|403|404|429|5\d\d)\b/i.test(message);
+
+/** Quantas vezes o que o modelo pulou e' repartido ao meio e pedido de novo (1 + 2 + 4 chamadas no pior caso). */
+export const RECOVERY_DEPTH = 2;
+
 /** Traduz balões em lote preservando o id — sem id, nao da' pra ancorar de volta na pagina. */
 export async function translateBlocks(input: TranslateInput): Promise<{ id: number; pt: string }[]> {
-  const out: { id: number; pt: string }[] = [];
   const target = input.target ?? 'pt-br';
-  const src = LANG_NAME[input.sourceLang ?? 'unknown'] ?? input.sourceLang ?? 'idioma original';
-  const dst = TARGET_NAME[target.toLowerCase()] ?? 'portugues do Brasil';
   const providerName = normalizeProvider(input.provider, config.ai.provider);
   const visionModel = getProviderConfig(providerName).visionModel;
   const prose = input.mode === 'prose';
-  const style = input.style ?? DEFAULT_STYLE;
   const image =
     !prose && visionModel && input.pageImage && input.pageImage.length <= MAX_PAGE_IMAGE && PAGE_IMAGE_RE.test(input.pageImage)
       ? input.pageImage
       : undefined;
-  const model = getLanguageModel(providerName, image ? visionModel! : await resolveModel(providerName));
+  const modelId = image ? visionModel! : await resolveModel(providerName);
+  const series = input.series?.trim();
+  const locked = series ? (await contextFor(series, target, input.chapter ?? '', 0)).glossary.filter((g) => g.locked) : [];
+  const key = translationKey({ input, providerName, modelId, image, locked });
+  const hit = await readCached<unknown>(key, TRANSLATION_TTL_MS);
+  // arquivo de cache e' JSON valido mas pode vir de outra versao ou ter sido editado: so' serve no formato certo
+  if (isTranslationList(hit)) return hit;
+  const { out, complete } = await translateUncached(input, providerName, modelId, image);
+  // so' guarda pagina inteira: balao que falhou tem de voltar ao modelo no proximo R
+  if (complete) await writeCached(key, out);
+  return out;
+}
+
+const isTranslationList = (v: unknown): v is { id: number; pt: string }[] =>
+  Array.isArray(v) && v.every((t: { id?: unknown; pt?: unknown } | null) => Number.isInteger(t?.id) && typeof t?.pt === 'string');
+
+/** Traducao reaberta (outro dia, outra sessao) nao paga o LLM de novo. */
+export const TRANSLATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Chave do cache de traducao: tudo que muda a saida do modelo. O prompt de
+ * sistema entra inteiro (hash), entao mudar regra de prompt, modelo, estilo,
+ * idioma ou um termo fixado no glossario invalida sozinho — a mesma ideia da
+ * "revisao do pipeline" do FrankYomik.
+ */
+function translationKey(p: {
+  input: TranslateInput;
+  providerName: AiProvider;
+  modelId: string;
+  image?: string;
+  locked: { orig: string; pt: string; gender: string }[];
+}): string {
+  const { input } = p;
+  const target = input.target ?? 'pt-br';
+  const dst = TARGET_NAME[target.toLowerCase()] ?? 'portugues do Brasil';
+  const style = input.style ?? DEFAULT_STYLE;
+  const system = input.mode === 'prose' ? proseSystemPrompt(dst, target, style) : systemPrompt(dst, target, style);
+  const sha = (s: string): string => createHash('sha256').update(s).digest('hex');
+  return `translation:${sha(
+    JSON.stringify({
+      rev: PIPELINE_REV,
+      system: sha(system),
+      provider: p.providerName,
+      model: p.modelId,
+      target,
+      src: input.sourceLang ?? '',
+      mode: input.mode ?? '',
+      rtl: input.rtl ?? true,
+      series: input.series?.trim().toLowerCase() ?? '',
+      chapter: input.chapter ?? '',
+      page: input.page ?? -1,
+      blocks: input.blocks.map((b) => [b.id, b.text, b.kind ?? '', b.x ?? 0, b.y ?? 0, b.w ?? 0, b.h ?? 0]),
+      context: input.context ?? [],
+      image: p.image ? sha(p.image) : '',
+      locked: p.locked.map((g) => [g.orig, g.pt, g.gender]),
+    }),
+  )}`;
+}
+
+/** Sobe quando o formato do prompt de usuario ou o pos-processamento mudam de um jeito que o hash do prompt de sistema nao ve. */
+export const PIPELINE_REV = 1;
+
+async function translateUncached(
+  input: TranslateInput,
+  providerName: AiProvider,
+  modelId: string,
+  image: string | undefined,
+): Promise<{ out: { id: number; pt: string }[]; complete: boolean }> {
+  const target = input.target ?? 'pt-br';
+  const src = LANG_NAME[input.sourceLang ?? 'unknown'] ?? input.sourceLang ?? 'idioma original';
+  const dst = TARGET_NAME[target.toLowerCase()] ?? 'portugues do Brasil';
+  const prose = input.mode === 'prose';
+  const style = input.style ?? DEFAULT_STYLE;
+  const model = getLanguageModel(providerName, modelId);
   const series = input.series?.trim();
   const chapter = input.chapter ?? '';
   const memory = series ? await contextFor(series, target, chapter, input.page ?? 0) : { glossary: [], notes: [] };
   const blocks = prose ? input.blocks : readingOrder(input.blocks, input.rtl ?? true);
 
-  let batches = 0;
-  let failed = 0;
+  const done = new Map<number, string>();
+  let calls = 0;
+  let answered = 0;
   let lastError = '';
 
-  for (let i = 0; i < blocks.length; i += PAGE_BATCH) {
-    const batch = blocks.slice(i, i + PAGE_BATCH);
-    const neighbours = blocks.length > PAGE_BATCH ? blocks.filter((b) => !batch.includes(b)) : [];
+  /** Uma chamada ao modelo para `batch`; devolve so' o que voltou ancorado. Lanca se a resposta nao serve. */
+  const attempt = async (batch: PageBlock[], previous: string[] | undefined, strict = false): Promise<{ id: number; pt: string }[]> => {
+    const neighbours = blocks.length > batch.length ? blocks.filter((b) => !batch.includes(b)) : [];
     const ctx = { series, chapter: input.chapter, page: input.page, sourceName: src, ...memory, neighbours, withImage: Boolean(image) };
-    // so' o primeiro lote continua do trecho que o cliente mandou; os seguintes continuam do lote anterior
-    const previous = i === 0 ? input.context : blocks.slice(Math.max(0, i - 2), i).map((b) => b.text.slice(-400));
     const prompt = prose ? proseUserPrompt({ ...ctx, previous }, batch) : userPrompt(ctx, batch);
     // paragrafo e' longo: o orcamento por balao (160 tokens) cortava a resposta no meio do lote
     const budget = prose ? Math.ceil(batch.reduce((n, b) => n + b.text.length, 0) / 2) + 900 : batch.length * 160 + 900;
-    batches++;
+    calls++;
     let raw = '';
     try {
       const result = await generateText({
@@ -254,12 +334,17 @@ export async function translateBlocks(input: TranslateInput): Promise<{ id: numb
       });
       raw = result.text;
       const reply = parseReply(raw);
+      answered++;
       if (reply.partial) {
         console.error(
           `[traducao/${providerName}] resposta cortada (${result.finishReason}): ${reply.translations.length} de ${batch.length} baloes aproveitados`,
         );
       }
-      out.push(...realign(reply.translations, batch));
+      // repescagem com 1-2 baloes: nao ha' vizinho para onde realinhar, entao eco que aponta
+      // para outra fala da pagina e' a resposta do lote anterior repetida — cai
+      const own = new Map(batch.map((b) => [b.id, b.text]));
+      const items = strict ? reply.translations.filter((t) => !t.src || echoes(t.src, own.get(t.id) ?? '')) : reply.translations;
+      const aligned = realign(items, batch);
       if (series) {
         // termo que nao esta' no texto do lote nao foi aprendido aqui: o 7B inventava personagens
         const seen = batch.map((b) => b.text).join(' ').toLowerCase();
@@ -271,17 +356,58 @@ export async function translateBlocks(input: TranslateInput): Promise<{ id: numb
           note: input.page === undefined ? undefined : reply.note,
         });
       }
+      return aligned;
     } catch (err) {
-      failed++;
       lastError = (err as Error).message;
-      console.error(`[traducao/${providerName}] lote ${i / PAGE_BATCH} falhou: ${lastError}`);
+      console.error(`[traducao/${providerName}] lote de ${batch.length} falhou: ${lastError}`);
       if (raw) console.error(`[traducao/${providerName}] resposta crua: ${raw.slice(0, 300)}`);
-      out.push(...batch.map((b) => ({ id: b.id, pt: '' })));
+      throw err;
+    }
+  };
+
+  /**
+   * O que o modelo pulou, devolveu fora do lugar ou estragou com JSON torto volta
+   * em pedacos menores: lote de 24 que falha inteiro perdia a pagina toda, e o
+   * balao isolado quase sempre sai. Profundidade fixa: nunca vira um loop de chamadas.
+   */
+  const recover = async (batch: PageBlock[], depth: number): Promise<void> => {
+    if (!batch.length || depth > RECOVERY_DEPTH) return;
+    let missing = batch;
+    try {
+      for (const t of await attempt(batch, undefined, true)) if (batch.some((b) => b.id === t.id)) done.set(t.id, t.pt);
+      missing = batch.filter((b) => !done.has(b.id));
+    } catch (err) {
+      if (isTransientAiError((err as Error).message)) return;
+    }
+    if (!missing.length || missing.length === 1 && batch.length === 1) return;
+    const half = Math.ceil(missing.length / 2);
+    await recover(missing.slice(0, half), depth + 1);
+    await recover(missing.slice(half), depth + 1);
+  };
+
+  for (let i = 0; i < blocks.length; i += PAGE_BATCH) {
+    const batch = blocks.slice(i, i + PAGE_BATCH);
+    // so' o primeiro lote continua do trecho que o cliente mandou; os seguintes continuam do lote anterior
+    const previous = i === 0 ? input.context : blocks.slice(Math.max(0, i - 2), i).map((b) => b.text.slice(-400));
+    let retry: PageBlock[] = [];
+    try {
+      for (const t of await attempt(batch, previous)) done.set(t.id, t.pt);
+      retry = batch.filter((b) => !done.has(b.id));
+    } catch (err) {
+      // rede/limite: o proximo lote provavelmente cai igual, nao vale repartir
+      if (!isTransientAiError((err as Error).message)) retry = batch;
+    }
+    if (retry.length) {
+      const half = retry.length === 1 ? 1 : Math.ceil(retry.length / 2);
+      await recover(retry.slice(0, half), 1);
+      await recover(retry.slice(half), 1);
     }
   }
 
-  if (batches > 0 && failed === batches) throw new Error(`IA indisponivel (${providerName}): ${lastError}`);
-  return out;
+  if (calls > 0 && answered === 0) throw new Error(`IA indisponivel (${providerName}): ${lastError}`);
+  // balao sem resposta fica de fora (o cliente trata como vazio e o R refaz so' ele)
+  const out = blocks.filter((b) => done.has(b.id)).map((b) => ({ id: b.id, pt: done.get(b.id)! }));
+  return { out, complete: blocks.every((b) => done.has(b.id)) };
 }
 
 /**

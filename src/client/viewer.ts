@@ -694,6 +694,15 @@ export class Viewer {
   }
 
   /** Paginas visiveis agora — e' nelas que o OCR roda. */
+  /** Outro componente (a lente) assumiu o ponteiro: o arrasto em andamento nao vira toque nem inercia. */
+  cancelGesture(): void {
+    this.pointers.clear();
+    this.pinchStart = null;
+    this.dragging = false;
+    this.gesture = null;
+    this.stage.classList.remove('is-dragging');
+  }
+
   visibleSheets(): { page: number; img: HTMLImageElement; ocr: HTMLCanvasElement }[] {
     if (this.mode !== 'strip') return this.sheets.map((s) => ({ page: s.page, img: s.img, ocr: s.ocr }));
     const { h } = this.stageSize();

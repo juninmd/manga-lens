@@ -45,6 +45,7 @@ import { Speaker } from './tts.ts';
 import { FITS, MODES, iconLabel, imageReady, loadPageImage, plural, type RunCtx, type RunStats } from './reader-util.ts';
 import { buildChatInput, closeChat, openChat, pushMessage } from './reader-chat.ts';
 import { checkBalloonHover, editScope, findBlockAt, hideTooltip, scheduleHideTooltip, showTooltip } from './reader-tooltip.ts';
+import { Lens } from './lens.ts';
 import { contextSection, engineSelect, fontSelect, ocrLangSelect, providerSelect, styleSection, targetSelect } from './reader-settings.ts';
 
 export class Reader {
@@ -252,6 +253,14 @@ export class Reader {
   private build(): void {
     this.host.append(this.buildTopBar(), this.stage, this.buildStatusBar(), this.buildBottomBar(), this.chat, this.tooltipEl, this.popoverBackdrop, this.popoverEl);
     this.viewer.mount(this.stage);
+    // vive junto com o leitor (o mesmo e' reaberto a cada obra)
+    new Lens(this.stage, {
+      enabled: () => store.settings.lens,
+      sheets: () => this.viewer.visibleSheets(),
+      translated: (page) => (this.ocrCache.get(this.pageKey(page)) ?? []).some((b) => b.pt?.trim()),
+      cancelGesture: () => this.viewer.cancelGesture(),
+    });
+    this.stage.classList.toggle('is-lens', store.settings.lens);
     // mount() reescreve o innerHTML do palco — o overlay so' pode entrar depois
     this.stage.append(this.stageLoading);
     this.viewer.mode = store.settings.mode;
@@ -466,7 +475,22 @@ export class Reader {
         },
         'Alternar entre a pagina original e os baloes traduzidos (tecla T)',
       ),
+      this.toggle(
+        s.lens ? '🔎 lente (ligada)' : '🔎 Lente',
+        s.lens,
+        () => this.toggleLens(),
+        'Pagina original; segure o ponteiro parado para ver a traducao numa lupa (tecla L)',
+      ),
     ];
+  }
+
+  private toggleLens(): void {
+    store.settings.lens = !store.settings.lens;
+    persist();
+    this.stage.classList.toggle('is-lens', store.settings.lens);
+    this.refreshBars();
+    this.paintOverlays();
+    this.setStatus(store.settings.lens ? 'lente ligada: segure o ponteiro sobre a pagina para espiar' : 'lente desligada');
   }
 
   private optionsButton(label = '⚙️ Opcoes'): HTMLElement {
@@ -560,6 +584,7 @@ export class Reader {
       ['R', 'traduzir o capitulo'],
       ['O', 'so OCR nas paginas visiveis, sem traduzir'],
       ['T', 'mostrar/esconder o original'],
+      ['L', 'lente: segure o ponteiro para espiar a traducao'],
       ['F', 'tela cheia'],
       ['0 / 1', 'ajustar a pagina / tamanho real'],
       ['+ / −', 'zoom'],
@@ -1240,7 +1265,8 @@ export class Reader {
       const width = sheet.img.naturalWidth || 1;
       const height = sheet.img.naturalHeight || 1;
       paintPage(sheet.ocr, blocks ?? [], {
-        showOriginal: store.settings.showOriginal,
+        // com a lente a camada fica escondida (CSS) mas pintada: e' ela que a lupa amplia
+        showOriginal: store.settings.showOriginal && !store.settings.lens,
         font: store.settings.font,
         width,
         height,
@@ -1985,6 +2011,10 @@ export class Reader {
         persist();
         this.refreshBars();
         this.paintOverlays();
+        break;
+      case 'l':
+      case 'L':
+        this.toggleLens();
         break;
       case 'D':
         if (!e.shiftKey || store.settings.mode !== 'double') return;

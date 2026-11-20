@@ -379,7 +379,12 @@ errado. Resposta cortada no limite de tokens aproveita os pares que fecharam.
 - **navegador em miniatura** aparece no canto ao ampliar; arrastável
 - modos **página / dupla / tira (webtoon)**, ajuste largura/altura/página, RTL
 - filmstrip de páginas, slider de zoom, atalhos: `← →` `espaço` `+ -` `0` `1`
-  `o` (OCR) `t` (original/tradução) `f` (tela cheia) `Esc`
+  `o` (OCR) `t` (original/tradução) `l` (lente) `f` (tela cheia) `Esc`
+- **lente** (opcional, botão 🔎 ou `l`): a página fica como foi desenhada; segure o
+  ponteiro parado por 200 ms e uma lupa mostra a tradução por baixo (roda muda
+  o aumento 1.5×/2×/3×). Aro tracejado = página ainda sem tradução
+- tradução por IA de uma página inteira fica em cache em disco por 7 dias; trocar
+  modelo, prompt, estilo ou termo fixado no glossário invalida sozinho
 
 O sentido de leitura segue a obra: HQ ocidental e PDF abrem da esquerda para a
 direita; mangá, da direita para a esquerda.

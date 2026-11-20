@@ -1,0 +1,6 @@
+{
+  "_comment": "Teto de CER e piso de acerto exato por conjunto (node scripts/ocr-benchmark.mjs --gate). Partem da medicao de ocr-benchmark.md com folga de ~5%; baixe o teto quando um motor melhor entrar.",
+  "eng": { "maxCer": 0.51, "minExact": 0 },
+  "jpn": { "maxCer": 0.59, "minExact": 0 },
+  "jpn_vert": { "maxCer": 0.05, "minExact": 0.9 }
+}
