@@ -1,4 +1,5 @@
 import { fetchJson } from '../http.ts';
+import { registerSourceUserAgent } from '../config.ts';
 import { cached, defaultTtl } from '../cache.ts';
 import type {
   ChapterRef,
@@ -12,6 +13,10 @@ import type {
 
 const API = 'https://api.mangadex.org';
 const COVERS = 'https://uploads.mangadex.org/covers';
+
+// A API do MangaDex manda UA de navegador para um desafio anti-bot (HTML no lugar de JSON);
+// ela espera um cliente identificado.
+registerSourceUserAgent('api.mangadex.org', 'MangaLens/0.1.0');
 
 interface MdRel {
   id: string;
