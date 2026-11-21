@@ -1,5 +1,5 @@
 import { inflateRawSync } from 'node:zlib';
-import { open } from 'node:fs/promises';
+import { open, stat } from 'node:fs/promises';
 
 export interface ZipEntry {
   name: string;
@@ -26,7 +26,32 @@ export class ZipError extends Error {}
  * descomprime uma entrada sob demanda. Evita dependencia externa para
  * abrir arquivo local do usuario.
  */
+/** Quantos indices de CBZ ficam guardados: o leitor alterna entre poucos arquivos por vez. */
+export const INDEX_CACHE_SIZE = 8;
+const indexCache = new Map<string, { mtimeMs: number; size: number; entries: ZipEntry[] }>();
+
+/**
+ * Indice do ZIP, guardado por caminho + mtime + tamanho. Cada pagina servida
+ * pedia o central directory de novo (abrir, ler, decodificar centenas de nomes);
+ * com o cache, uma leitura por arquivo. Arquivo trocado no disco muda o carimbo
+ * e e' relido. O array devolvido e' compartilhado: quem chama nao o altera.
+ */
 export async function readZipIndex(path: string): Promise<ZipEntry[]> {
+  const st = await stat(path);
+  const hit = indexCache.get(path);
+  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) {
+    indexCache.delete(path);
+    indexCache.set(path, hit);
+    return hit.entries;
+  }
+  const entries = await parseZipIndex(path);
+  indexCache.delete(path);
+  indexCache.set(path, { mtimeMs: st.mtimeMs, size: st.size, entries });
+  while (indexCache.size > INDEX_CACHE_SIZE) indexCache.delete(indexCache.keys().next().value as string);
+  return entries;
+}
+
+async function parseZipIndex(path: string): Promise<ZipEntry[]> {
   const fh = await open(path, 'r');
   try {
     const { size } = await fh.stat();
