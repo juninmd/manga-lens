@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { HttpError, fetchJson, fetchText, httpFetch } from '../src/server/http.ts';
+import { HttpError, fetchJson, fetchText, httpFetch, retryAfterMs } from '../src/server/http.ts';
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -43,6 +43,22 @@ describe('httpFetch', () => {
     const calls = stubFetch([status(429), status(429), ok('enfim')]);
     expect(await (await httpFetch('https://x.test/a')).text()).toBe('enfim');
     expect(calls).toHaveLength(3);
+  });
+
+  test('429 com Retry-After curto espera o tempo pedido antes de repetir', async () => {
+    const calls = stubFetch([new Response('', { status: 429, headers: { 'Retry-After': '1' } }), ok('enfim')]);
+    const started = performance.now();
+    expect(await (await httpFetch('https://x.test/a')).text()).toBe('enfim');
+    expect(performance.now() - started).toBeGreaterThanOrEqual(950);
+    expect(calls).toHaveLength(2);
+  });
+
+  test('429 com Retry-After longo desiste na hora em vez de martelar o upstream', async () => {
+    const calls = stubFetch([new Response('', { status: 429, headers: { 'Retry-After': '120' } }), ok('cedo demais')]);
+    const err = (await httpFetch('https://x.test/a').catch((e) => e)) as HttpError;
+    expect(err).toBeInstanceOf(HttpError);
+    expect(err.status).toBe(429);
+    expect(calls).toHaveLength(1);
   });
 
   test('5xx persistente vira HttpError com o status do upstream', async () => {
@@ -264,5 +280,16 @@ describe('recuo entre tentativas', () => {
       if (saved === undefined) delete process.env['HTTP_BACKOFF_MS'];
       else process.env['HTTP_BACKOFF_MS'] = saved;
     }
+  });
+});
+
+describe('retryAfterMs', () => {
+  test('aceita segundos e data HTTP, ignora valor invalido', () => {
+    const now = Date.parse('2026-11-22T12:00:00Z');
+    expect(retryAfterMs('3', now)).toBe(3000);
+    expect(retryAfterMs('Sun, 22 Nov 2026 12:00:30 GMT', now)).toBe(30_000);
+    expect(retryAfterMs('Sun, 22 Nov 2026 11:00:00 GMT', now)).toBe(0);
+    expect(retryAfterMs('soon', now)).toBeNull();
+    expect(retryAfterMs(null, now)).toBeNull();
   });
 });

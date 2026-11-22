@@ -176,6 +176,18 @@ const backoffMs = (attempt: number): number => {
   return (Number.isFinite(base) && base >= 0 ? base : 400) * 2 ** attempt;
 };
 
+/** Acima disso nao vale segurar o leitor esperando: desiste e devolve o 429/5xx. */
+const MAX_RETRY_AFTER_MS = 10_000;
+
+/** Retry-After em segundos ou data HTTP; ausente ou invalido devolve null. */
+export function retryAfterMs(header: string | null, now = Date.now()): number | null {
+  const value = header?.trim();
+  if (!value) return null;
+  if (/^\d+$/.test(value)) return Number(value) * 1000;
+  const at = Date.parse(value);
+  return Number.isNaN(at) ? null : Math.max(0, at - now);
+}
+
 /** fetch com UA de browser, timeout e retry com backoff em 429/5xx. */
 export async function httpFetch(url: string, opts: FetchOpts = {}): Promise<Response> {
   const { referer, accept, timeoutMs = 20_000, bodyTimeoutMs = 30_000, retries = 2, redirect = 'follow' } = opts;
@@ -204,9 +216,11 @@ export async function httpFetch(url: string, opts: FetchOpts = {}): Promise<Resp
       });
       clearTimeout(timer);
       if (res.status === 429 || res.status >= 500) {
-        if (attempt < retries) {
+        // repetir antes do Retry-After pedido so' gasta cota e devolve outro 429
+        const asked = retryAfterMs(res.headers.get('retry-after'));
+        if (attempt < retries && (asked === null || asked <= MAX_RETRY_AFTER_MS)) {
           release();
-          await Bun.sleep(backoffMs(attempt));
+          await Bun.sleep(Math.max(backoffMs(attempt), asked ?? 0));
           continue;
         }
         throw upstreamError(res.status, url);
