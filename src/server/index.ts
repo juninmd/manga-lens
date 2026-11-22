@@ -426,13 +426,19 @@ app.get('/api/local/page', async (c) => {
     const entries = await readZipIndex(base);
     const entry = entries.find((e) => e.name === name);
     if (!entry) return c.text('pagina inexistente no CBZ', 404);
-    const buf = await readZipEntry(base, entry);
-    return new Response(new Uint8Array(buf), { headers: imageHeaders });
+    return new Response(asBody(await readZipEntry(base, entry)), { headers: imageHeaders });
   } catch (err) {
     // zip bomb, ZIP64, senha ou arquivo truncado: problema do arquivo, nao do servidor
     return c.text(`pagina indisponivel no CBZ: ${(err as Error).message}`, 422);
   }
 });
+
+/**
+ * O Buffer da pagina como corpo, sem copiar: `new Uint8Array(buf)` duplicava
+ * cada imagem (centenas de KB) so' para agradar o tipo de `Response`.
+ */
+const asBody = (buf: Buffer): Uint8Array<ArrayBuffer> =>
+  new Uint8Array(buf.buffer as ArrayBuffer, buf.byteOffset, buf.byteLength);
 
 /** Provider OPDS pelo id: rota de pagina/capa nao aceita outro tipo de provider. */
 function opdsProvider(id: string): OpdsProvider | null {
@@ -466,7 +472,7 @@ app.get('/api/opds/page', async (c) => {
     if (located.kind === 'cbr') return new Response(await readRarEntry(located.path, name), { headers });
     const entry = (await readZipIndex(located.path)).find((e) => e.name === name);
     if (!entry) return c.text('pagina inexistente', 404);
-    return new Response(new Uint8Array(await readZipEntry(located.path, entry)), { headers });
+    return new Response(asBody(await readZipEntry(located.path, entry)), { headers });
   } catch (err) {
     return c.text(`pagina indisponivel: ${(err as Error).message}`, 422);
   }

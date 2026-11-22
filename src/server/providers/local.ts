@@ -128,14 +128,28 @@ export async function localPagePaths(chapterId: string): Promise<{ kind: 'dir' |
     return { kind: 'zip', base: path, names: cover ? [cover] : [] };
   }
   const rar = RAR_RE.test(path);
+  const hit = archivePages.get(path);
+  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.located;
   const names = rar ? (await readRarIndex(path)).map((e) => e.name) : (await readZipIndex(path)).map((e) => e.name);
-  return {
-    kind: rar ? 'rar' : 'zip',
+  const located = {
+    kind: rar ? ('rar' as const) : ('zip' as const),
     base: path,
     // o CBR guarda a pagina com o separador do Windows; a ordem e' a do nome cheio
     names: names.filter((n) => IMAGE_RE.test(n)).sort(natural),
   };
+  archivePages.delete(path);
+  archivePages.set(path, { mtimeMs: st.mtimeMs, size: st.size, located });
+  while (archivePages.size > 8) archivePages.delete(archivePages.keys().next().value as string);
+  return located;
 }
+
+/**
+ * Lista de paginas ja' ordenada de cada CBZ/CBR recente. A rota de pagina chama
+ * `localPagePaths` a cada imagem; sem isto, cada uma refazia a ordenacao natural
+ * de todos os nomes do arquivo (o topo do perfil da rota). Carimbo de mtime e
+ * tamanho: arquivo trocado no disco e' relido.
+ */
+const archivePages = new Map<string, { mtimeMs: number; size: number; located: { kind: 'zip' | 'rar'; base: string; names: string[] } }>();
 
 /**
  * Id de capitulo de livro: os dois base64url separados por ponto. Ponto nao

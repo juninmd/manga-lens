@@ -186,3 +186,20 @@ describe('limites e arquivos hostis', () => {
     await expect(readZipIndex(path)).rejects.toThrow('ZIP64');
   });
 });
+
+describe('cache do indice', () => {
+  test('mesma chamada reaproveita o indice sem reler o arquivo', async () => {
+    const path = await write('cache.cbz', [{ name: '001.jpg', data: PAGE_1, method: 0 }]);
+    expect(await readZipIndex(path)).toBe(await readZipIndex(path));
+  });
+
+  test('arquivo trocado no disco e relido', async () => {
+    const path = await write('troca.cbz', [{ name: '001.jpg', data: PAGE_1, method: 0 }]);
+    expect((await readZipIndex(path)).map((e) => e.name)).toEqual(['001.jpg']);
+    await write('troca.cbz', [
+      { name: '001.jpg', data: PAGE_1, method: 0 },
+      { name: '002.png', data: PAGE_2, method: 0 },
+    ]);
+    expect((await readZipIndex(path)).map((e) => e.name)).toEqual(['001.jpg', '002.png']);
+  });
+});
