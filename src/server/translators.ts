@@ -156,22 +156,28 @@ const CONCURRENCY = parseConcurrency(process.env['TRANSLATE_CONCURRENCY']);
  * paralelo, e um teto por chamada deixava N paginas x CONCURRENCY baloes
  * batendo no Google ao mesmo tempo — exatamente a rajada que devolve 429.
  */
-let inFlight = 0;
-const waiting: (() => void)[] = [];
-
-async function acquire(): Promise<void> {
-  if (inFlight < CONCURRENCY) {
-    inFlight++;
-    return;
-  }
-  await new Promise<void>((resolve) => waiting.push(resolve));
-  inFlight++;
+export function createLimiter(max: number) {
+  let inFlight = 0;
+  const waiting: (() => void)[] = [];
+  return {
+    active: (): number => inFlight,
+    async acquire(): Promise<void> {
+      if (inFlight < max) {
+        inFlight++;
+        return;
+      }
+      // O slot chega ja contado: release() o repassa sem decrementar.
+      await new Promise<void>((resolve) => waiting.push(resolve));
+    },
+    release(): void {
+      // Decrementar antes de acordar a fila deixava quem chegasse nesse intervalo furar o teto.
+      const next = waiting.shift();
+      if (next) next();
+      else inFlight--;
+    },
+  };
 }
-
-function release(): void {
-  inFlight--;
-  waiting.shift()?.();
-}
+const { acquire, release } = createLimiter(CONCURRENCY);
 
 /** map com teto global de concorrencia, preservando a ordem da entrada. */
 async function mapPool<T, R>(items: T[], fn: (item: T) => Promise<R>): Promise<R[]> {
